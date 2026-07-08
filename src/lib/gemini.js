@@ -1,0 +1,123 @@
+/*
+  Fase 2 — Strutturazione con Google Gemini.
+
+  Il testo grezzo estratto dall'OCR viene convertito in codice Typst pulito
+  e tipograficamente curato: margini ampi per le annotazioni manuali, serif
+  eleganti per il corpo, sans per i titoli, vere note a piè di pagina.
+
+  L'API generativelanguage di Google accetta chiamate dal browser con la
+  chiave passata nell'header `x-goog-api-key`.
+*/
+
+export const SYSTEM_PROMPT =
+  'Sei un esperto tipografo editoriale. Prendi questo testo estratto da un ' +
+  'OCR e convertilo in codice Typst puro. Usa un layout accademico moderno: ' +
+  'imposta margini generosi (almeno 4cm sul lato destro per consentire ' +
+  'annotazioni manuali successive), usa font serif eleganti per il corpo del ' +
+  'testo e sans-serif per i titoli. Converti le note testuali in vere note a ' +
+  'piè di pagina Typst `footer: [...]` o `footnote[...]`. Restituisci SOLO il ' +
+  'codice Typst all’interno di un blocco di codice pulito, senza altre ' +
+  'spiegazioni.';
+
+/**
+ * @param {object} params
+ * @param {string} params.apiKey     GOOGLE_API_KEY
+ * @param {string} params.model      es. "gemini-flash-latest"
+ * @param {string} params.rawText    testo estratto dall'OCR
+ * @param {AbortSignal} [params.signal]
+ * @returns {Promise<string>} codice Typst
+ */
+export async function toTypst({ apiKey, model, rawText, signal }) {
+  if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
+  if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
+
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/` +
+    `${encodeURIComponent(model)}:generateContent`;
+
+  const body = {
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text:
+              'Font disponibili nel compilatore (usa SOLO questi nomi esatti): ' +
+              'per il corpo serif "Libertinus Serif" oppure "New Computer Modern"; ' +
+              'per i titoli sans-serif "DejaVu Sans"; per il monospazio ' +
+              '"DejaVu Sans Mono".\n\n' +
+              'Testo estratto dall’OCR da convertire in Typst:\n\n' +
+              '"""\n' +
+              rawText +
+              '\n"""',
+          },
+        ],
+      },
+    ],
+    generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+  };
+
+  let res;
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    throw new Error(`Impossibile contattare Google Gemini (rete). ${e.message}`);
+  }
+
+  if (!res.ok) {
+    const detail = await safeErrorDetail(res);
+    throw new Error(`Google Gemini ha risposto ${res.status}. ${detail}`);
+  }
+
+  const data = await res.json();
+  const finish = data?.candidates?.[0]?.finishReason;
+  const parts = data?.candidates?.[0]?.content?.parts;
+  const text = Array.isArray(parts)
+    ? parts.map((p) => p?.text || '').join('')
+    : '';
+
+  if (!text.trim()) {
+    const block = data?.promptFeedback?.blockReason;
+    throw new Error(
+      block
+        ? `Richiesta bloccata da Gemini (${block}).`
+        : `Gemini non ha restituito codice (finishReason: ${finish || 'n/d'}).`,
+    );
+  }
+
+  return unwrapCodeBlock(text);
+}
+
+/**
+ * Rimuove l'eventuale recinto Markdown (```typst ... ```) restituendo solo
+ * il codice Typst grezzo.
+ */
+export function unwrapCodeBlock(text) {
+  const trimmed = text.trim();
+  const fence = trimmed.match(/^```(?:typst|typ)?\s*\n([\s\S]*?)\n```$/i);
+  if (fence) return fence[1].trim();
+  // Recinto d'apertura senza chiusura corretta: togli comunque le righe ```
+  return trimmed.replace(/^```(?:typst|typ)?\s*\n?/i, '').replace(/\n?```$/i, '').trim();
+}
+
+async function safeErrorDetail(res) {
+  try {
+    const j = await res.json();
+    return j?.error?.message || j?.message || JSON.stringify(j).slice(0, 300);
+  } catch {
+    try {
+      return (await res.text()).slice(0, 300);
+    } catch {
+      return '';
+    }
+  }
+}

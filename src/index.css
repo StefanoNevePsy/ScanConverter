@@ -1,0 +1,162 @@
+@import 'tailwindcss';
+
+/*
+  ScanConverter — sistema di design
+  Registro: product / tool UI. Dark mode nativa (banco di lavoro per la
+  digitalizzazione, usato a lungo in luce ambientale bassa).
+  Strategia colore: Restrained — neutri ardesia freddi + un solo accento
+  teal (hue ~200°) che marca lo step attivo della pipeline, le azioni
+  primarie e il focus. Tutto in OKLCH.
+*/
+
+@theme {
+  /* Superfici (dal fondo verso l'alto) */
+  --color-bg: oklch(0.145 0.008 245);
+  --color-surface: oklch(0.185 0.009 245);
+  --color-surface-2: oklch(0.225 0.010 245);
+  --color-surface-3: oklch(0.265 0.011 245);
+  --color-border: oklch(0.305 0.012 245);
+  --color-border-strong: oklch(0.38 0.014 245);
+
+  /* Inchiostro */
+  --color-ink: oklch(0.965 0.004 245);
+  --color-muted: oklch(0.735 0.010 245);
+  --color-faint: oklch(0.60 0.010 245);
+
+  /* Accento primario — teal */
+  --color-primary: oklch(0.72 0.115 200);
+  --color-primary-strong: oklch(0.79 0.125 200);
+  --color-primary-soft: oklch(0.72 0.115 200 / 0.14);
+  --color-primary-ink: oklch(0.17 0.02 220);
+
+  /* Accento caldo — solo per il motivo "margine di annotazione" */
+  --color-annote: oklch(0.80 0.11 78);
+
+  /* Semantici */
+  --color-success: oklch(0.76 0.14 158);
+  --color-warning: oklch(0.82 0.13 82);
+  --color-danger: oklch(0.70 0.19 25);
+  --color-danger-soft: oklch(0.70 0.19 25 / 0.14);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', 'Menlo', 'Consolas',
+    monospace;
+
+  /* Scala z-index semantica */
+  --z-sticky: 20;
+  --z-backdrop: 40;
+  --z-modal: 50;
+  --z-toast: 60;
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Superficie ardesia con una texture radiale appena percettibile:
+     imita la luce di una lampada da lettura senza rumore visivo. */
+  body {
+    background-image: radial-gradient(
+      120% 80% at 50% -10%,
+      oklch(0.20 0.012 235) 0%,
+      var(--color-bg) 60%
+    );
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    background: var(--color-primary-soft);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Scrollbar coerente col tema scuro, senza reinventare l'affordance */
+  * {
+    scrollbar-color: var(--color-border-strong) transparent;
+    scrollbar-width: thin;
+  }
+}
+
+@layer components {
+  .card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+  }
+
+  /* Puntini animati per lo step di pipeline in corso */
+  .dots::after {
+    content: '';
+    animation: dots 1.4s steps(4, end) infinite;
+  }
+
+  @keyframes dots {
+    0% {
+      content: '';
+    }
+    25% {
+      content: '.';
+    }
+    50% {
+      content: '..';
+    }
+    75% {
+      content: '...';
+    }
+  }
+
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background: var(--color-surface-2);
+  }
+
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      oklch(1 0 0 / 0.05),
+      transparent
+    );
+    animation: shimmer 1.6s var(--ease-out-quint) infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dots::after,
+  .skeleton::after {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}
