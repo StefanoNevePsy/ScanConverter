@@ -72,7 +72,7 @@ const GROUPS = [
   },
 ];
 
-export default function RestylePanel({ onRestyle, onHintChange, busy, disabled }) {
+export default function RestylePanel({ onRestyle, onApplyLocal, onHintChange, busy, disabled }) {
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState({});
   const [extra, setExtra] = useState('');
@@ -153,18 +153,30 @@ export default function RestylePanel({ onRestyle, onHintChange, busy, disabled }
             />
           </div>
 
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-faint">
-              Rigenera dal testo OCR: le modifiche manuali al codice verranno sostituite.
+              <span className="text-ink">Applica</span> cambia font/margini/layout
+              all’istante, senza AI (le istruzioni extra richiedono la rigenerazione).
             </p>
-            <button
-              onClick={() => onRestyle(buildHint())}
-              disabled={busy}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-60"
-            >
-              {busy ? <IconSpinner width={15} height={15} /> : <IconRefresh width={15} height={15} />}
-              {busy ? 'Rigenero…' : 'Rigenera'}
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                onClick={() => onApplyLocal(sel)}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-60"
+              >
+                <IconRefresh width={15} height={15} />
+                Applica (senza AI)
+              </button>
+              <button
+                onClick={() => onRestyle(buildHint())}
+                disabled={busy}
+                title="Rigenera l'intero layout con l'AI dal testo OCR"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-medium text-ink transition-colors hover:bg-surface-3 disabled:opacity-60"
+              >
+                {busy ? <IconSpinner width={15} height={15} /> : <IconRefresh width={15} height={15} />}
+                {busy ? 'Rigenero…' : 'Rigenera con AI'}
+              </button>
+            </div>
           </div>
         </div>
       )}

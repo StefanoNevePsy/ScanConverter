@@ -10,6 +10,7 @@ export default function TypstEditor({
   value,
   onChange,
   onCompile,
+  onAutofix,
   compiling,
   error,
   disabled,
@@ -87,12 +88,19 @@ export default function TypstEditor({
           className="flex items-start gap-2 border-t border-danger/30 bg-danger-soft px-4 py-2.5 text-sm text-danger"
         >
           <IconAlert width={16} height={16} className="mt-0.5 shrink-0" />
-          <div>
+          <div className="min-w-0 flex-1">
             <span className="font-medium">Errore di compilazione.</span>{' '}
-            <span className="font-mono text-[12px] leading-snug opacity-90">
-              {error}
-            </span>
+            <span className="font-mono text-[12px] leading-snug opacity-90">{error}</span>
           </div>
+          {onAutofix && (
+            <button
+              onClick={onAutofix}
+              disabled={compiling}
+              className="shrink-0 self-center rounded-lg bg-danger/20 px-2.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-danger/30 disabled:opacity-50"
+            >
+              Correggi automaticamente
+            </button>
+          )}
         </div>
       )}
     </section>

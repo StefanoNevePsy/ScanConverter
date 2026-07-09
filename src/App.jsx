@@ -320,6 +320,17 @@ function Workspace({
   // Su schermi stretti le due colonne diventano schede a tutta altezza.
   const [mobileTab, setMobileTab] = useState('code'); // 'code' | 'pdf'
   const [styleHint, setStyleHint] = useState(''); // scelte di impaginazione correnti
+  const [autofixMsg, setAutofixMsg] = useState(null);
+
+  const handleAutofix = useCallback(async () => {
+    const { changes } = await pipe.autofix();
+    setAutofixMsg(
+      changes.length
+        ? `Applicate: ${changes.join(' · ')}`
+        : 'Nessuna correzione automatica applicabile.',
+    );
+    setTimeout(() => setAutofixMsg(null), 7000);
+  }, [pipe]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -393,6 +404,7 @@ function Workspace({
       {pipe.rawText && (
         <RestylePanel
           onRestyle={(hint) => pipe.restyle(hint)}
+          onApplyLocal={(sel) => pipe.applyLocalStyle(sel)}
           onHintChange={setStyleHint}
           busy={pipe.phase === 'running'}
           disabled={pipe.phase === 'running'}
@@ -415,6 +427,11 @@ function Workspace({
           Su mobile una scheda alla volta, a tutta altezza. */}
       <div className="flex min-h-[60vh] flex-1 flex-col gap-4 lg:grid lg:min-h-[520px] lg:grid-cols-2">
         <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'code' ? 'flex' : 'hidden'} lg:flex`}>
+          {autofixMsg && (
+            <div className="mb-2 rounded-lg border border-primary/40 bg-primary-soft px-3 py-2 text-xs text-ink">
+              {autofixMsg}
+            </div>
+          )}
           <div className="mb-2 flex items-center justify-end">
             <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
               <span>Anteprima live</span>
@@ -434,6 +451,7 @@ function Workspace({
             value={pipe.typstCode}
             onChange={pipe.setTypstCode}
             onCompile={onCompile}
+            onAutofix={handleAutofix}
             compiling={pipe.compiling}
             error={pipe.compileError}
             disabled={pipe.phase === 'running' && !pipe.typstCode}

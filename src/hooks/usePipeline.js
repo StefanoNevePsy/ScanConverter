@@ -13,6 +13,8 @@ import {
   normalizeHeadingLevels,
   enforceHeadingLevels,
 } from '../lib/session.js';
+import { buildPreamble, extractTitle } from '../lib/preamble.js';
+import { autofixTypst } from '../lib/typstfix.js';
 import {
   saveSession,
   saveFigures,
@@ -377,6 +379,42 @@ export function usePipeline(settings) {
   );
 
   /**
+   * Applica LOCALMENTE (senza AI) le scelte di impaginazione: ricostruisce il
+   * preambolo Typst dalle selezioni e lo sostituisce nel documento corrente,
+   * poi ricompila. Nessuna chiamata all'LLM → nessun rate limit.
+   */
+  const applyLocalStyle = useCallback(
+    async (sel) => {
+      if (!typstCode.trim()) return false;
+      const { body } = splitPreamble(typstCode);
+      const preamble = buildPreamble(sel, { title: extractTitle(body) });
+      const next = combineDocument(preamble, [body]);
+      setTypstCode(next);
+      // salva anche nel corpo della sessione (se attiva) per la persistenza
+      if (sessionRef.current) sessionRef.current.preamble = preamble;
+      return recompile(next);
+    },
+    [typstCode, recompile],
+  );
+
+  /**
+   * Correzione automatica degli errori Typst comuni (titoli Markdown, funzioni
+   * inesistenti, font non disponibili, `<` non chiusi). Ricompila e ritorna
+   * l'elenco delle modifiche.
+   */
+  const autofix = useCallback(async () => {
+    if (!typstCode.trim()) return { changes: [] };
+    const { fixed, changes } = autofixTypst(typstCode);
+    if (changes.length) {
+      setTypstCode(fixed);
+      await recompile(fixed);
+    } else {
+      await recompile(typstCode);
+    }
+    return { changes };
+  }, [typstCode, recompile]);
+
+  /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
    * fase 2 (Gemini con indicazioni di stile) + fase 3 (compilazione). Non
    * ripete l'OCR (nessun costo/latenza NVIDIA, nessun re-render del PDF).
@@ -544,6 +582,8 @@ export function usePipeline(settings) {
     runPipeline,
     recompile,
     restyle,
+    applyLocalStyle,
+    autofix,
     resume,
     reset,
     cancel,
