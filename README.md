@@ -106,16 +106,41 @@ Caratteristiche native:
 - **Icona e splash** — generate in `assets/` (sorgenti SVG in `assets/src/`)
   e installate in `android/app/src/main/res`.
 
+## Rigenerare il layout (re-prompt Gemini)
+
+Dopo la prima elaborazione, il pannello **“Rigenera layout con Gemini”**
+permette di ottenere un'impaginazione diversa **senza rifare l'OCR** (nessun
+costo/latenza NVIDIA): si scelgono preset rapidi (famiglia di font, ampiezza
+del margine per annotazioni, densità) e/o si scrive un'istruzione libera (es.
+“titoli centrati in maiuscoletto, due colonne”). Viene ri-eseguita solo la
+fase 2 (Gemini con le indicazioni di stile) + la fase 3 (compilazione).
+
+In alternativa si può sempre modificare a mano il codice Typst nell'editor e
+premere **Genera PDF**, oppure attivare l'**Anteprima live**.
+
+## Modelli
+
+- **OCR**: `nvidia/nemotron-parse` (Nemotron-Parse 1.1) è il modello di
+  document-parsing consigliato di NVIDIA — 885M parametri, purpose-built per
+  OCR/tabelle/layout, migliore dei VLM generici su documenti strutturati. È
+  configurabile in *Impostazioni → Opzioni avanzate*.
+- **Layout**: `gemini-flash-latest` (configurabile).
+
 ## Note e limiti noti
 
-- **CORS lato NVIDIA**: alcuni endpoint NIM non abilitano le richieste
-  cross-origin dal browser. Se la chiamata viene bloccata, l'app mostra un
-  errore esplicito; instradare la richiesta tramite un piccolo proxy
-  server-side risolve il problema.
-- **Contratto NIM**: il payload verso Nemotron-Parse segue lo schema
-  OpenAI-compatibile (`messages` con `image_url`) usato dalla maggior parte
-  dei NIM VLM. Se l'endpoint corrente adotta uno schema diverso, sono
-  sufficienti piccole modifiche in `src/lib/nvidia.js` (il parser della
-  risposta è già tollerante a più formati).
+- **CORS lato NVIDIA (verificato)**: l'endpoint NIM `integrate.api.nvidia.com`
+  **non** restituisce header CORS, quindi dal browser web la chiamata OCR è
+  bloccata. Soluzioni, per piattaforma:
+  - **Android**: nessun problema — `CapacitorHttp` usa HTTP nativo.
+  - **Web in sviluppo**: il dev server di Vite fa da proxy (`/__nvidia__`),
+    quindi `npm run dev` funziona senza configurazione.
+  - **Web in produzione**: serve un reverse-proxy analogo davanti a
+    `integrate.api.nvidia.com` (Gemini invece supporta il CORS e funziona
+    diretto dal browser).
+- **Contratto NIM (verificato con chiave reale)**: endpoint
+  `https://integrate.api.nvidia.com/v1/chat/completions`, modello
+  `nvidia/nemotron-parse`, tool `markdown_no_bbox`; il testo estratto arriva
+  in `tool_calls[0].function.arguments`, che è un **array** JSON `[{text}]`.
+  Il parser gestisce array, oggetto e i formati di fallback.
 - Il compilatore Typst WASM (~28 MB, ~11 MB gzip) viene scaricato una volta e
   messo in cache dal browser.

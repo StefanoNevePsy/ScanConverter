@@ -14,4 +14,18 @@ export default defineConfig({
       '@myriaddreamin/typst-ts-renderer',
     ],
   },
+  // NVIDIA NIM non espone header CORS: dal browser la chiamata diretta è
+  // bloccata. In sviluppo la instradiamo tramite il dev server (server-side,
+  // niente CORS). In produzione web serve un proxy analogo; nell'app Android
+  // il problema non esiste (CapacitorHttp usa HTTP nativo).
+  server: {
+    proxy: {
+      '/__nvidia__': {
+        target: 'https://integrate.api.nvidia.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/__nvidia__/, ''),
+      },
+    },
+  },
 });

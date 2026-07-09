@@ -24,12 +24,12 @@
  * @param {AbortSignal} [params.signal]
  * @returns {Promise<string>} testo estratto (Markdown)
  */
-export async function extractPageText({ apiKey, endpoint, imageDataUrl, signal }) {
+export async function extractPageText({ apiKey, endpoint, model, imageDataUrl, signal }) {
   if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
   if (!imageDataUrl) throw new Error('Nessuna immagine da analizzare.');
 
   const body = {
-    model: 'nvidia/nemotron-parse',
+    model: model || 'nvidia/nemotron-parse',
     tools: [{ type: 'function', function: { name: 'markdown_no_bbox' } }],
     messages: [
       {
@@ -42,7 +42,7 @@ export async function extractPageText({ apiKey, endpoint, imageDataUrl, signal }
 
   let res;
   try {
-    res = await fetch(endpoint, {
+    res = await fetch(resolveEndpoint(endpoint), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -76,11 +76,39 @@ export async function extractPageText({ apiKey, endpoint, imageDataUrl, signal }
   return text.trim();
 }
 
+/**
+ * In sviluppo web instrada l'endpoint NVIDIA verso il proxy del dev server
+ * (`/__nvidia__`), aggirando l'assenza di CORS. In Node e in produzione
+ * nativa (CapacitorHttp) resta l'URL reale.
+ */
+function resolveEndpoint(endpoint) {
+  // Vite sostituisce staticamente `import.meta.env.DEV` (true in dev, false in
+  // build). In Node l'accesso lancia: lo intercettiamo e trattiamo come prod.
+  let dev = false;
+  try {
+    dev = import.meta.env.DEV;
+  } catch {
+    dev = false;
+  }
+  if (!dev) return endpoint;
+  try {
+    const u = new URL(endpoint);
+    if (u.hostname.endsWith('api.nvidia.com')) {
+      return '/__nvidia__' + u.pathname + u.search;
+    }
+  } catch {
+    /* endpoint relativo: usa così com'è */
+  }
+  return endpoint;
+}
+
 /** Estrae il testo dai formati di risposta noti (tool_calls prima di tutto). */
 function pickExtractedText(data) {
   const message = data?.choices?.[0]?.message;
 
-  // Formato ufficiale nemotron-parse: tool_calls con arguments JSON {text}
+  // Formato ufficiale nemotron-parse: tool_calls con `arguments` JSON.
+  // Verificato sull'endpoint reale: arguments è un ARRAY [{text}, ...]
+  // (un elemento per blocco); può anche essere un singolo oggetto {text}.
   const call = message?.tool_calls?.[0]?.function;
   if (call?.arguments) {
     try {
@@ -88,8 +116,12 @@ function pickExtractedText(data) {
         typeof call.arguments === 'string'
           ? JSON.parse(call.arguments)
           : call.arguments;
-      if (args?.text) return args.text;
-      if (args?.markdown) return args.markdown;
+      const blocks = Array.isArray(args) ? args : [args];
+      const text = blocks
+        .map((b) => b?.text || b?.markdown || (typeof b === 'string' ? b : ''))
+        .filter(Boolean)
+        .join('\n\n');
+      if (text) return text;
     } catch {
       // arguments non-JSON: usa il grezzo
       if (typeof call.arguments === 'string') return call.arguments;

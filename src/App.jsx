@@ -8,6 +8,7 @@ import Dropzone from './components/Dropzone.jsx';
 import PipelineStepper from './components/PipelineStepper.jsx';
 import TypstEditor from './components/TypstEditor.jsx';
 import PdfPreview from './components/PdfPreview.jsx';
+import RestylePanel from './components/RestylePanel.jsx';
 import {
   IconSettings,
   IconRefresh,
@@ -352,6 +353,14 @@ function Workspace({
             <p className="mt-0.5 text-muted">{pipe.error}</p>
           </div>
         </div>
+      )}
+
+      {pipe.rawText && (
+        <RestylePanel
+          onRestyle={(hint) => pipe.restyle(hint)}
+          busy={pipe.phase === 'running'}
+          disabled={pipe.phase === 'running'}
+        />
       )}
 
       {/* Selettore a schede (solo mobile/tablet stretto) */}

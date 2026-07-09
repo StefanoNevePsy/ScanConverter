@@ -122,6 +122,14 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 mono
               />
               <Field
+                label="Modello OCR NVIDIA"
+                hint="nvidia/nemotron-parse è il modello di parsing consigliato."
+                value={form.nvidiaModel}
+                onChange={update('nvidiaModel')}
+                placeholder={DEFAULTS.nvidiaModel}
+                mono
+              />
+              <Field
                 label="Modello Gemini"
                 value={form.geminiModel}
                 onChange={update('geminiModel')}

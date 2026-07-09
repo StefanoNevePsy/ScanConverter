@@ -98,6 +98,59 @@ export function usePipeline(settings) {
     [typstCode, setPdf],
   );
 
+  /**
+   * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
+   * fase 2 (Gemini con indicazioni di stile) + fase 3 (compilazione). Non
+   * ripete l'OCR (nessun costo/latenza NVIDIA, nessun re-render del PDF).
+   */
+  const restyle = useCallback(
+    async (styleHint) => {
+      if (!rawText.trim()) return false;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const { signal } = controller;
+
+      setError(null);
+      setCompileError(null);
+      setStatus((s) => ({ ...s, format: 'active', compile: 'pending' }));
+      setPhase('running');
+      setActiveStep('format');
+      setDetail('Rigenerazione layout…');
+      try {
+        const code = await toTypst({
+          apiKey: settings.googleApiKey,
+          model: settings.geminiModel,
+          rawText,
+          styleHint,
+          signal,
+        });
+        if (signal.aborted) return false;
+        setTypstCode(code);
+        setStatus((s) => ({ ...s, format: 'done', compile: 'active' }));
+        setActiveStep('compile');
+        const bytes = await compileToPdf(code);
+        if (signal.aborted) return false;
+        setPdf(bytes);
+        setStatus((s) => ({ ...s, compile: 'done' }));
+        setActiveStep(null);
+        setDetail('');
+        setPhase('done');
+        return true;
+      } catch (e) {
+        setDetail('');
+        if (signal.aborted || e?.name === 'AbortError') {
+          setPhase('done');
+          return false;
+        }
+        setError(e.message || 'Errore nella rigenerazione del layout.');
+        setPhase('error');
+        return false;
+      }
+    },
+    [rawText, settings, setPdf],
+  );
+
   /** Esegue l'intera pipeline a partire dal file caricato. */
   const runPipeline = useCallback(
     async (file) => {
@@ -141,6 +194,7 @@ export function usePipeline(settings) {
           const pageText = await extractPageText({
             apiKey: settings.nvidiaApiKey,
             endpoint: settings.nvidiaEndpoint,
+            model: settings.nvidiaModel,
             imageDataUrl: pageImages[i],
             signal,
           });
@@ -211,6 +265,7 @@ export function usePipeline(settings) {
     compiling,
     runPipeline,
     recompile,
+    restyle,
     reset,
     cancel,
   };

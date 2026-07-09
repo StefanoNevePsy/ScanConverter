@@ -27,13 +27,26 @@ export const SYSTEM_PROMPT =
  * @param {AbortSignal} [params.signal]
  * @returns {Promise<string>} codice Typst
  */
-export async function toTypst({ apiKey, model, rawText, signal }) {
+export async function toTypst({ apiKey, model, rawText, styleHint, signal }) {
   if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
   if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
 
   const endpoint =
     `https://generativelanguage.googleapis.com/v1beta/models/` +
     `${encodeURIComponent(model)}:generateContent`;
+
+  const guidance =
+    'Font disponibili nel compilatore (usa SOLO questi nomi esatti): ' +
+    'per il corpo serif "Libertinus Serif" oppure "New Computer Modern"; ' +
+    'per i titoli sans-serif "DejaVu Sans"; per il monospazio "DejaVu Sans Mono".\n' +
+    'Vincoli tecnici (Typst 0.13): produci codice che COMPILA senza errori. ' +
+    'Non usare funzioni non definite; se definisci un #let, definiscilo PRIMA ' +
+    'di usarlo. Converti eventuali tag HTML residui (es. <sup>1</sup>) in ' +
+    'costrutti Typst nativi (footnote/super). Non includere immagini esterne ' +
+    'né `#import` di pacchetti. Chiudi sempre parentesi e parentesi quadre.' +
+    (styleHint
+      ? '\n\nRICHIESTA DI STILE PRIORITARIA dell’utente (rispettala): ' + styleHint
+      : '');
 
   const body = {
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
@@ -43,11 +56,8 @@ export async function toTypst({ apiKey, model, rawText, signal }) {
         parts: [
           {
             text:
-              'Font disponibili nel compilatore (usa SOLO questi nomi esatti): ' +
-              'per il corpo serif "Libertinus Serif" oppure "New Computer Modern"; ' +
-              'per i titoli sans-serif "DejaVu Sans"; per il monospazio ' +
-              '"DejaVu Sans Mono".\n\n' +
-              'Testo estratto dall’OCR da convertire in Typst:\n\n' +
+              guidance +
+              '\n\nTesto estratto dall’OCR da convertire in Typst:\n\n' +
               '"""\n' +
               rawText +
               '\n"""',
