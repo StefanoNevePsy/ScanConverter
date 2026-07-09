@@ -12,6 +12,62 @@
 */
 
 /**
+ * Normalizza i livelli di titolo del Markdown OCR: mappa le profondità
+ * effettivamente usate su 1..N, così il titolo più esterno diventa sempre
+ * `#` (→ `=` in Typst). Applicato all'INTERO documento prima del chunking:
+ * garantisce una scala di livelli coerente su tutte le pagine.
+ * @param {string} md
+ * @returns {string}
+ */
+export function normalizeHeadingLevels(md) {
+  const re = /^(#{1,6})\s+/;
+  const depths = new Set();
+  for (const line of md.split('\n')) {
+    const m = line.match(re);
+    if (m) depths.add(m[1].length);
+  }
+  if (depths.size === 0) return md;
+  const sorted = [...depths].sort((a, b) => a - b);
+  const map = new Map(sorted.map((d, i) => [d, i + 1]));
+  return md
+    .split('\n')
+    .map((line) => {
+      const m = line.match(re);
+      if (!m) return line;
+      return '#'.repeat(map.get(m[1].length)) + line.slice(m[1].length);
+    })
+    .join('\n');
+}
+
+/**
+ * Impone in modo DETERMINISTICO i livelli di titolo del sorgente al corpo
+ * Typst prodotto da Gemini: allinea per ordine i titoli del chunk sorgente
+ * (livelli Markdown normalizzati) con quelli in output (`=`, `==`, …) e
+ * riscrive la profondità. Se il numero di titoli non coincide, lascia
+ * l'output invariato (nessun rischio di corruzione). Questa è la garanzia di
+ * coerenza gerarchica indipendente dall'LLM.
+ * @param {string} body corpo Typst da Gemini
+ * @param {string} sourceChunk Markdown sorgente (livelli già normalizzati)
+ * @returns {string}
+ */
+export function enforceHeadingLevels(body, sourceChunk) {
+  const srcLevels = [...sourceChunk.matchAll(/^(#{1,6})\s+/gm)].map((m) => m[1].length);
+  const lines = body.split('\n');
+  const headingIdx = [];
+  lines.forEach((l, i) => {
+    if (/^=+\s/.test(l.trimStart())) headingIdx.push(i);
+  });
+  if (headingIdx.length !== srcLevels.length || srcLevels.length === 0) return body;
+  headingIdx.forEach((li, k) => {
+    const line = lines[li];
+    const lead = line.match(/^(\s*)/)[1];
+    const rest = line.trimStart().replace(/^=+\s+/, '');
+    lines[li] = `${lead}${'='.repeat(srcLevels[k])} ${rest}`;
+  });
+  return lines.join('\n');
+}
+
+/**
  * Divide il Markdown OCR in chunk non più lunghi di `maxChars`, rispettando i
  * confini di pagina (`<!-- pagina N -->`) e di paragrafo.
  * @param {string} markdown

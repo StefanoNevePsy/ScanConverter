@@ -10,7 +10,34 @@ import {
   splitPreamble,
   outlineFromBody,
   combineDocument,
+  normalizeHeadingLevels,
+  enforceHeadingLevels,
 } from '../lib/session.js';
+import {
+  saveSession,
+  saveFigures,
+  getFigures,
+  getResumableSession,
+  deleteSession,
+} from '../lib/store.js';
+
+// Pausa interrompibile (per il backoff sui rate limit).
+function abortableSleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'));
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(t);
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true },
+    );
+  });
+}
+
+const RATE_LIMIT_RE = /(^|\D)429(\D|$)|rate.?limit|RESOURCE_EXHAUSTED|quota/i;
 
 // Le tre fasi dello split delle operazioni, nell'ordine mostrato all'utente.
 export const STEPS = [
@@ -40,8 +67,9 @@ export function usePipeline(settings) {
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [canResume, setCanResume] = useState(false); // sessione interrotta ripristinabile
+  const [persisted, setPersisted] = useState(null); // sessione salvata su IndexedDB da riprendere
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
-  const sessionRef = useRef(null); // { chunks, preamble, styleHint, lastError }
+  const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
 
   const abortRef = useRef(null);
   const pdfUrlRef = useRef(null);
@@ -51,6 +79,29 @@ export function usePipeline(settings) {
   useEffect(() => {
     initTypst().catch(() => {
       /* l'errore reale emergerà alla prima compilazione con contesto utile */
+    });
+  }, []);
+
+  // All'avvio, cerca una sessione incompleta da riprendere.
+  useEffect(() => {
+    getResumableSession().then((s) => {
+      if (s) setPersisted(s);
+    });
+  }, []);
+
+  // Salva su IndexedDB lo stato corrente della sessione (metadati testuali).
+  const persist = useCallback(async () => {
+    const s = sessionRef.current;
+    if (!s?.id) return;
+    const allDone = s.chunks.every((c) => c.status === 'done');
+    await saveSession({
+      id: s.id,
+      fileName: s.fileName,
+      rawText: s.rawText,
+      preamble: s.preamble,
+      styleHint: s.styleHint || null,
+      chunks: s.chunks.map((c) => ({ text: c.text, body: c.body, status: c.status })),
+      status: allDone ? 'done' : 'paused',
     });
   }, []);
 
@@ -98,6 +149,28 @@ export function usePipeline(settings) {
    * errore (es. rate limit) i chunk completati restano: la sessione è
    * ripristinabile con `resume`.
    */
+  // Chiama Gemini con auto-retry sul rate limit (429/quota) e backoff
+  // esponenziale: così documenti lunghi/libri si convertono "lentamente"
+  // senza intervento manuale. Gli altri errori si propagano subito.
+  const callGeminiWithRetry = useCallback(
+    async (args, signal, chunkLabel) => {
+      let delay = 15000;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await toTypst({ ...args, signal });
+        } catch (e) {
+          if (signal.aborted || e?.name === 'AbortError') throw e;
+          if (!RATE_LIMIT_RE.test(e.message || '') || attempt >= 6) throw e;
+          const secs = Math.round(delay / 1000);
+          setDetail(`${chunkLabel} · rate limit: nuovo tentativo tra ${secs}s…`);
+          await abortableSleep(delay, signal);
+          delay = Math.min(delay * 2, 120000);
+        }
+      }
+    },
+    [],
+  );
+
   const processChunks = useCallback(
     async (signal) => {
       const s = sessionRef.current;
@@ -107,49 +180,59 @@ export function usePipeline(settings) {
         const doneCount = s.chunks.filter((c) => c.status === 'done').length;
         setChunkProgress(total > 1 ? { done: doneCount, total } : null);
         if (ch.status === 'done') continue;
-        setDetail(total > 1 ? `Layout: chunk ${i + 1}/${total}…` : '');
+        const label = total > 1 ? `Layout: chunk ${i + 1}/${total}` : 'Formattazione';
+        setDetail(total > 1 ? `${label}…` : '');
         try {
           if (i === 0) {
-            const code = await toTypst({
-              apiKey: settings.googleApiKey,
-              model: settings.geminiModel,
-              rawText: ch.text,
-              styleHint: s.styleHint,
+            const code = await callGeminiWithRetry(
+              {
+                apiKey: settings.googleApiKey,
+                model: settings.geminiModel,
+                rawText: ch.text,
+                styleHint: s.styleHint,
+              },
               signal,
-            });
+              label,
+            );
             const { preamble, body } = splitPreamble(code);
             s.preamble = preamble;
-            ch.body = body;
+            ch.body = enforceHeadingLevels(body, ch.text);
           } else {
             const prior = s.chunks
               .slice(0, i)
               .map((c) => c.body)
               .filter(Boolean)
               .join('\n\n');
-            const body = await toTypst({
-              apiKey: settings.googleApiKey,
-              model: settings.geminiModel,
-              rawText: ch.text,
-              styleHint: s.styleHint,
-              continuation: { preamble: s.preamble, outline: outlineFromBody(prior) },
+            const body = await callGeminiWithRetry(
+              {
+                apiKey: settings.googleApiKey,
+                model: settings.geminiModel,
+                rawText: ch.text,
+                styleHint: s.styleHint,
+                continuation: { preamble: s.preamble, outline: outlineFromBody(prior) },
+              },
               signal,
-            });
-            ch.body = body;
+              label,
+            );
+            // Impone in modo deterministico i livelli di titolo del sorgente.
+            ch.body = enforceHeadingLevels(body, ch.text);
           }
           ch.status = 'done';
-          // Aggiorna progressivamente l'editor col documento parziale.
+          // Aggiorna progressivamente l'editor e salva i progressi.
           setTypstCode(combineDocument(s.preamble, s.chunks.map((c) => c.body || '')));
+          await persist();
         } catch (e) {
           if (signal.aborted || e?.name === 'AbortError') return 'aborted';
           ch.status = 'error';
           s.lastError = e.message || 'Errore Gemini.';
+          await persist();
           return 'error';
         }
       }
       setChunkProgress(null);
       return 'done';
     },
-    [settings],
+    [settings, callGeminiWithRetry, persist],
   );
 
   /** Compila il documento combinato e chiude la pipeline. */
@@ -168,6 +251,7 @@ export function usePipeline(settings) {
         setStatus((x) => ({ ...x, compile: 'done' }));
         setActiveStep(null);
         setPhase('done');
+        persist(); // segna la sessione come completata
       } catch (e) {
         if (signal.aborted) return;
         // Errore di compilazione Typst: non fatale, l'editor resta usabile.
@@ -177,7 +261,7 @@ export function usePipeline(settings) {
         setPhase('done');
       }
     },
-    [setPdf],
+    [setPdf, persist],
   );
 
   /** Esegue la fase 2+3 sulla sessione corrente (fresh o resume). */
@@ -220,6 +304,42 @@ export function usePipeline(settings) {
     await runFormat(controller.signal);
   }, [runFormat]);
 
+  /** Riprende una sessione salvata su IndexedDB (dopo chiusura dell'app). */
+  const loadPersisted = useCallback(async () => {
+    const meta = persisted;
+    if (!meta) return null;
+    const figs = await getFigures(meta.id);
+    figuresRef.current = figs;
+    sessionRef.current = {
+      id: meta.id,
+      fileName: meta.fileName,
+      rawText: meta.rawText,
+      chunks: meta.chunks.map((c) => ({ ...c })),
+      preamble: meta.preamble || '',
+      styleHint: meta.styleHint || undefined,
+      lastError: '',
+    };
+    setRawText(meta.rawText || '');
+    setTypstCode(combineDocument(meta.preamble || '', meta.chunks.map((c) => c.body || '')));
+    setStatus({ ocr: 'done', format: 'active', compile: 'pending' });
+    setPersisted(null);
+    setPhase('running');
+    setActiveStep('format');
+    const controller = new AbortController();
+    abortRef.current = controller;
+    sessionRef.current.chunks.forEach((c) => {
+      if (c.status === 'error') c.status = 'pending';
+    });
+    await runFormat(controller.signal);
+    return meta;
+  }, [persisted, runFormat]);
+
+  /** Scarta la sessione salvata. */
+  const discardPersisted = useCallback(async () => {
+    if (persisted) await deleteSession(persisted.id);
+    setPersisted(null);
+  }, [persisted]);
+
   /** Compila localmente il codice Typst corrente in PDF. */
   const recompile = useCallback(
     async (sourceOverride) => {
@@ -257,7 +377,11 @@ export function usePipeline(settings) {
       setCompileError(null);
       setCanResume(false);
       // Nuova sessione a chunk sul testo OCR, con lo stile richiesto.
+      const prev = sessionRef.current;
       sessionRef.current = {
+        id: prev?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        fileName: prev?.fileName || 'documento',
+        rawText,
         chunks: chunkDocument(rawText).map((t) => ({ text: t, body: '', status: 'pending' })),
         preamble: '',
         styleHint,
@@ -330,7 +454,9 @@ export function usePipeline(settings) {
           );
           figures.push(...page.figures);
         }
-        const extracted = parts.join('\n\n');
+        // Normalizza i livelli di titolo sull'INTERO documento (coerenza
+        // gerarchica deterministica su tutte le pagine).
+        const extracted = normalizeHeadingLevels(parts.join('\n\n'));
 
         figuresRef.current = figures;
         setDetail('');
@@ -338,13 +464,20 @@ export function usePipeline(settings) {
         setStatus((s) => ({ ...s, ocr: 'done' }));
 
         // [2/3] + [3/3] Formattazione a chunk (gerarchia continua) e
-        // compilazione. La sessione gestisce internamente fasi ed errori.
+        // compilazione. La sessione persiste su IndexedDB per riprendere
+        // dopo rate limit o chiusura dell'app.
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         sessionRef.current = {
+          id,
+          fileName: file.name,
+          rawText: extracted,
           chunks: chunkDocument(extracted).map((t) => ({ text: t, body: '', status: 'pending' })),
           preamble: '',
           styleHint: undefined,
           lastError: '',
         };
+        await saveFigures(id, figures);
+        await persist();
         setActiveStep('format');
         setStatus((s) => ({ ...s, format: 'active' }));
         await runFormat(signal);
@@ -363,7 +496,7 @@ export function usePipeline(settings) {
         setPhase('error');
       }
     },
-    [settings, runFormat, typstCode],
+    [settings, runFormat, typstCode, persist],
   );
 
   return {
@@ -380,6 +513,9 @@ export function usePipeline(settings) {
     compiling,
     chunkProgress,
     canResume,
+    persisted,
+    loadPersisted,
+    discardPersisted,
     runPipeline,
     recompile,
     restyle,

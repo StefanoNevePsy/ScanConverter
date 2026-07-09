@@ -106,19 +106,36 @@ Caratteristiche native:
 - **Icona e splash** — generate in `assets/` (sorgenti SVG in `assets/src/`)
   e installate in `android/app/src/main/res`.
 
-## Sessione a chunk (documenti grandi & rate limiting)
+## Sessione a chunk, libri interi & rate limiting
 
+Pensato per convertire **documenti lunghi o libri interi**, anche lentamente.
 Il testo OCR viene diviso in **chunk** elaborati da Gemini uno alla volta
-(`src/lib/session.js`), preservando la gerarchia tra le fasi:
+(`src/lib/session.js`):
 
 - il **primo chunk** genera il preambolo Typst (`#set/#show`) + il corpo;
 - i **chunk successivi** ricevono il preambolo (da non ripetere) e la
   **posizione gerarchica corrente** (lo stack dei titoli), e restituiscono solo
-  il corpo, coerente con i livelli (`==`, `===`, …), senza ripartire da “= 1”.
+  il corpo, senza ripartire da “= 1”.
 
-Se un chunk fallisce (es. **rate limit** 429), i chunk completati restano e
-compare **“Riprendi”**: dopo qualche minuto la sessione continua da dove si era
-fermata, mantenendo la gerarchia. L'editor mostra il documento che si
+**Coerenza gerarchica deterministica** (non affidata solo all'LLM):
+
+- `normalizeHeadingLevels` normalizza i livelli sull'**intero** documento (il
+  titolo più esterno diventa sempre `=`), quindi la scala è coerente su tutte
+  le pagine;
+- `enforceHeadingLevels` **impone** all'output di Gemini i livelli del sorgente
+  OCR (allineamento per ordine): la profondità dei titoli non può “andare alla
+  deriva”, qualunque sia la lunghezza del documento.
+
+**Auto-ripresa lenta sui rate limit**: se Gemini risponde 429/quota, l'app
+**riprova da sola** con backoff esponenziale (15s → 30s → … fino a 2 min).
+Così un libro si converte gradualmente senza intervento manuale.
+
+**Persistenza su IndexedDB** (`src/lib/store.js`): dopo ogni chunk completato,
+lo stato (testo, corpi Typst, preambolo, figure) viene salvato. IndexedDB
+gestisce testo esteso e byte delle immagini, ben oltre i limiti di
+localStorage, sia su web sia nella WebView Android. Se chiudi l'app a metà, al
+riavvio compare **“Sessione in sospeso — Riprendi”** e l'elaborazione continua
+da dove si era fermata, gerarchia inclusa. L'editor mostra il documento che si
 costruisce progressivamente.
 
 ## Tabelle, gerarchia, figure e testo OCR
