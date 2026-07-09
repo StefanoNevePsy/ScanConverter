@@ -37,7 +37,11 @@ function abortableSleep(ms, signal) {
   });
 }
 
-const RATE_LIMIT_RE = /(^|\D)429(\D|$)|rate.?limit|RESOURCE_EXHAUSTED|quota/i;
+// Errori transitori di Gemini da riprovare con backoff: rate limit (429) e
+// sovraccarico/indisponibilità temporanea del modello (500/503, "overloaded",
+// "UNAVAILABLE"). Gli errori definitivi (400, chiave errata…) NON si riprovano.
+const RETRYABLE_RE =
+  /(^|\D)(429|500|503)(\D|$)|rate.?limit|RESOURCE_EXHAUSTED|quota|overloaded|unavailable|temporarily|try again/i;
 
 // Le tre fasi dello split delle operazioni, nell'ordine mostrato all'utente.
 export const STEPS = [
@@ -165,9 +169,9 @@ export function usePipeline(settings) {
           return await toTypst({ ...args, signal });
         } catch (e) {
           if (signal.aborted || e?.name === 'AbortError') throw e;
-          if (!RATE_LIMIT_RE.test(e.message || '') || attempt >= 6) throw e;
+          if (!RETRYABLE_RE.test(e.message || '') || attempt >= 6) throw e;
           const secs = Math.round(delay / 1000);
-          setDetail(`${chunkLabel} · rate limit: nuovo tentativo tra ${secs}s…`);
+          setDetail(`${chunkLabel} · servizio occupato: nuovo tentativo tra ${secs}s…`);
           await abortableSleep(delay, signal);
           delay = Math.min(delay * 2, 120000);
         }

@@ -47,9 +47,12 @@ _Opzioni avanzate_.
 2. **Estrazione** (`src/lib/nvidia.js` + `src/lib/pdf.js`) — Nemotron-Parse
    accetta **solo immagini**: se il file è un PDF, ogni pagina viene prima
    rasterizzata a ~250 DPI con pdf.js (`renderPdfToImages`), poi ogni pagina
-   è inviata al NIM con il tool `markdown_no_bbox`. Il testo estratto arriva
-   nei `tool_calls` della risposta (`arguments.text`) e viene concatenato
-   pagina per pagina.
+   è inviata al NIM. Il testo estratto arriva nei `tool_calls` della risposta
+   e viene concatenato pagina per pagina.
+   - **PDF scansionati**: le pagine sono immagini incorporate (JBIG2/JPEG2000).
+     pdf.js le decodifica via WASM, quindi passiamo `wasmUrl` (binari in
+     `public/pdfjs/`). Senza questa configurazione la pagina renderizza
+     **bianca** e l'OCR restituisce “nessun testo”.
 3. **Strutturazione** (`src/lib/gemini.js`) — Gemini riceve il testo grezzo e
    il system prompt tipografico e restituisce codice Typst con margini ampi,
    serif per il corpo, sans per i titoli e vere note a piè di pagina.
