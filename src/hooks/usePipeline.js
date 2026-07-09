@@ -5,6 +5,12 @@ import { compileToPdf, pdfObjectUrl, initTypst } from '../lib/typst.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter } from '../lib/assemble.js';
+import {
+  chunkDocument,
+  splitPreamble,
+  outlineFromBody,
+  combineDocument,
+} from '../lib/session.js';
 
 // Le tre fasi dello split delle operazioni, nell'ordine mostrato all'utente.
 export const STEPS = [
@@ -32,7 +38,10 @@ export function usePipeline(settings) {
   const [compileError, setCompileError] = useState(null);
   const [compiling, setCompiling] = useState(false);
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
+  const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
+  const [canResume, setCanResume] = useState(false); // sessione interrotta ripristinabile
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
+  const sessionRef = useRef(null); // { chunks, preamble, styleHint, lastError }
 
   const abortRef = useRef(null);
   const pdfUrlRef = useRef(null);
@@ -73,12 +82,143 @@ export function usePipeline(settings) {
     setPdfUrl(null);
     setCompileError(null);
     setDetail('');
+    setChunkProgress(null);
+    setCanResume(false);
     figuresRef.current = [];
+    sessionRef.current = null;
   }, []);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
+
+  /**
+   * Elabora i chunk della sessione con Gemini, uno alla volta, preservando
+   * preambolo e gerarchia. Ritorna 'done' | 'error' | 'aborted'. In caso di
+   * errore (es. rate limit) i chunk completati restano: la sessione è
+   * ripristinabile con `resume`.
+   */
+  const processChunks = useCallback(
+    async (signal) => {
+      const s = sessionRef.current;
+      const total = s.chunks.length;
+      for (let i = 0; i < total; i++) {
+        const ch = s.chunks[i];
+        const doneCount = s.chunks.filter((c) => c.status === 'done').length;
+        setChunkProgress(total > 1 ? { done: doneCount, total } : null);
+        if (ch.status === 'done') continue;
+        setDetail(total > 1 ? `Layout: chunk ${i + 1}/${total}…` : '');
+        try {
+          if (i === 0) {
+            const code = await toTypst({
+              apiKey: settings.googleApiKey,
+              model: settings.geminiModel,
+              rawText: ch.text,
+              styleHint: s.styleHint,
+              signal,
+            });
+            const { preamble, body } = splitPreamble(code);
+            s.preamble = preamble;
+            ch.body = body;
+          } else {
+            const prior = s.chunks
+              .slice(0, i)
+              .map((c) => c.body)
+              .filter(Boolean)
+              .join('\n\n');
+            const body = await toTypst({
+              apiKey: settings.googleApiKey,
+              model: settings.geminiModel,
+              rawText: ch.text,
+              styleHint: s.styleHint,
+              continuation: { preamble: s.preamble, outline: outlineFromBody(prior) },
+              signal,
+            });
+            ch.body = body;
+          }
+          ch.status = 'done';
+          // Aggiorna progressivamente l'editor col documento parziale.
+          setTypstCode(combineDocument(s.preamble, s.chunks.map((c) => c.body || '')));
+        } catch (e) {
+          if (signal.aborted || e?.name === 'AbortError') return 'aborted';
+          ch.status = 'error';
+          s.lastError = e.message || 'Errore Gemini.';
+          return 'error';
+        }
+      }
+      setChunkProgress(null);
+      return 'done';
+    },
+    [settings],
+  );
+
+  /** Compila il documento combinato e chiude la pipeline. */
+  const finalizeCompile = useCallback(
+    async (signal) => {
+      const s = sessionRef.current;
+      const combined = combineDocument(s.preamble, s.chunks.map((c) => c.body || ''));
+      setTypstCode(combined);
+      setStatus((x) => ({ ...x, format: 'done', compile: 'active' }));
+      setActiveStep('compile');
+      setDetail('');
+      try {
+        const bytes = await compileToPdf(combined, figuresRef.current);
+        if (signal.aborted) return;
+        setPdf(bytes);
+        setStatus((x) => ({ ...x, compile: 'done' }));
+        setActiveStep(null);
+        setPhase('done');
+      } catch (e) {
+        if (signal.aborted) return;
+        // Errore di compilazione Typst: non fatale, l'editor resta usabile.
+        setStatus((x) => ({ ...x, compile: 'error' }));
+        setCompileError(e.message || 'Errore di compilazione Typst.');
+        setActiveStep(null);
+        setPhase('done');
+      }
+    },
+    [setPdf],
+  );
+
+  /** Esegue la fase 2+3 sulla sessione corrente (fresh o resume). */
+  const runFormat = useCallback(
+    async (signal) => {
+      const r = await processChunks(signal);
+      if (r === 'aborted') return;
+      if (r === 'error') {
+        setStatus((x) => ({ ...x, format: 'error' }));
+        setCanResume(true);
+        setDetail('');
+        setActiveStep(null);
+        setError(
+          `Elaborazione interrotta: ${sessionRef.current.lastError} · I chunk ` +
+            'completati sono stati mantenuti. Attendi qualche minuto e premi “Riprendi”.',
+        );
+        setPhase('error');
+        return;
+      }
+      await finalizeCompile(signal);
+    },
+    [processChunks, finalizeCompile],
+  );
+
+  /** Riprende una sessione interrotta dai chunk non ancora completati. */
+  const resume = useCallback(async () => {
+    const s = sessionRef.current;
+    if (!s?.chunks?.length) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    s.chunks.forEach((c) => {
+      if (c.status === 'error') c.status = 'pending';
+    });
+    setError(null);
+    setCanResume(false);
+    setPhase('running');
+    setActiveStep('format');
+    setStatus((x) => ({ ...x, format: 'active' }));
+    await runFormat(controller.signal);
+  }, [runFormat]);
 
   /** Compila localmente il codice Typst corrente in PDF. */
   const recompile = useCallback(
@@ -112,46 +252,25 @@ export function usePipeline(settings) {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      const { signal } = controller;
 
       setError(null);
       setCompileError(null);
+      setCanResume(false);
+      // Nuova sessione a chunk sul testo OCR, con lo stile richiesto.
+      sessionRef.current = {
+        chunks: chunkDocument(rawText).map((t) => ({ text: t, body: '', status: 'pending' })),
+        preamble: '',
+        styleHint,
+        lastError: '',
+      };
       setStatus((s) => ({ ...s, format: 'active', compile: 'pending' }));
       setPhase('running');
       setActiveStep('format');
       setDetail('Rigenerazione layout…');
-      try {
-        const code = await toTypst({
-          apiKey: settings.googleApiKey,
-          model: settings.geminiModel,
-          rawText,
-          styleHint,
-          signal,
-        });
-        if (signal.aborted) return false;
-        setTypstCode(code);
-        setStatus((s) => ({ ...s, format: 'done', compile: 'active' }));
-        setActiveStep('compile');
-        const bytes = await compileToPdf(code, figuresRef.current);
-        if (signal.aborted) return false;
-        setPdf(bytes);
-        setStatus((s) => ({ ...s, compile: 'done' }));
-        setActiveStep(null);
-        setDetail('');
-        setPhase('done');
-        return true;
-      } catch (e) {
-        setDetail('');
-        if (signal.aborted || e?.name === 'AbortError') {
-          setPhase('done');
-          return false;
-        }
-        setError(e.message || 'Errore nella rigenerazione del layout.');
-        setPhase('error');
-        return false;
-      }
+      await runFormat(controller.signal);
+      return true;
     },
-    [rawText, settings, setPdf],
+    [rawText, runFormat],
   );
 
   /** Esegue l'intera pipeline a partire dal file caricato. */
@@ -218,30 +337,18 @@ export function usePipeline(settings) {
         setRawText(extracted);
         setStatus((s) => ({ ...s, ocr: 'done' }));
 
-        // [2/3] Formattazione layout (Gemini → Typst)
+        // [2/3] + [3/3] Formattazione a chunk (gerarchia continua) e
+        // compilazione. La sessione gestisce internamente fasi ed errori.
+        sessionRef.current = {
+          chunks: chunkDocument(extracted).map((t) => ({ text: t, body: '', status: 'pending' })),
+          preamble: '',
+          styleHint: undefined,
+          lastError: '',
+        };
         setActiveStep('format');
         setStatus((s) => ({ ...s, format: 'active' }));
-        const code = await toTypst({
-          apiKey: settings.googleApiKey,
-          model: settings.geminiModel,
-          rawText: extracted,
-          signal,
-        });
-        if (signal.aborted) return;
-        setTypstCode(code);
-        setStatus((s) => ({ ...s, format: 'done' }));
-
-        // [3/3] Compilazione PDF (Typst WASM, locale)
-        setActiveStep('compile');
-        setStatus((s) => ({ ...s, compile: 'active' }));
-        const bytes = await compileToPdf(code, figuresRef.current);
-        if (signal.aborted) return;
-        setPdf(bytes);
-        setStatus((s) => ({ ...s, compile: 'done' }));
-
-        setActiveStep(null);
-        setDetail('');
-        setPhase('done');
+        await runFormat(signal);
+        return;
       } catch (e) {
         setDetail('');
         if (signal.aborted || e?.name === 'AbortError') {
@@ -256,7 +363,7 @@ export function usePipeline(settings) {
         setPhase('error');
       }
     },
-    [settings, setPdf, typstCode],
+    [settings, runFormat, typstCode],
   );
 
   return {
@@ -271,9 +378,12 @@ export function usePipeline(settings) {
     pdfUrl,
     compileError,
     compiling,
+    chunkProgress,
+    canResume,
     runPipeline,
     recompile,
     restyle,
+    resume,
     reset,
     cancel,
   };

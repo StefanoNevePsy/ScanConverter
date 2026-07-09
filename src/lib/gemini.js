@@ -27,7 +27,7 @@ export const SYSTEM_PROMPT =
  * @param {AbortSignal} [params.signal]
  * @returns {Promise<string>} codice Typst
  */
-export async function toTypst({ apiKey, model, rawText, styleHint, signal }) {
+export async function toTypst({ apiKey, model, rawText, styleHint, continuation, signal }) {
   if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
   if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
 
@@ -52,6 +52,16 @@ export async function toTypst({ apiKey, model, rawText, styleHint, signal }) {
     'convertito in `#figure(image("/figures/fig-N.png", width: 80%), ' +
     'caption: [didascalia])`, MANTENENDO il percorso esatto. Non inventare né ' +
     'omettere immagini; non aggiungere immagini con altri percorsi.\n' +
+    'TABELLE: converti le tabelle LaTeX (`\\begin{tabular}{…}…\\end{tabular}`) ' +
+    'e le tabelle Markdown in tabelle Typst native `#table(columns: N, ' +
+    'table.header[…][…], …)`; usa `[*testo*]` per le celle di intestazione e ' +
+    'preserva righe/colonne. Avvolgi in `#figure(…, caption: […])` se c’è una ' +
+    'didascalia.\n' +
+    'CORSIVO/ENFASI: preserva SEMPRE il corsivo del Markdown (`_testo_` o ' +
+    '`*testo*`) con l’enfasi Typst `_testo_`. Un intero paragrafo in corsivo ' +
+    'che sembra una trascrizione o una citazione lunga va reso come blocco ' +
+    'citazione leggermente più piccolo: `#block(inset: (left: 1em))[#text(' +
+    'size: 0.9em, style: "italic")[…]]`.\n' +
     'Vincoli tecnici (Typst 0.13): produci codice che COMPILA senza errori. ' +
     'Non usare funzioni non definite; se definisci un #let, definiscilo PRIMA ' +
     'di usarlo. Converti eventuali tag HTML residui (es. <sup>1</sup>) in ' +
@@ -59,6 +69,17 @@ export async function toTypst({ apiKey, model, rawText, styleHint, signal }) {
     'Chiudi sempre parentesi e parentesi quadre.' +
     (styleHint
       ? '\n\nRICHIESTA DI STILE PRIORITARIA dell’utente (rispettala): ' + styleHint
+      : '') +
+    (continuation
+      ? '\n\nCONTINUAZIONE DI DOCUMENTO: il documento è GIÀ iniziato. Il ' +
+        'preambolo Typst è già definito, NON ripeterlo e NON usare #set / ' +
+        '#show / #import. Restituisci SOLO il corpo che continua il ' +
+        'documento, coerente con i livelli di titolo esistenti (non ' +
+        'rinumerare, non ripartire da "= 1").\n' +
+        'Preambolo già presente (solo per riferimento):\n' +
+        continuation.preamble +
+        '\n\nPosizione gerarchica corrente (continua da qui):\n' +
+        (continuation.outline || '(inizio documento)')
       : '');
 
   const body = {

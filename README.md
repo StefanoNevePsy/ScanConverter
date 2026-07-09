@@ -106,11 +106,32 @@ Caratteristiche native:
 - **Icona e splash** — generate in `assets/` (sorgenti SVG in `assets/src/`)
   e installate in `android/app/src/main/res`.
 
-## Gerarchia, figure e testo OCR
+## Sessione a chunk (documenti grandi & rate limiting)
+
+Il testo OCR viene diviso in **chunk** elaborati da Gemini uno alla volta
+(`src/lib/session.js`), preservando la gerarchia tra le fasi:
+
+- il **primo chunk** genera il preambolo Typst (`#set/#show`) + il corpo;
+- i **chunk successivi** ricevono il preambolo (da non ripetere) e la
+  **posizione gerarchica corrente** (lo stack dei titoli), e restituiscono solo
+  il corpo, coerente con i livelli (`==`, `===`, …), senza ripartire da “= 1”.
+
+Se un chunk fallisce (es. **rate limit** 429), i chunk completati restano e
+compare **“Riprendi”**: dopo qualche minuto la sessione continua da dove si era
+fermata, mantenendo la gerarchia. L'editor mostra il documento che si
+costruisce progressivamente.
+
+## Tabelle, gerarchia, figure e testo OCR
 
 - **Gerarchia preservata**: Nemotron-Parse restituisce i livelli di titolo
   (`##`, `###`, `####`) e Gemini li mappa fedelmente in Typst (`==`, `===`,
   `====`), senza appiattirli.
+- **Tabelle**: Nemotron le restituisce in LaTeX (`\begin{tabular}`) e Gemini le
+  converte in **tabelle Typst native** (`#table(...)`).
+- **Corsivo e trascrizioni**: il corsivo (`_testo_`) è preservato; i paragrafi
+  interamente in corsivo (trascrizioni/citazioni) diventano blocchi citazione
+  leggermente più piccoli. La *dimensione* assoluta del testo non è riportata
+  da Nemotron, quindi non è ricostruibile in modo affidabile.
 - **Figure del documento originale**: in modalità `markdown_bbox` il modello
   classifica i blocchi (`Picture`, `Caption`, …) con bounding box. L'app
   **ritaglia** le regioni-immagine dalla pagina sorgente (`src/lib/figures.js`)

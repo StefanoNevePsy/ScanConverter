@@ -349,10 +349,19 @@ function Workspace({
           className="flex items-start gap-3 rounded-xl border border-danger/40 bg-danger-soft px-4 py-3"
         >
           <IconAlert width={18} height={18} className="mt-0.5 shrink-0 text-danger" />
-          <div className="text-sm">
+          <div className="min-w-0 flex-1 text-sm">
             <div className="font-medium text-ink">La pipeline si è interrotta.</div>
             <p className="mt-0.5 text-muted">{pipe.error}</p>
           </div>
+          {pipe.canResume && (
+            <button
+              onClick={() => pipe.resume()}
+              className="inline-flex shrink-0 items-center gap-1.5 self-center rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong"
+            >
+              <IconRefresh width={15} height={15} />
+              Riprendi
+            </button>
+          )}
         </div>
       )}
 
