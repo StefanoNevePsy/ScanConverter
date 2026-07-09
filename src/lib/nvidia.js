@@ -14,6 +14,8 @@
   formati strutturati) per non rompersi se il NIM cambia forma di risposta.
 */
 
+import { SYSTEM_PROMPT, buildGuidance, unwrapCodeBlock } from './gemini.js';
+
 /**
  * Esegue l'OCR di UNA immagine (una pagina).
  *
@@ -104,6 +106,141 @@ async function callNemotron({ apiKey, endpoint, model, imageDataUrl, tool, signa
   }
 
   return res.json();
+}
+
+/**
+ * Fase 2 (alternativa a Gemini) — Strutturazione Typst con un modello NVIDIA.
+ *
+ * I NIM di NVIDIA espongono l'API OpenAI-compatibile chat/completions: si
+ * inviano un messaggio di sistema (il tipografo) e uno utente (istruzioni +
+ * testo OCR). La risposta è testo in `choices[0].message.content`, da cui si
+ * estrae il codice Typst.
+ *
+ * @param {object} params
+ * @param {string} params.apiKey    NVIDIA_API_KEY
+ * @param {string} params.endpoint  URL chat/completions del NIM
+ * @param {string} params.model     es. "meta/llama-3.3-70b-instruct"
+ * @param {string} params.rawText   testo estratto dall'OCR
+ * @param {string} [params.styleHint]
+ * @param {{preamble:string,outline:string}} [params.continuation]
+ * @param {AbortSignal} [params.signal]
+ * @returns {Promise<string>} codice Typst
+ */
+export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHint, continuation, signal }) {
+  if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
+  if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
+
+  const guidance =
+    buildGuidance(styleHint) +
+    (continuation
+      ? '\n\nCONTINUAZIONE DI DOCUMENTO: il documento è GIÀ iniziato. Il ' +
+        'preambolo Typst è già definito, NON ripeterlo e NON usare #set / ' +
+        '#show / #import. Restituisci SOLO il corpo che continua il ' +
+        'documento, coerente con i livelli di titolo esistenti (non ' +
+        'rinumerare, non ripartire da "= 1").\n' +
+        'Preambolo già presente (solo per riferimento):\n' +
+        continuation.preamble +
+        '\n\nPosizione gerarchica corrente (continua da qui):\n' +
+        (continuation.outline || '(inizio documento)')
+      : '');
+
+  const body = {
+    model: model || 'meta/llama-3.3-70b-instruct',
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content:
+          guidance +
+          '\n\nTesto estratto dall’OCR da convertire in Typst:\n\n"""\n' +
+          rawText +
+          '\n"""',
+      },
+    ],
+    temperature: 0.2,
+    max_tokens: 8192,
+  };
+
+  let res;
+  try {
+    res = await fetch(resolveEndpoint(endpoint), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw e;
+    throw new Error(`Impossibile contattare NVIDIA NIM (rete). ${e.message}`);
+  }
+
+  if (!res.ok) {
+    const detail = await safeErrorDetail(res);
+    throw new Error(`NVIDIA NIM ha risposto ${res.status}. ${detail}`);
+  }
+
+  const data = await res.json();
+  const msg = data?.choices?.[0]?.message;
+  // Alcuni modelli "reasoning" antepongono il ragionamento in `reasoning_content`
+  // e mettono la risposta in `content`: usiamo sempre e solo `content`.
+  let text = typeof msg?.content === 'string' ? msg.content : '';
+  if (Array.isArray(msg?.content)) {
+    text = msg.content.map((p) => (typeof p === 'string' ? p : p?.text || '')).join('');
+  }
+  if (!text.trim()) {
+    const reason = data?.choices?.[0]?.finish_reason;
+    throw new Error(`Il modello NVIDIA non ha restituito codice (finish_reason: ${reason || 'n/d'}).`);
+  }
+  return unwrapCodeBlock(stripReasoning(text));
+}
+
+/**
+ * Rimuove eventuali blocchi di ragionamento `<think>…</think>` che alcuni
+ * modelli (es. DeepSeek-R1, Nemotron reasoning) inseriscono prima del codice.
+ */
+function stripReasoning(text) {
+  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
+/**
+ * Elenca i modelli disponibili sull'account NVIDIA (endpoint OpenAI-compatibile
+ * `/v1/models`). Ritorna gli id ordinati alfabeticamente.
+ * @param {object} params
+ * @param {string} params.apiKey
+ * @param {string} params.endpoint  endpoint chat/completions (se ne deriva /models)
+ * @param {AbortSignal} [params.signal]
+ * @returns {Promise<string[]>}
+ */
+export async function listNvidiaModels({ apiKey, endpoint, signal }) {
+  if (!apiKey) throw new Error('Chiave API NVIDIA mancante.');
+  const url = resolveEndpoint(modelsUrlFromEndpoint(endpoint));
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+    signal,
+  });
+  if (!res.ok) throw new Error(`NVIDIA /models ha risposto ${res.status}.`);
+  const data = await res.json();
+  const ids = (data?.data || []).map((m) => m?.id).filter(Boolean);
+  return [...new Set(ids)].sort();
+}
+
+/** Deriva l'URL `/v1/models` dall'endpoint chat/completions configurato. */
+function modelsUrlFromEndpoint(endpoint) {
+  const fallback = 'https://integrate.api.nvidia.com/v1/models';
+  try {
+    const u = new URL(endpoint);
+    u.pathname = u.pathname.replace(/\/chat\/completions\/?$/, '/models');
+    if (!/\/models$/.test(u.pathname)) u.pathname = '/v1/models';
+    u.search = '';
+    return u.toString();
+  } catch {
+    return fallback;
+  }
 }
 
 /** Ritorna l'array `arguments` del tool call, già parsato. */

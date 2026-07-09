@@ -31,7 +31,10 @@ export default function App() {
   const lastCompiledRef = useRef('');
   const previewUrlRef = useRef(null);
 
-  const keysReady = Boolean(settings.nvidiaApiKey && settings.googleApiKey);
+  // L'OCR richiede sempre la chiave NVIDIA; la fase Typst richiede la chiave
+  // Google solo se il motore è Gemini (con motore NVIDIA riusa quella NVIDIA).
+  const needsGoogle = settings.typstEngine !== 'nvidia';
+  const keysReady = Boolean(settings.nvidiaApiKey && (!needsGoogle || settings.googleApiKey));
 
   // Anteprima locale (thumbnail) del file sorgente.
   useEffect(() => {
@@ -52,7 +55,7 @@ export default function App() {
   const handleFile = useCallback(
     (f) => {
       setFile(f);
-      if (!settings.nvidiaApiKey || !settings.googleApiKey) {
+      if (!settings.nvidiaApiKey || (needsGoogle && !settings.googleApiKey)) {
         setSettingsOpen(true);
         return;
       }
@@ -98,15 +101,9 @@ export default function App() {
   }, [pipe]);
 
   const download = useCallback(() => {
-    if (!pipe.pdfUrl) return;
-    const a = document.createElement('a');
-    a.href = pipe.pdfUrl;
     const base = (file?.name || 'documento').replace(/\.[^.]+$/, '');
-    a.download = `${base}-typst.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }, [pipe.pdfUrl, file]);
+    pipe.downloadPdf(`${base}-typst`);
+  }, [pipe, file]);
 
   const startOver = useCallback(() => {
     pipe.reset();
@@ -461,10 +458,10 @@ function Workspace({
         <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'pdf' ? 'flex' : 'hidden'} lg:flex`}>
           <div className="mb-2 hidden h-[26px] lg:block" aria-hidden="true" />
           <PdfPreview
-            pdfUrl={pipe.pdfUrl}
+            svg={pipe.previewSvg}
             compiling={pipe.compiling || pipe.status.compile === 'active'}
+            downloading={pipe.downloading}
             onDownload={onDownload}
-            fileName={file.name}
           />
         </div>
       </div>

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { extractPageBlocks } from '../lib/nvidia.js';
+import { extractPageBlocks, toTypstNvidia } from '../lib/nvidia.js';
 import { toTypst } from '../lib/gemini.js';
-import { compileToPdf, pdfObjectUrl, initTypst } from '../lib/typst.js';
+import { compileToPdf, compileToSvg, initTypst } from '../lib/typst.js';
+import { savePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter } from '../lib/assemble.js';
@@ -67,9 +68,10 @@ export function usePipeline(settings) {
 
   const [rawText, setRawText] = useState('');
   const [typstCode, setTypstCode] = useState('');
-  const [pdfUrl, setPdfUrl] = useState(null);
+  const [previewSvg, setPreviewSvg] = useState(null); // anteprima vettoriale (SVG)
   const [compileError, setCompileError] = useState(null);
   const [compiling, setCompiling] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [canResume, setCanResume] = useState(false); // sessione interrotta ripristinabile
@@ -78,7 +80,6 @@ export function usePipeline(settings) {
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
 
   const abortRef = useRef(null);
-  const pdfUrlRef = useRef(null);
 
   // Precarica il WASM di Typst appena montato: rende istantanea la prima
   // compilazione quando la pipeline arriva alla fase 3.
@@ -115,32 +116,15 @@ export function usePipeline(settings) {
     });
   }, []);
 
-  const setPdf = useCallback((bytes) => {
-    if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
-    const url = pdfObjectUrl(bytes);
-    pdfUrlRef.current = url;
-    setPdfUrl(url);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (pdfUrlRef.current) URL.revokeObjectURL(pdfUrlRef.current);
-    };
-  }, []);
-
   const reset = useCallback(() => {
     abortRef.current?.abort();
-    if (pdfUrlRef.current) {
-      URL.revokeObjectURL(pdfUrlRef.current);
-      pdfUrlRef.current = null;
-    }
     setPhase('idle');
     setStatus(emptyStatus);
     setActiveStep(null);
     setError(null);
     setRawText('');
     setTypstCode('');
-    setPdfUrl(null);
+    setPreviewSvg(null);
     setCompileError(null);
     setDetail('');
     setChunkProgress(null);
@@ -160,15 +144,38 @@ export function usePipeline(settings) {
    * errore (es. rate limit) i chunk completati restano: la sessione è
    * ripristinabile con `resume`.
    */
-  // Chiama Gemini con auto-retry sul rate limit (429/quota) e backoff
-  // esponenziale: così documenti lunghi/libri si convertono "lentamente"
-  // senza intervento manuale. Gli altri errori si propagano subito.
+  // Genera Typst dal testo OCR usando il motore scelto (Gemini o un modello
+  // NVIDIA), con auto-retry sul rate limit (429/quota) e backoff esponenziale:
+  // così documenti lunghi/libri si convertono "lentamente" senza intervento
+  // manuale. Gli altri errori si propagano subito. `args` è neutro rispetto al
+  // motore (rawText, styleHint, continuation): le credenziali/modello vengono
+  // aggiunte qui in base alle impostazioni.
   const callGeminiWithRetry = useCallback(
     async (args, signal, chunkLabel) => {
+      const nvidia = settings.typstEngine === 'nvidia';
+      const call = () =>
+        nvidia
+          ? toTypstNvidia({
+              apiKey: settings.nvidiaApiKey,
+              endpoint: settings.nvidiaEndpoint,
+              model: settings.nvidiaTypstModel,
+              rawText: args.rawText,
+              styleHint: args.styleHint,
+              continuation: args.continuation,
+              signal,
+            })
+          : toTypst({
+              apiKey: settings.googleApiKey,
+              model: settings.geminiModel,
+              rawText: args.rawText,
+              styleHint: args.styleHint,
+              continuation: args.continuation,
+              signal,
+            });
       let delay = 15000;
       for (let attempt = 0; ; attempt++) {
         try {
-          return await toTypst({ ...args, signal });
+          return await call();
         } catch (e) {
           if (signal.aborted || e?.name === 'AbortError') throw e;
           if (!RETRYABLE_RE.test(e.message || '') || attempt >= 6) throw e;
@@ -179,7 +186,7 @@ export function usePipeline(settings) {
         }
       }
     },
-    [],
+    [settings],
   );
 
   const processChunks = useCallback(
@@ -197,8 +204,6 @@ export function usePipeline(settings) {
           if (i === 0) {
             const code = await callGeminiWithRetry(
               {
-                apiKey: settings.googleApiKey,
-                model: settings.geminiModel,
                 rawText: ch.text,
                 styleHint: s.styleHint,
               },
@@ -216,8 +221,6 @@ export function usePipeline(settings) {
               .join('\n\n');
             const body = await callGeminiWithRetry(
               {
-                apiKey: settings.googleApiKey,
-                model: settings.geminiModel,
                 rawText: ch.text,
                 styleHint: s.styleHint,
                 continuation: { preamble: s.preamble, outline: outlineFromBody(prior) },
@@ -256,9 +259,9 @@ export function usePipeline(settings) {
       setActiveStep('compile');
       setDetail('');
       try {
-        const bytes = await compileToPdf(combined, figuresRef.current);
+        const svg = await compileToSvg(combined, figuresRef.current);
         if (signal.aborted) return;
-        setPdf(bytes);
+        setPreviewSvg(svg);
         setStatus((x) => ({ ...x, compile: 'done' }));
         setActiveStep(null);
         setPhase('done');
@@ -272,7 +275,7 @@ export function usePipeline(settings) {
         setPhase('done');
       }
     },
-    [setPdf, persist],
+    [persist],
   );
 
   /** Esegue la fase 2+3 sulla sessione corrente (fresh o resume). */
@@ -365,8 +368,8 @@ export function usePipeline(settings) {
       setCompiling(true);
       setCompileError(null);
       try {
-        const bytes = await compileToPdf(source, figuresRef.current);
-        setPdf(bytes);
+        const svg = await compileToSvg(source, figuresRef.current);
+        setPreviewSvg(svg);
         return true;
       } catch (e) {
         setCompileError(e.message || 'Errore di compilazione Typst.');
@@ -375,7 +378,25 @@ export function usePipeline(settings) {
         setCompiling(false);
       }
     },
-    [typstCode, setPdf],
+    [typstCode],
+  );
+
+  /** Compila il PDF (on-demand) e lo salva/condivide. */
+  const downloadPdf = useCallback(
+    async (fileName) => {
+      if (!typstCode.trim()) return;
+      setDownloading(true);
+      setCompileError(null);
+      try {
+        const bytes = await compileToPdf(typstCode, figuresRef.current);
+        await savePdf(bytes, fileName || 'documento');
+      } catch (e) {
+        setCompileError(e.message || 'Errore nella generazione del PDF.');
+      } finally {
+        setDownloading(false);
+      }
+    },
+    [typstCode],
   );
 
   /**
@@ -570,7 +591,9 @@ export function usePipeline(settings) {
     rawText,
     typstCode,
     setTypstCode,
-    pdfUrl,
+    previewSvg,
+    downloadPdf,
+    downloading,
     compileError,
     compiling,
     chunkProgress,

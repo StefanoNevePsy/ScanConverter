@@ -11,6 +11,8 @@ const KEYS = {
   nvidiaEndpoint: 'sc.nvidiaEndpoint',
   nvidiaModel: 'sc.nvidiaModel',
   geminiModel: 'sc.geminiModel',
+  typstEngine: 'sc.typstEngine',
+  nvidiaTypstModel: 'sc.nvidiaTypstModel',
   maxPages: 'sc.maxPages',
   chunkSize: 'sc.chunkSize',
 };
@@ -21,9 +23,17 @@ export const DEFAULTS = {
   nvidiaEndpoint: 'https://integrate.api.nvidia.com/v1/chat/completions',
   nvidiaModel: 'nvidia/nemotron-parse',
   geminiModel: 'gemini-flash-latest',
+  // Motore per la fase 2 (testo OCR → Typst): 'gemini' oppure 'nvidia'.
+  typstEngine: 'gemini',
+  // Modello NVIDIA usato quando typstEngine === 'nvidia' (istruct generico,
+  // adatto alla generazione di codice).
+  nvidiaTypstModel: 'meta/llama-3.3-70b-instruct',
   maxPages: 20, // pagine PDF per singolo caricamento
   chunkSize: 5000, // caratteri per chunk inviato a Gemini
 };
+
+// Valori ammessi per il motore Typst.
+const ENGINES = ['gemini', 'nvidia'];
 
 const LIMITS = {
   maxPages: { min: 1, max: 2000 },
@@ -72,6 +82,10 @@ export function loadSettings() {
     nvidiaEndpoint,
     nvidiaModel: read(KEYS.nvidiaModel, DEFAULTS.nvidiaModel),
     geminiModel: read(KEYS.geminiModel, DEFAULTS.geminiModel),
+    typstEngine: ENGINES.includes(read(KEYS.typstEngine, DEFAULTS.typstEngine))
+      ? read(KEYS.typstEngine, DEFAULTS.typstEngine)
+      : DEFAULTS.typstEngine,
+    nvidiaTypstModel: read(KEYS.nvidiaTypstModel, DEFAULTS.nvidiaTypstModel),
     maxPages: readInt(KEYS.maxPages, DEFAULTS.maxPages, LIMITS.maxPages),
     chunkSize: readInt(KEYS.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize),
   };
@@ -89,6 +103,8 @@ export function saveSettings(s) {
   write(KEYS.nvidiaEndpoint, s.nvidiaEndpoint?.trim() || DEFAULTS.nvidiaEndpoint);
   write(KEYS.nvidiaModel, s.nvidiaModel?.trim() || DEFAULTS.nvidiaModel);
   write(KEYS.geminiModel, s.geminiModel?.trim() || DEFAULTS.geminiModel);
+  write(KEYS.typstEngine, ENGINES.includes(s.typstEngine) ? s.typstEngine : DEFAULTS.typstEngine);
+  write(KEYS.nvidiaTypstModel, s.nvidiaTypstModel?.trim() || DEFAULTS.nvidiaTypstModel);
   writeInt(KEYS.maxPages, s.maxPages, DEFAULTS.maxPages, LIMITS.maxPages);
   writeInt(KEYS.chunkSize, s.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize);
 }

@@ -71,7 +71,7 @@ export function initTypst() {
  *        disponibili al compilatore (referenziate come `image("/figures/…")`)
  * @returns {Promise<Uint8Array>} byte del PDF
  */
-export async function compileToPdf(source, figures = []) {
+async function prepare(source, figures) {
   await initTypst();
   // Pre-controllo: titoli Markdown non convertiti (`## Titolo`). In Typst `#`
   // seguito da spazio non è mai valido → messaggio chiaro invece del criptico
@@ -87,9 +87,13 @@ export async function compileToPdf(source, figures = []) {
   }
   // Rende disponibili le figure come "shadow file" nel filesystem virtuale
   // del compilatore. mapShadow sovrascrive: ri-compilazioni idempotenti.
-  for (const fig of figures) {
+  for (const fig of figures || []) {
     if (fig?.path && fig?.bytes) await $typst.mapShadow(fig.path, fig.bytes);
   }
+}
+
+export async function compileToPdf(source, figures = []) {
+  await prepare(source, figures);
   let bytes;
   try {
     bytes = await $typst.pdf({ mainContent: source });
@@ -125,13 +129,21 @@ export function formatTypstError(err) {
 }
 
 /**
- * Compila il sorgente Typst in SVG (anteprima veloce, senza generare il PDF).
+ * Compila il sorgente Typst in SVG (usato per l'anteprima: si renderizza in
+ * qualsiasi browser/WebView, anche su Android dove l'<iframe> PDF resta bianco).
  * @param {string} source codice Typst
+ * @param {{path:string,bytes:Uint8Array}[]} [figures]
  * @returns {Promise<string>} markup SVG
  */
-export async function compileToSvg(source) {
-  await initTypst();
-  return $typst.svg({ mainContent: source });
+export async function compileToSvg(source, figures = []) {
+  await prepare(source, figures);
+  try {
+    const svg = await $typst.svg({ mainContent: source });
+    if (!svg) throw new Error('Il compilatore Typst non ha prodotto SVG.');
+    return svg;
+  } catch (e) {
+    throw new Error(formatTypstError(e));
+  }
 }
 
 /**

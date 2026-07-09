@@ -60,6 +60,13 @@ export function buildGuidance(styleHint) {
     'definiscilo PRIMA di usarlo. Non fare `#import` di pacchetti esterni.\n' +
     '- Converti eventuale HTML residuo (es. `<sup>1</sup>`) in costrutti Typst ' +
     'nativi (`footnote`/`super`). Chiudi sempre parentesi tonde e quadre.\n' +
+    '- MATEMATICA: usa la sintassi Typst, NON LaTeX. Dentro `$…$` scrivi i ' +
+    'simboli per nome SENZA backslash: `alpha`, `beta`, `->` (freccia), `<->` ' +
+    '(doppia freccia), `<=` `>=` `!=`, `times`, `dot.c`, `sum`, `integral`, ' +
+    '`infinity`, `sqrt(x)`, `frac(a, b)`, pedici `x_(i)` e apici `x^(2)` con ' +
+    'le parentesi TONDE. NON usare mai `\\leftrightarrow`, `\\alpha`, `\\frac`, ' +
+    '`\\left(`/`\\right)` né altri comandi LaTeX con backslash: in Typst danno ' +
+    'errori come "unclosed delimiter" o testo spurio.\n' +
     '- Per la bibliografia scrivi una lista o dei paragrafi semplici; NON usare ' +
     'riferimenti `@etichetta` a meno di definire l’etichetta corrispondente.' +
     (styleHint
@@ -161,6 +168,36 @@ export async function toTypst({ apiKey, model, rawText, styleHint, continuation,
   }
 
   return unwrapCodeBlock(text);
+}
+
+/**
+ * Elenca i modelli Gemini disponibili per l'API key, filtrando quelli che
+ * supportano `generateContent`. Ritorna gli id (senza il prefisso "models/").
+ * @param {object} params
+ * @param {string} params.apiKey
+ * @param {AbortSignal} [params.signal]
+ * @returns {Promise<string[]>}
+ */
+export async function listGeminiModels({ apiKey, signal }) {
+  if (!apiKey) throw new Error('Chiave API Google mancante.');
+  let base = 'https://generativelanguage.googleapis.com';
+  try {
+    if (import.meta.env.DEV) base = '/__gemini__';
+  } catch {
+    /* Node/prod: URL diretto */
+  }
+  const res = await fetch(`${base}/v1beta/models`, {
+    method: 'GET',
+    headers: { 'x-goog-api-key': apiKey },
+    signal,
+  });
+  if (!res.ok) throw new Error(`Google /models ha risposto ${res.status}.`);
+  const data = await res.json();
+  const ids = (data?.models || [])
+    .filter((m) => (m?.supportedGenerationMethods || []).includes('generateContent'))
+    .map((m) => (m?.name || '').replace(/^models\//, ''))
+    .filter(Boolean);
+  return [...new Set(ids)].sort();
 }
 
 /**
