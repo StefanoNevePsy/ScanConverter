@@ -20,6 +20,55 @@ export const SYSTEM_PROMPT =
   'spiegazioni.';
 
 /**
+ * Costruisce le istruzioni tecniche (font, gerarchia, tabelle, vincoli Typst)
+ * incluse anche nel "Copia prompt + testo" per gli LLM esterni. `styleHint`
+ * riporta le scelte di impaginazione dell'utente.
+ * @param {string} [styleHint]
+ * @returns {string}
+ */
+export function buildGuidance(styleHint) {
+  return (
+    'Font disponibili nel compilatore (usa SOLO questi nomi ESATTI): serif ' +
+    '"Libertinus Serif", "New Computer Modern", "PT Serif"; sans-serif ' +
+    '"DejaVu Sans", "PT Sans"; monospazio "DejaVu Sans Mono". NON usare altri ' +
+    'font (es. "Linux Libertine", "Liberation Sans", "Times New Roman"): non ' +
+    'sono disponibili.\n' +
+    'GERARCHIA: preserva ESATTAMENTE i livelli di titolo del Markdown in ' +
+    'ingresso — "# " → "= ", "## " → "== ", "### " → "=== ", "#### " → ' +
+    '"==== " — senza appiattirli né rinumerarli.\n' +
+    'FIGURE: ogni segnaposto Markdown `![didascalia](/figures/fig-N.png)` va ' +
+    'convertito in `#figure(image("/figures/fig-N.png", width: 80%), ' +
+    'caption: [didascalia])`, MANTENENDO il percorso esatto. Non inventare né ' +
+    'omettere immagini; non aggiungere immagini con altri percorsi.\n' +
+    'TABELLE: converti le tabelle LaTeX (`\\begin{tabular}{…}…\\end{tabular}`) ' +
+    'e le tabelle Markdown in tabelle Typst native `#table(columns: N, ' +
+    'table.header[…][…], …)`; usa `[*testo*]` per le celle di intestazione e ' +
+    'preserva righe/colonne. Avvolgi in `#figure(…, caption: […])` se c’è una ' +
+    'didascalia.\n' +
+    'CORSIVO/ENFASI: preserva SEMPRE il corsivo del Markdown (`_testo_` o ' +
+    '`*testo*`) con l’enfasi Typst `_testo_`. Un intero paragrafo in corsivo ' +
+    'che sembra una trascrizione o una citazione lunga va reso come blocco ' +
+    'citazione leggermente più piccolo: `#block(inset: (left: 1em))[#text(' +
+    'size: 0.9em, style: "italic")[…]]`.\n' +
+    'VINCOLI TECNICI (Typst 0.13) — il codice DEVE compilare senza errori:\n' +
+    '- Spaziatura dei blocchi: usa `above:` / `below:` (i parametri `top:` e ' +
+    '`bottom:` NON esistono su `block` e danno errore).\n' +
+    '- Paragrafi: usa `#set par(...)`. La funzione `paragraph` NON esiste ' +
+    '(`#set paragraph(...)` è un errore).\n' +
+    '- Rientro prima riga: `#set par(first-line-indent: 1.5em)`.\n' +
+    '- Non usare funzioni/variabili non definite; se definisci un `#let`, ' +
+    'definiscilo PRIMA di usarlo. Non fare `#import` di pacchetti esterni.\n' +
+    '- Converti eventuale HTML residuo (es. `<sup>1</sup>`) in costrutti Typst ' +
+    'nativi (`footnote`/`super`). Chiudi sempre parentesi tonde e quadre.\n' +
+    '- Per la bibliografia scrivi una lista o dei paragrafi semplici; NON usare ' +
+    'riferimenti `@etichetta` a meno di definire l’etichetta corrispondente.' +
+    (styleHint
+      ? '\n\nRICHIESTA DI STILE PRIORITARIA dell’utente (rispettala): ' + styleHint
+      : '')
+  );
+}
+
+/**
  * @param {object} params
  * @param {string} params.apiKey     GOOGLE_API_KEY
  * @param {string} params.model      es. "gemini-flash-latest"
@@ -42,34 +91,7 @@ export async function toTypst({ apiKey, model, rawText, styleHint, continuation,
   const endpoint = `${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   const guidance =
-    'Font disponibili nel compilatore (usa SOLO questi nomi esatti): serif ' +
-    '"Libertinus Serif", "New Computer Modern", "PT Serif"; sans-serif ' +
-    '"DejaVu Sans", "PT Sans"; monospazio "DejaVu Sans Mono".\n' +
-    'GERARCHIA: preserva ESATTAMENTE i livelli di titolo del Markdown in ' +
-    'ingresso — "# " → "= ", "## " → "== ", "### " → "=== ", "#### " → ' +
-    '"==== " — senza appiattirli né rinumerarli.\n' +
-    'FIGURE: ogni segnaposto Markdown `![didascalia](/figures/fig-N.png)` va ' +
-    'convertito in `#figure(image("/figures/fig-N.png", width: 80%), ' +
-    'caption: [didascalia])`, MANTENENDO il percorso esatto. Non inventare né ' +
-    'omettere immagini; non aggiungere immagini con altri percorsi.\n' +
-    'TABELLE: converti le tabelle LaTeX (`\\begin{tabular}{…}…\\end{tabular}`) ' +
-    'e le tabelle Markdown in tabelle Typst native `#table(columns: N, ' +
-    'table.header[…][…], …)`; usa `[*testo*]` per le celle di intestazione e ' +
-    'preserva righe/colonne. Avvolgi in `#figure(…, caption: […])` se c’è una ' +
-    'didascalia.\n' +
-    'CORSIVO/ENFASI: preserva SEMPRE il corsivo del Markdown (`_testo_` o ' +
-    '`*testo*`) con l’enfasi Typst `_testo_`. Un intero paragrafo in corsivo ' +
-    'che sembra una trascrizione o una citazione lunga va reso come blocco ' +
-    'citazione leggermente più piccolo: `#block(inset: (left: 1em))[#text(' +
-    'size: 0.9em, style: "italic")[…]]`.\n' +
-    'Vincoli tecnici (Typst 0.13): produci codice che COMPILA senza errori. ' +
-    'Non usare funzioni non definite; se definisci un #let, definiscilo PRIMA ' +
-    'di usarlo. Converti eventuali tag HTML residui (es. <sup>1</sup>) in ' +
-    'costrutti Typst nativi (footnote/super). Non fare `#import` di pacchetti. ' +
-    'Chiudi sempre parentesi e parentesi quadre.' +
-    (styleHint
-      ? '\n\nRICHIESTA DI STILE PRIORITARIA dell’utente (rispettala): ' + styleHint
-      : '') +
+    buildGuidance(styleHint) +
     (continuation
       ? '\n\nCONTINUAZIONE DI DOCUMENTO: il documento è GIÀ iniziato. Il ' +
         'preambolo Typst è già definito, NON ripeterlo e NON usare #set / ' +

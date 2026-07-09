@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { IconRefresh, IconSpinner } from './Icons.jsx';
 
 /*
@@ -72,7 +72,7 @@ const GROUPS = [
   },
 ];
 
-export default function RestylePanel({ onRestyle, busy, disabled }) {
+export default function RestylePanel({ onRestyle, onHintChange, busy, disabled }) {
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState({});
   const [extra, setExtra] = useState('');
@@ -89,6 +89,12 @@ export default function RestylePanel({ onRestyle, busy, disabled }) {
     if (extra.trim()) parts.push(extra.trim());
     return parts.join(' ');
   };
+
+  // Comunica la scelta di stile corrente (per il "Copia prompt + testo").
+  useEffect(() => {
+    onHintChange?.(buildHint());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, extra]);
 
   return (
     <section className="card overflow-hidden">

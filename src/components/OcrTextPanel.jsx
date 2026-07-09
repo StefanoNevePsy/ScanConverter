@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { IconText } from './Icons.jsx';
 import CopyButton from './CopyButton.jsx';
-import { SYSTEM_PROMPT } from '../lib/gemini.js';
+import { SYSTEM_PROMPT, buildGuidance } from '../lib/gemini.js';
 
 /*
   Mostra il testo grezzo estratto dall'OCR (Markdown con gerarchia e
@@ -10,16 +10,21 @@ import { SYSTEM_PROMPT } from '../lib/gemini.js';
   risultante nell'editor.
 */
 
-export default function OcrTextPanel({ text }) {
+export default function OcrTextPanel({ text, styleHint }) {
   const [open, setOpen] = useState(false);
   if (!text) return null;
 
-  // Prompt completo pronto da incollare in un LLM esterno.
+  // Prompt completo pronto da incollare in un LLM esterno: include le
+  // istruzioni tecniche (font, gerarchia, tabelle, vincoli Typst) e le scelte
+  // di impaginazione correnti — così il codice generato altrove compila e
+  // rispetta la formattazione scelta.
   const fullPrompt =
     SYSTEM_PROMPT +
+    '\n\n' +
+    buildGuidance(styleHint) +
     '\n\n--- TESTO ESTRATTO DALL’OCR ---\n\n' +
     text +
-    '\n\n--- FINE ---\nRestituisci SOLO il codice Typst.';
+    '\n\n--- FINE ---\nRestituisci SOLO il codice Typst, senza spiegazioni.';
 
   return (
     <section className="card overflow-hidden">

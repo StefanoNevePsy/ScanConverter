@@ -73,16 +73,55 @@ export function initTypst() {
  */
 export async function compileToPdf(source, figures = []) {
   await initTypst();
+  // Pre-controllo: titoli Markdown non convertiti (`## Titolo`). In Typst `#`
+  // seguito da spazio non è mai valido → messaggio chiaro invece del criptico
+  // "the character `#` is not valid in code".
+  const md = source.match(/^[ \t]{0,3}(#{1,6})[ \t]+\S[^\n]*/m);
+  if (md) {
+    const eq = '='.repeat(md[1].length);
+    throw new Error(
+      `Titolo Markdown non convertito: «${md[0].trim().slice(0, 40)}…». In ` +
+        `Typst i titoli usano "=" invece di "#": scrivi «${eq} …» al posto di ` +
+        `«${md[1]} …».`,
+    );
+  }
   // Rende disponibili le figure come "shadow file" nel filesystem virtuale
   // del compilatore. mapShadow sovrascrive: ri-compilazioni idempotenti.
   for (const fig of figures) {
     if (fig?.path && fig?.bytes) await $typst.mapShadow(fig.path, fig.bytes);
   }
-  const bytes = await $typst.pdf({ mainContent: source });
+  let bytes;
+  try {
+    bytes = await $typst.pdf({ mainContent: source });
+  } catch (e) {
+    throw new Error(formatTypstError(e));
+  }
   if (!bytes || !bytes.length) {
     throw new Error('Il compilatore Typst non ha prodotto alcun output PDF.');
   }
   return bytes;
+}
+
+/**
+ * Il compilatore Typst lancia una stringa in stile Rust-debug
+ * (`[SourceDiagnostic { … message: "…", hints: […] }]`). La trasformiamo in
+ * un messaggio leggibile con i messaggi d'errore reali (e gli eventuali hint).
+ */
+export function formatTypstError(err) {
+  const raw = typeof err === 'string' ? err : err?.message || String(err);
+  if (!raw || !raw.includes('SourceDiagnostic')) {
+    return err?.message || raw || 'Errore di compilazione Typst.';
+  }
+  const messages = [...raw.matchAll(/message:\s*"((?:[^"\\]|\\.)*)"/g)].map((m) =>
+    m[1].replace(/\\"/g, '"').replace(/\\n/g, ' ').trim(),
+  );
+  const hints = [...raw.matchAll(/hints:\s*\[\s*"((?:[^"\\]|\\.)*)"/g)].map((m) =>
+    m[1].replace(/\\"/g, '"').trim(),
+  );
+  if (!messages.length) return raw.slice(0, 300);
+  let out = messages.join(' · ');
+  if (hints.length) out += ` (suggerimento: ${hints.join('; ')})`;
+  return out;
 }
 
 /**

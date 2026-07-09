@@ -319,6 +319,7 @@ function Workspace({
   );
   // Su schermi stretti le due colonne diventano schede a tutta altezza.
   const [mobileTab, setMobileTab] = useState('code'); // 'code' | 'pdf'
+  const [styleHint, setStyleHint] = useState(''); // scelte di impaginazione correnti
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -392,12 +393,13 @@ function Workspace({
       {pipe.rawText && (
         <RestylePanel
           onRestyle={(hint) => pipe.restyle(hint)}
+          onHintChange={setStyleHint}
           busy={pipe.phase === 'running'}
           disabled={pipe.phase === 'running'}
         />
       )}
 
-      {pipe.rawText && <OcrTextPanel text={pipe.rawText} />}
+      {pipe.rawText && <OcrTextPanel text={pipe.rawText} styleHint={styleHint} />}
 
       {/* Selettore a schede (solo mobile/tablet stretto) */}
       <div className="flex items-center gap-1 rounded-lg border border-border bg-surface p-1 lg:hidden">
