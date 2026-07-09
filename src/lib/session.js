@@ -146,13 +146,53 @@ export function outlineFromBody(body) {
   return stack.filter(Boolean).join('\n');
 }
 
+/** Normalizza il testo di un titolo per il confronto (dedup). */
+function headingKey(text) {
+  return (text || '').toLowerCase().replace(/[.:;,]+$/, '').replace(/\s+/g, ' ').trim();
+}
+
 /**
- * Ricompone il documento completo dai corpi dei chunk.
+ * Ricompone il documento completo dai corpi dei chunk. Alcuni modelli
+ * ri-emettono a inizio chunk la "posizione gerarchica" ricevuta nel prompt
+ * come veri titoli (es. ripetono `= Ipotizzazione` già presente): i titoli
+ * INIZIALI di un chunk identici all'ultimo titolo visto allo stesso livello
+ * vengono scartati.
  * @param {string} preamble
  * @param {string[]} bodies
  * @returns {string}
  */
 export function combineDocument(preamble, bodies) {
-  const body = bodies.filter((b) => b && b.trim()).join('\n\n');
+  const lastAtLevel = []; // ultimo titolo visto per livello (chiave normalizzata)
+  const parts = [];
+  for (const raw of bodies) {
+    if (!raw || !raw.trim()) continue;
+    const lines = raw.split('\n');
+    let start = 0;
+    // Scarta i titoli in testa al chunk che duplicano il percorso corrente.
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (!t) continue;
+      const m = t.match(/^(=+)\s+(.+)$/);
+      if (!m) break;
+      const level = m[1].length;
+      if (parts.length && lastAtLevel[level - 1] === headingKey(m[2])) {
+        start = i + 1; // duplicato: salta anche le righe vuote precedenti
+        continue;
+      }
+      break;
+    }
+    const kept = lines.slice(start).join('\n').trim();
+    if (!kept) continue;
+    // Aggiorna il percorso gerarchico con i titoli del chunk mantenuto.
+    for (const line of kept.split('\n')) {
+      const m = line.trim().match(/^(=+)\s+(.+)$/);
+      if (!m) continue;
+      const level = m[1].length;
+      lastAtLevel.length = level;
+      lastAtLevel[level - 1] = headingKey(m[2]);
+    }
+    parts.push(kept);
+  }
+  const body = parts.join('\n\n');
   return preamble ? `${preamble}\n\n${body}` : body;
 }

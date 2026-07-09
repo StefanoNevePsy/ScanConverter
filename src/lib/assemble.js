@@ -12,6 +12,76 @@ const CAPTION_TYPES = new Set(['Caption']);
 
 const cy = (b) => ((b.bbox?.ymin ?? 0) + (b.bbox?.ymax ?? 0)) / 2;
 
+/**
+ * Larghezza Typst della figura derivata dal bbox: la frazione di pagina
+ * occupata nell'originale, rapportata alla gabbia del testo (~72% della
+ * pagina scansionata, margini esclusi). Così un ritaglio piccolo resta
+ * piccolo e una figura a piena pagina occupa tutta la colonna.
+ */
+export function widthPctFromBbox(bbox) {
+  const w = Math.max(0, (bbox?.xmax ?? 0) - (bbox?.xmin ?? 0));
+  if (!w) return 60; // bbox assente: default prudente
+  return Math.round(Math.min(100, Math.max(15, (w / 0.72) * 100)));
+}
+
+/**
+ * Euristica per gli artefatti di scansione classificati "Picture" dall'OCR:
+ * ritagli minuscoli o strisce sottili (numeri di pagina scritti a mano,
+ * timbri, righe). Non vengono scartati, ma proposti come "da rimuovere"
+ * nella revisione figure.
+ */
+export function isLikelyArtifact(bbox) {
+  if (!bbox) return false;
+  const w = Math.max(0, (bbox.xmax ?? 0) - (bbox.xmin ?? 0));
+  const h = Math.max(0, (bbox.ymax ?? 0) - (bbox.ymin ?? 0));
+  return w * h < 0.02 || w < 0.08 || h < 0.05;
+}
+
+// Parlante di un dialogo: nome in MAIUSCOLO (1–4 parole, eventuale nota tra
+// parentesi) seguito da due punti. Es. «TERAPISTA (rivolto a Sissi):».
+const SPEAKER = String.raw`[A-ZÀ-ÖØ-Þ][A-ZÀ-ÖØ-Þ'’.\-]+(?:\s+[A-ZÀ-ÖØ-Þ'’.\-]{2,}){0,3}(?:\s*\([^)\n]{0,100}\))?\s*:`;
+const SPEAKER_LINE_RE = new RegExp(`^[ \\t]{0,3}(?:\\*\\*|__)?${SPEAKER}`);
+const SPEAKER_MIDLINE_RE = new RegExp(`([.!?…»”\\)\\]])[ \\t]+(?=${SPEAKER})`, 'g');
+
+/**
+ * Normalizza i dialoghi trascritti dall'OCR: ogni battuta introdotta dal nome
+ * del parlante in maiuscolo («TERAPISTA: …», «FIGLIO: …») diventa un
+ * paragrafo a sé. Senza questo, il Markdown tratta gli a-capo singoli come
+ * spazi e l'LLM fonde le battute in un unico paragrafo.
+ */
+export function normalizeDialogue(text) {
+  // Battute incollate sulla stessa riga → a capo prima del nuovo parlante.
+  let t = text.replace(SPEAKER_MIDLINE_RE, '$1\n');
+  const out = [];
+  for (const line of t.split('\n')) {
+    if (SPEAKER_LINE_RE.test(line) && out.length && out[out.length - 1].trim() !== '') {
+      out.push(''); // riga vuota = nuovo paragrafo in Markdown
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+/**
+ * Impone alle immagini del codice Typst generato la larghezza derivata dal
+ * bbox (deterministico, ignora l'eventuale width inventata dall'LLM).
+ * @param {string} code
+ * @param {{path:string,widthPct?:number}[]} figures
+ */
+export function applyFigureWidths(code, figures) {
+  let s = code;
+  for (const f of figures || []) {
+    if (!f?.path || !f?.widthPct) continue;
+    const escaped = f.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(
+      `image\\(\\s*"${escaped}"\\s*(?:,\\s*width:\\s*[\\d.]+%)?`,
+      'g',
+    );
+    s = s.replace(re, `image("${f.path}", width: ${f.widthPct}%`);
+  }
+  return s;
+}
+
 /** Trova la didascalia più vicina (in verticale) a una figura. */
 function nearestCaption(captions, picture) {
   let best = null;
@@ -61,13 +131,18 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
       const cap = nearestCaption(captions, b);
       if (cap) cap._used = true;
       const caption = (cap?.text || '').replace(/[[\]]/g, '');
-      figures.push({ path, bytes });
-      // Segnaposto Markdown che Gemini convertirà in #figure(image(...)).
-      lines.push(`![${caption || `Figura ${n}`}](${path})`);
+      figures.push({
+        path,
+        bytes,
+        widthPct: widthPctFromBbox(b.bbox),
+        junk: isLikelyArtifact(b.bbox),
+      });
+      // Segnaposto Markdown che l'LLM convertirà in #figure(image(...)).
+      lines.push(`![${caption}](${path})`);
     } else if (CAPTION_TYPES.has(b.type)) {
       if (!b._used && b.text) lines.push(b.text);
     } else if (b.text) {
-      lines.push(b.text);
+      lines.push(normalizeDialogue(b.text));
     }
   }
 

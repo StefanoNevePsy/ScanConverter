@@ -10,13 +10,24 @@ import { IconRefresh, IconSpinner } from './Icons.jsx';
 const GROUPS = [
   {
     key: 'font',
-    label: 'Font',
+    label: 'Font corpo',
     options: [
-      { id: 'libertinus', label: 'Libertinus', hint: 'Corpo in "Libertinus Serif", titoli in "DejaVu Sans".' },
-      { id: 'newcm', label: 'New CM (LaTeX)', hint: 'Usa "New Computer Modern" per corpo e titoli, estetica paper LaTeX.' },
-      { id: 'ptserif', label: 'PT Serif', hint: 'Corpo in "PT Serif", titoli in "PT Sans".' },
-      { id: 'ptsans', label: 'PT Sans', hint: 'Corpo e titoli in "PT Sans", estetica umanista.' },
-      { id: 'dejavu', label: 'DejaVu Sans', hint: 'Corpo e titoli in "DejaVu Sans", pulito e moderno.' },
+      { id: 'libertinus', label: 'Libertinus', hint: 'Corpo del testo in "Libertinus Serif".' },
+      { id: 'newcm', label: 'New CM (LaTeX)', hint: 'Corpo del testo in "New Computer Modern", estetica paper LaTeX.' },
+      { id: 'ptserif', label: 'PT Serif', hint: 'Corpo del testo in "PT Serif".' },
+      { id: 'ptsans', label: 'PT Sans', hint: 'Corpo del testo in "PT Sans", estetica umanista.' },
+      { id: 'dejavu', label: 'DejaVu Sans', hint: 'Corpo del testo in "DejaVu Sans", pulito e moderno.' },
+    ],
+  },
+  {
+    key: 'headfont',
+    label: 'Font titoli',
+    options: [
+      { id: 'body', label: 'Come il corpo', hint: 'Titoli nello stesso font del corpo, coerenti su TUTTI i livelli.' },
+      { id: 'dejavu', label: 'DejaVu Sans', hint: 'Tutti i titoli (ogni livello) in "DejaVu Sans".' },
+      { id: 'ptsans', label: 'PT Sans', hint: 'Tutti i titoli (ogni livello) in "PT Sans".' },
+      { id: 'newcm', label: 'New CM', hint: 'Tutti i titoli (ogni livello) in "New Computer Modern".' },
+      { id: 'libertinus', label: 'Libertinus', hint: 'Tutti i titoli (ogni livello) in "Libertinus Serif".' },
     ],
   },
   {
@@ -63,11 +74,13 @@ const GROUPS = [
   },
   {
     key: 'extras',
-    label: 'Extra',
+    label: 'Extra (più scelte)',
+    multi: true,
     options: [
       { id: 'pagenums', label: 'Numeri di pagina', hint: 'Aggiungi i numeri di pagina in fondo.' },
       { id: 'numbered', label: 'Titoli numerati', hint: 'Numera i titoli delle sezioni (heading numbering "1.1").' },
       { id: 'runninghead', label: 'Testatina', hint: 'Aggiungi una testatina con il titolo del documento.' },
+      { id: 'noindent', label: 'Senza rientro', hint: 'Paragrafi senza rientro di prima riga.' },
     ],
   },
 ];
@@ -77,14 +90,28 @@ export default function RestylePanel({ onRestyle, onApplyLocal, onHintChange, bu
   const [sel, setSel] = useState({});
   const [extra, setExtra] = useState('');
 
-  const toggle = (groupKey, opt) =>
-    setSel((s) => ({ ...s, [groupKey]: s[groupKey] === opt.id ? undefined : opt.id }));
+  const toggle = (group, opt) =>
+    setSel((s) => {
+      if (group.multi) {
+        const cur = new Set(Array.isArray(s[group.key]) ? s[group.key] : []);
+        if (cur.has(opt.id)) cur.delete(opt.id);
+        else cur.add(opt.id);
+        return { ...s, [group.key]: [...cur] };
+      }
+      return { ...s, [group.key]: s[group.key] === opt.id ? undefined : opt.id };
+    });
+
+  const isActive = (group, opt) =>
+    group.multi
+      ? Array.isArray(sel[group.key]) && sel[group.key].includes(opt.id)
+      : sel[group.key] === opt.id;
 
   const buildHint = () => {
     const parts = [];
     for (const g of GROUPS) {
-      const chosen = g.options.find((o) => o.id === sel[g.key]);
-      if (chosen) parts.push(chosen.hint);
+      for (const o of g.options) {
+        if (isActive(g, o)) parts.push(o.hint);
+      }
     }
     if (extra.trim()) parts.push(extra.trim());
     return parts.join(' ');
@@ -121,11 +148,11 @@ export default function RestylePanel({ onRestyle, onApplyLocal, onHintChange, bu
               <div className="mb-1.5 text-xs font-medium text-muted">{g.label}</div>
               <div className="flex flex-wrap gap-2">
                 {g.options.map((opt) => {
-                  const active = sel[g.key] === opt.id;
+                  const active = isActive(g, opt);
                   return (
                     <button
                       key={opt.id}
-                      onClick={() => toggle(g.key, opt)}
+                      onClick={() => toggle(g, opt)}
                       className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
                         active
                           ? 'border-primary bg-primary-soft text-primary'

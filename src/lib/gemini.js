@@ -38,8 +38,17 @@ export function buildGuidance(styleHint) {
     '"==== " — senza appiattirli né rinumerarli.\n' +
     'FIGURE: ogni segnaposto Markdown `![didascalia](/figures/fig-N.png)` va ' +
     'convertito in `#figure(image("/figures/fig-N.png", width: 80%), ' +
-    'caption: [didascalia])`, MANTENENDO il percorso esatto. Non inventare né ' +
-    'omettere immagini; non aggiungere immagini con altri percorsi.\n' +
+    'caption: [didascalia])`, MANTENENDO il percorso esatto. Se il testo alt ' +
+    'è VUOTO (`![](…)`) e nel documento non c’è una vera didascalia, usa ' +
+    '`#figure(image("…", width: 80%))` SENZA `caption`: non inventare ' +
+    'didascalie e non scrivere "Figura N" (la numerazione la aggiunge Typst). ' +
+    'Non inventare né omettere immagini; non aggiungere immagini con altri ' +
+    'percorsi.\n' +
+    'DIALOGHI: le battute introdotte dal nome del parlante in MAIUSCOLO ' +
+    'seguito da due punti (es. «TERAPISTA (rivolto a Sissi): …», «FIGLIO: …») ' +
+    'vanno OGNUNA in un proprio paragrafo, MAI fuse insieme sulla stessa ' +
+    'riga. Rendi il nome del parlante in grassetto (`*Terapista:*`) e ' +
+    'l’eventuale indicazione tra parentesi in corsivo.\n' +
     'TABELLE: converti le tabelle LaTeX (`\\begin{tabular}{…}…\\end{tabular}`) ' +
     'e le tabelle Markdown in tabelle Typst native `#table(columns: N, ' +
     'table.header[…][…], …)`; usa `[*testo*]` per le celle di intestazione e ' +
@@ -68,7 +77,12 @@ export function buildGuidance(styleHint) {
     '`\\left(`/`\\right)` né altri comandi LaTeX con backslash: in Typst danno ' +
     'errori come "unclosed delimiter" o testo spurio.\n' +
     '- Per la bibliografia scrivi una lista o dei paragrafi semplici; NON usare ' +
-    'riferimenti `@etichetta` a meno di definire l’etichetta corrispondente.' +
+    'riferimenti `@etichetta` a meno di definire l’etichetta corrispondente.\n' +
+    'NOTE A PIÈ DI PAGINA: se lo stesso richiamo (es. un unico asterisco) vale ' +
+    'per più elementi (es. tutti gli autori), genera UNA sola `footnote` alla ' +
+    'prima occorrenza: non duplicarla.\n' +
+    'COMPLETEZZA: trascrivi INTEGRALMENTE il contenuto fornito, senza ' +
+    'riassumere, accorciare né omettere frasi, esempi o paragrafi.' +
     (styleHint
       ? '\n\nRICHIESTA DI STILE PRIORITARIA dell’utente (rispettala): ' + styleHint
       : '')

@@ -9,6 +9,7 @@ import PipelineStepper from './components/PipelineStepper.jsx';
 import TypstEditor from './components/TypstEditor.jsx';
 import PdfPreview from './components/PdfPreview.jsx';
 import RestylePanel from './components/RestylePanel.jsx';
+import FigureReviewPanel from './components/FigureReviewPanel.jsx';
 import OcrTextPanel from './components/OcrTextPanel.jsx';
 import SessionsList from './components/SessionsList.jsx';
 import {
@@ -398,7 +399,15 @@ function Workspace({
         </div>
       )}
 
-      {pipe.rawText && (
+      {pipe.figureReview && (
+        <FigureReviewPanel
+          key={pipe.figureReview.map((i) => i.path).join('|')}
+          items={pipe.figureReview}
+          onConfirm={pipe.confirmFigures}
+        />
+      )}
+
+      {pipe.rawText && !pipe.figureReview && (
         <RestylePanel
           onRestyle={(hint) => pipe.restyle(hint)}
           onApplyLocal={(sel) => pipe.applyLocalStyle(sel)}

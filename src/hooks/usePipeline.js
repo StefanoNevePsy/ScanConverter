@@ -5,7 +5,7 @@ import { compileToPdf, compileToSvg, initTypst } from '../lib/typst.js';
 import { savePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
-import { assemblePage, makeFigureCounter } from '../lib/assemble.js';
+import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assemble.js';
 import {
   chunkDocument,
   splitPreamble,
@@ -49,7 +49,7 @@ const RETRYABLE_RE =
 // Le tre fasi dello split delle operazioni, nell'ordine mostrato all'utente.
 export const STEPS = [
   { id: 'ocr', label: 'Estrazione testo', hint: 'NVIDIA Nemotron-Parse' },
-  { id: 'format', label: 'Formattazione layout', hint: 'Google Gemini → Typst' },
+  { id: 'format', label: 'Formattazione layout', hint: 'Gemini/NVIDIA → Typst' },
   { id: 'compile', label: 'Compilazione PDF', hint: 'Typst WASM · locale' },
 ];
 
@@ -76,10 +76,23 @@ export function usePipeline(settings) {
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [canResume, setCanResume] = useState(false); // sessione interrotta ripristinabile
   const [sessions, setSessions] = useState([]); // sessioni salvate su IndexedDB
+  // Revisione figure dopo l'OCR: [{path,url,junk,keep}] | null. La pipeline
+  // resta in pausa (phase 'review') finché l'utente non conferma la selezione.
+  const [figureReview, setFigureReview] = useState(null);
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
+  const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
 
   const abortRef = useRef(null);
+
+  // Chiude la revisione figure revocando gli object URL delle miniature.
+  const clearReview = useCallback(() => {
+    setFigureReview((items) => {
+      items?.forEach((i) => URL.revokeObjectURL(i.url));
+      return null;
+    });
+    pendingRef.current = null;
+  }, []);
 
   // Precarica il WASM di Typst appena montato: rende istantanea la prima
   // compilazione quando la pipeline arriva alla fase 3.
@@ -118,6 +131,7 @@ export function usePipeline(settings) {
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
+    clearReview();
     setPhase('idle');
     setStatus(emptyStatus);
     setActiveStep(null);
@@ -132,7 +146,7 @@ export function usePipeline(settings) {
     figuresRef.current = [];
     sessionRef.current = null;
     refreshSessions(); // riallinea l'elenco al ritorno sulla home
-  }, [refreshSessions]);
+  }, [refreshSessions, clearReview]);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
@@ -231,6 +245,8 @@ export function usePipeline(settings) {
             // Impone in modo deterministico i livelli di titolo del sorgente.
             ch.body = enforceHeadingLevels(body, ch.text);
           }
+          // Larghezza figure dal bbox reale (ignora quella scelta dall'LLM).
+          ch.body = applyFigureWidths(ch.body, figuresRef.current);
           ch.status = 'done';
           // Aggiorna progressivamente l'editor e salva i progressi.
           setTypstCode(combineDocument(s.preamble, s.chunks.map((c) => c.body || '')));
@@ -475,6 +491,71 @@ export function usePipeline(settings) {
     [rawText, runFormat],
   );
 
+  /**
+   * Fase 2+3 su un testo OCR pronto: crea la sessione a chunk, la persiste e
+   * avvia la formattazione. Usata sia dal flusso diretto (nessuna figura) sia
+   * dopo la conferma della revisione figure.
+   */
+  const startFormat = useCallback(
+    async (extracted, fileName, signal) => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      sessionRef.current = {
+        id,
+        fileName,
+        rawText: extracted,
+        chunks: chunkDocument(extracted, settings.chunkSize).map((t) => ({
+          text: t,
+          body: '',
+          status: 'pending',
+        })),
+        preamble: '',
+        styleHint: undefined,
+        lastError: '',
+      };
+      await saveFigures(id, figuresRef.current);
+      await persist();
+      setPhase('running');
+      setActiveStep('format');
+      setStatus((s) => ({ ...s, format: 'active' }));
+      await runFormat(signal);
+    },
+    [settings, runFormat, persist],
+  );
+
+  /**
+   * Conferma della revisione figure: mantiene solo i percorsi indicati,
+   * rimuove i segnaposto delle figure scartate dal testo OCR e avvia la
+   * formattazione.
+   * @param {string[]} keptPaths
+   */
+  const confirmFigures = useCallback(
+    async (keptPaths) => {
+      const pending = pendingRef.current;
+      if (!pending) return;
+      const keep = new Set(keptPaths);
+      let text = pending.extracted;
+      for (const fig of figuresRef.current) {
+        if (keep.has(fig.path)) continue;
+        const escaped = fig.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        text = text.replace(new RegExp(`^!\\[[^\\]\\n]*\\]\\(${escaped}\\)[ \\t]*$\\n?`, 'gm'), '');
+      }
+      text = text.replace(/\n{3,}/g, '\n\n').trim();
+      figuresRef.current = figuresRef.current.filter((f) => keep.has(f.path));
+      clearReview();
+      setRawText(text);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      try {
+        await startFormat(text, pending.fileName, controller.signal);
+      } catch (e) {
+        if (controller.signal.aborted || e?.name === 'AbortError') return;
+        setError(e.message || 'Errore imprevisto nella pipeline.');
+        setPhase('error');
+      }
+    },
+    [startFormat, clearReview],
+  );
+
   /** Esegue l'intera pipeline a partire dal file caricato. */
   const runPipeline = useCallback(
     async (file) => {
@@ -489,6 +570,7 @@ export function usePipeline(settings) {
       setStatus({ ...emptyStatus });
       setRawText('');
       setTypstCode('');
+      clearReview();
 
       try {
         // [1/3] Estrazione testo (NVIDIA). Nemotron-Parse accetta solo
@@ -542,28 +624,30 @@ export function usePipeline(settings) {
         setRawText(extracted);
         setStatus((s) => ({ ...s, ocr: 'done' }));
 
+        // Se l'OCR ha trovato figure, PAUSA per la revisione: l'utente
+        // sceglie quali tenere (gli artefatti — numeri di pagina scritti a
+        // mano, timbri — sono pre-deselezionati). Poi confirmFigures avvia
+        // la fase 2.
+        if (figures.length) {
+          pendingRef.current = { extracted, fileName: file.name };
+          setFigureReview(
+            figures.map((f) => ({
+              path: f.path,
+              url: URL.createObjectURL(new Blob([f.bytes], { type: 'image/png' })),
+              junk: !!f.junk,
+              keep: !f.junk,
+            })),
+          );
+          setActiveStep(null);
+          setDetail('Scegli le immagini da tenere, poi premi Continua.');
+          setPhase('review');
+          return;
+        }
+
         // [2/3] + [3/3] Formattazione a chunk (gerarchia continua) e
         // compilazione. La sessione persiste su IndexedDB per riprendere
         // dopo rate limit o chiusura dell'app.
-        const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        sessionRef.current = {
-          id,
-          fileName: file.name,
-          rawText: extracted,
-          chunks: chunkDocument(extracted, settings.chunkSize).map((t) => ({
-            text: t,
-            body: '',
-            status: 'pending',
-          })),
-          preamble: '',
-          styleHint: undefined,
-          lastError: '',
-        };
-        await saveFigures(id, figures);
-        await persist();
-        setActiveStep('format');
-        setStatus((s) => ({ ...s, format: 'active' }));
-        await runFormat(signal);
+        await startFormat(extracted, file.name, signal);
         return;
       } catch (e) {
         setDetail('');
@@ -579,7 +663,7 @@ export function usePipeline(settings) {
         setPhase('error');
       }
     },
-    [settings, runFormat, typstCode, persist],
+    [settings, startFormat, clearReview, typstCode],
   );
 
   return {
@@ -598,6 +682,8 @@ export function usePipeline(settings) {
     compiling,
     chunkProgress,
     canResume,
+    figureReview,
+    confirmFigures,
     sessions,
     openSession,
     deleteSavedSession,
