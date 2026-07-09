@@ -24,13 +24,48 @@
  * @param {AbortSignal} [params.signal]
  * @returns {Promise<string>} testo estratto (Markdown)
  */
+/**
+ * Esegue l'OCR di UNA immagine restituendo i BLOCCHI strutturati
+ * (markdown_bbox): ogni blocco ha `type` (Section-header, Text, Picture,
+ * Caption, Table, …), `bbox` normalizzata e `text` in Markdown. Questo
+ * preserva la gerarchia dei titoli e localizza le figure.
+ *
+ * @returns {Promise<Array<{type:string,bbox:object,text:string}>>}
+ */
+export async function extractPageBlocks({ apiKey, endpoint, model, imageDataUrl, signal }) {
+  if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
+  if (!imageDataUrl) throw new Error('Nessuna immagine da analizzare.');
+
+  const data = await callNemotron({ apiKey, endpoint, model, imageDataUrl, tool: 'markdown_bbox', signal });
+  const args = parseToolArguments(data);
+  // markdown_bbox può annidare i blocchi: [[{...}]] oppure [{...}]
+  const blocks = Array.isArray(args?.[0]) ? args[0] : args;
+  if (Array.isArray(blocks) && blocks.length && blocks[0]?.type) {
+    return blocks;
+  }
+  // Fallback: nessuna struttura → un unico blocco di testo.
+  const text = pickExtractedText(data);
+  if (!text.trim()) throw new Error('La risposta di NVIDIA NIM non conteneva testo estraibile.');
+  return [{ type: 'Text', bbox: null, text }];
+}
+
+/** Variante testuale semplice (markdown_no_bbox) — usata come fallback. */
 export async function extractPageText({ apiKey, endpoint, model, imageDataUrl, signal }) {
+  const data = await callNemotron({ apiKey, endpoint, model, imageDataUrl, tool: 'markdown_no_bbox', signal });
+  const text = pickExtractedText(data);
+  if (!text || !text.trim()) {
+    throw new Error('La risposta di NVIDIA NIM non conteneva testo estraibile.');
+  }
+  return text.trim();
+}
+
+async function callNemotron({ apiKey, endpoint, model, imageDataUrl, tool, signal }) {
   if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
   if (!imageDataUrl) throw new Error('Nessuna immagine da analizzare.');
 
   const body = {
     model: model || 'nvidia/nemotron-parse',
-    tools: [{ type: 'function', function: { name: 'markdown_no_bbox' } }],
+    tools: [{ type: 'function', function: { name: tool } }],
     messages: [
       {
         role: 'user',
@@ -68,12 +103,18 @@ export async function extractPageText({ apiKey, endpoint, model, imageDataUrl, s
     throw new Error(`NVIDIA NIM ha risposto ${res.status}. ${detail}`);
   }
 
-  const data = await res.json();
-  const text = pickExtractedText(data);
-  if (!text || !text.trim()) {
-    throw new Error('La risposta di NVIDIA NIM non conteneva testo estraibile.');
+  return res.json();
+}
+
+/** Ritorna l'array `arguments` del tool call, già parsato. */
+function parseToolArguments(data) {
+  const raw = data?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+  if (!raw) return null;
+  try {
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    return null;
   }
-  return text.trim();
 }
 
 /**

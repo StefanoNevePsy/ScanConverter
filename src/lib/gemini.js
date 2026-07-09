@@ -31,19 +31,32 @@ export async function toTypst({ apiKey, model, rawText, styleHint, signal }) {
   if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
   if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
 
-  const endpoint =
-    `https://generativelanguage.googleapis.com/v1beta/models/` +
-    `${encodeURIComponent(model)}:generateContent`;
+  // In dev web il proxy del dev server evita problemi di rete/CORS; in
+  // produzione/nativo si usa l'URL diretto (Google supporta il CORS).
+  let base = 'https://generativelanguage.googleapis.com';
+  try {
+    if (import.meta.env.DEV) base = '/__gemini__';
+  } catch {
+    /* Node/prod: URL diretto */
+  }
+  const endpoint = `${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   const guidance =
-    'Font disponibili nel compilatore (usa SOLO questi nomi esatti): ' +
-    'per il corpo serif "Libertinus Serif" oppure "New Computer Modern"; ' +
-    'per i titoli sans-serif "DejaVu Sans"; per il monospazio "DejaVu Sans Mono".\n' +
+    'Font disponibili nel compilatore (usa SOLO questi nomi esatti): serif ' +
+    '"Libertinus Serif", "New Computer Modern", "PT Serif"; sans-serif ' +
+    '"DejaVu Sans", "PT Sans"; monospazio "DejaVu Sans Mono".\n' +
+    'GERARCHIA: preserva ESATTAMENTE i livelli di titolo del Markdown in ' +
+    'ingresso — "# " → "= ", "## " → "== ", "### " → "=== ", "#### " → ' +
+    '"==== " — senza appiattirli né rinumerarli.\n' +
+    'FIGURE: ogni segnaposto Markdown `![didascalia](/figures/fig-N.png)` va ' +
+    'convertito in `#figure(image("/figures/fig-N.png", width: 80%), ' +
+    'caption: [didascalia])`, MANTENENDO il percorso esatto. Non inventare né ' +
+    'omettere immagini; non aggiungere immagini con altri percorsi.\n' +
     'Vincoli tecnici (Typst 0.13): produci codice che COMPILA senza errori. ' +
     'Non usare funzioni non definite; se definisci un #let, definiscilo PRIMA ' +
     'di usarlo. Converti eventuali tag HTML residui (es. <sup>1</sup>) in ' +
-    'costrutti Typst nativi (footnote/super). Non includere immagini esterne ' +
-    'né `#import` di pacchetti. Chiudi sempre parentesi e parentesi quadre.' +
+    'costrutti Typst nativi (footnote/super). Non fare `#import` di pacchetti. ' +
+    'Chiudi sempre parentesi e parentesi quadre.' +
     (styleHint
       ? '\n\nRICHIESTA DI STILE PRIORITARIA dell’utente (rispettala): ' + styleHint
       : '');

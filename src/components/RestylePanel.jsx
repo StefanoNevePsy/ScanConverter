@@ -12,9 +12,20 @@ const GROUPS = [
     key: 'font',
     label: 'Font',
     options: [
-      { id: 'libertinus', label: 'Libertinus (serif)', hint: 'Corpo in "Libertinus Serif", titoli in "DejaVu Sans".' },
-      { id: 'newcm', label: 'New CM (stile LaTeX)', hint: 'Usa "New Computer Modern" per corpo e titoli, estetica paper LaTeX.' },
-      { id: 'sans', label: 'Sans moderno', hint: 'Corpo e titoli in "DejaVu Sans", estetica pulita e moderna.' },
+      { id: 'libertinus', label: 'Libertinus', hint: 'Corpo in "Libertinus Serif", titoli in "DejaVu Sans".' },
+      { id: 'newcm', label: 'New CM (LaTeX)', hint: 'Usa "New Computer Modern" per corpo e titoli, estetica paper LaTeX.' },
+      { id: 'ptserif', label: 'PT Serif', hint: 'Corpo in "PT Serif", titoli in "PT Sans".' },
+      { id: 'ptsans', label: 'PT Sans', hint: 'Corpo e titoli in "PT Sans", estetica umanista.' },
+      { id: 'dejavu', label: 'DejaVu Sans', hint: 'Corpo e titoli in "DejaVu Sans", pulito e moderno.' },
+    ],
+  },
+  {
+    key: 'paper',
+    label: 'Formato pagina',
+    options: [
+      { id: 'a4', label: 'A4', hint: 'Formato pagina A4.' },
+      { id: 'a5', label: 'A5', hint: 'Formato pagina A5.' },
+      { id: 'letter', label: 'US Letter', hint: 'Formato pagina US Letter.' },
     ],
   },
   {
@@ -27,11 +38,36 @@ const GROUPS = [
     ],
   },
   {
+    key: 'columns',
+    label: 'Colonne',
+    options: [
+      { id: 'one', label: 'Una colonna', hint: 'Testo su una sola colonna.' },
+      { id: 'two', label: 'Due colonne', hint: 'Imposta il corpo su due colonne (columns: 2).' },
+    ],
+  },
+  {
+    key: 'align',
+    label: 'Allineamento',
+    options: [
+      { id: 'justify', label: 'Giustificato', hint: 'Testo giustificato (justify: true).' },
+      { id: 'ragged', label: 'A bandiera', hint: 'Testo allineato a sinistra, non giustificato.' },
+    ],
+  },
+  {
     key: 'density',
     label: 'Densità',
     options: [
       { id: 'airy', label: 'Arioso', hint: 'Interlinea generosa e spaziatura ariosa.' },
       { id: 'compact', label: 'Compatto', hint: 'Interlinea compatta e testo denso.' },
+    ],
+  },
+  {
+    key: 'extras',
+    label: 'Extra',
+    options: [
+      { id: 'pagenums', label: 'Numeri di pagina', hint: 'Aggiungi i numeri di pagina in fondo.' },
+      { id: 'numbered', label: 'Titoli numerati', hint: 'Numera i titoli delle sezioni (heading numbering "1.1").' },
+      { id: 'runninghead', label: 'Testatina', hint: 'Aggiungi una testatina con il titolo del documento.' },
     ],
   },
 ];

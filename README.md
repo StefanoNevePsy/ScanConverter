@@ -106,14 +106,32 @@ Caratteristiche native:
 - **Icona e splash** — generate in `assets/` (sorgenti SVG in `assets/src/`)
   e installate in `android/app/src/main/res`.
 
+## Gerarchia, figure e testo OCR
+
+- **Gerarchia preservata**: Nemotron-Parse restituisce i livelli di titolo
+  (`##`, `###`, `####`) e Gemini li mappa fedelmente in Typst (`==`, `===`,
+  `====`), senza appiattirli.
+- **Figure del documento originale**: in modalità `markdown_bbox` il modello
+  classifica i blocchi (`Picture`, `Caption`, …) con bounding box. L'app
+  **ritaglia** le regioni-immagine dalla pagina sorgente (`src/lib/figures.js`)
+  e le **incorpora** nel PDF Typst via `map_shadow`
+  (`#figure(image("/figures/fig-N.png"), caption: […])`).
+- **Testo OCR per LLM esterni**: il pannello *“Testo OCR”* mostra il Markdown
+  estratto e permette di copiarlo — o di copiare **prompt + testo** pronto per
+  ChatGPT / Gemma in locale. Il Typst generato altrove si incolla nell'editor
+  e si compila con **Genera PDF** (l'editor ha anche un tasto **Copia**).
+
 ## Rigenerare il layout (re-prompt Gemini)
 
 Dopo la prima elaborazione, il pannello **“Rigenera layout con Gemini”**
 permette di ottenere un'impaginazione diversa **senza rifare l'OCR** (nessun
-costo/latenza NVIDIA): si scelgono preset rapidi (famiglia di font, ampiezza
-del margine per annotazioni, densità) e/o si scrive un'istruzione libera (es.
-“titoli centrati in maiuscoletto, due colonne”). Viene ri-eseguita solo la
-fase 2 (Gemini con le indicazioni di stile) + la fase 3 (compilazione).
+costo/latenza NVIDIA): si scelgono preset rapidi (**font** tra 6 famiglie
+impacchettate — Libertinus, New Computer Modern, PT Serif, PT Sans, DejaVu
+Sans/Mono —, **formato pagina**, **margine** per annotazioni, **colonne**,
+**allineamento**, **densità**, più extra come numeri di pagina, titoli
+numerati, testatina) e/o si scrive un'istruzione libera (es. “titoli centrati
+in maiuscoletto”). Viene ri-eseguita solo la fase 2 (Gemini con le indicazioni
+di stile) + la fase 3 (compilazione).
 
 In alternativa si può sempre modificare a mano il codice Typst nell'editor e
 premere **Genera PDF**, oppure attivare l'**Anteprima live**.

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { extractPageText } from '../lib/nvidia.js';
+import { extractPageBlocks } from '../lib/nvidia.js';
 import { toTypst } from '../lib/gemini.js';
 import { compileToPdf, pdfObjectUrl, initTypst } from '../lib/typst.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
+import { assemblePage, makeFigureCounter } from '../lib/assemble.js';
 
 // Le tre fasi dello split delle operazioni, nell'ordine mostrato all'utente.
 export const STEPS = [
@@ -31,6 +32,7 @@ export function usePipeline(settings) {
   const [compileError, setCompileError] = useState(null);
   const [compiling, setCompiling] = useState(false);
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
+  const figuresRef = useRef([]); // figure ritagliate dal documento originale
 
   const abortRef = useRef(null);
   const pdfUrlRef = useRef(null);
@@ -71,6 +73,7 @@ export function usePipeline(settings) {
     setPdfUrl(null);
     setCompileError(null);
     setDetail('');
+    figuresRef.current = [];
   }, []);
 
   const cancel = useCallback(() => {
@@ -85,7 +88,7 @@ export function usePipeline(settings) {
       setCompiling(true);
       setCompileError(null);
       try {
-        const bytes = await compileToPdf(source);
+        const bytes = await compileToPdf(source, figuresRef.current);
         setPdf(bytes);
         return true;
       } catch (e) {
@@ -129,7 +132,7 @@ export function usePipeline(settings) {
         setTypstCode(code);
         setStatus((s) => ({ ...s, format: 'done', compile: 'active' }));
         setActiveStep('compile');
-        const bytes = await compileToPdf(code);
+        const bytes = await compileToPdf(code, figuresRef.current);
         if (signal.aborted) return false;
         setPdf(bytes);
         setStatus((s) => ({ ...s, compile: 'done' }));
@@ -186,12 +189,14 @@ export function usePipeline(settings) {
         if (signal.aborted) return;
         if (!pageImages.length) throw new Error('Nessuna pagina da elaborare.');
 
+        const figCounter = makeFigureCounter();
         const parts = [];
+        const figures = [];
         for (let i = 0; i < pageImages.length; i++) {
           if (pageImages.length > 1) {
             setDetail(`OCR pagina ${i + 1}/${pageImages.length}…`);
           }
-          const pageText = await extractPageText({
+          const blocks = await extractPageBlocks({
             apiKey: settings.nvidiaApiKey,
             endpoint: settings.nvidiaEndpoint,
             model: settings.nvidiaModel,
@@ -199,13 +204,16 @@ export function usePipeline(settings) {
             signal,
           });
           if (signal.aborted) return;
-          parts.push(pageText);
+          // Ricostruisce il testo (gerarchia preservata) e ritaglia le figure.
+          const page = await assemblePage(blocks, pageImages[i], figCounter);
+          parts.push(
+            pageImages.length > 1 ? `<!-- pagina ${i + 1} -->\n${page.markdown}` : page.markdown,
+          );
+          figures.push(...page.figures);
         }
-        const extracted =
-          pageImages.length > 1
-            ? parts.map((t, i) => `<!-- pagina ${i + 1} -->\n${t}`).join('\n\n')
-            : parts[0];
+        const extracted = parts.join('\n\n');
 
+        figuresRef.current = figures;
         setDetail('');
         setRawText(extracted);
         setStatus((s) => ({ ...s, ocr: 'done' }));
@@ -226,7 +234,7 @@ export function usePipeline(settings) {
         // [3/3] Compilazione PDF (Typst WASM, locale)
         setActiveStep('compile');
         setStatus((s) => ({ ...s, compile: 'active' }));
-        const bytes = await compileToPdf(code);
+        const bytes = await compileToPdf(code, figuresRef.current);
         if (signal.aborted) return;
         setPdf(bytes);
         setStatus((s) => ({ ...s, compile: 'done' }));

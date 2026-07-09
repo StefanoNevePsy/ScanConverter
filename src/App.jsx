@@ -9,6 +9,7 @@ import PipelineStepper from './components/PipelineStepper.jsx';
 import TypstEditor from './components/TypstEditor.jsx';
 import PdfPreview from './components/PdfPreview.jsx';
 import RestylePanel from './components/RestylePanel.jsx';
+import OcrTextPanel from './components/OcrTextPanel.jsx';
 import {
   IconSettings,
   IconRefresh,
@@ -362,6 +363,8 @@ function Workspace({
           disabled={pipe.phase === 'running'}
         />
       )}
+
+      {pipe.rawText && <OcrTextPanel text={pipe.rawText} />}
 
       {/* Selettore a schede (solo mobile/tablet stretto) */}
       <div className="flex items-center gap-1 rounded-lg border border-border bg-surface p-1 lg:hidden">

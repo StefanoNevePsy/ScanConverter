@@ -1,5 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { IconRefresh, IconSpinner, IconAlert } from './Icons.jsx';
+import CopyButton from './CopyButton.jsx';
 
 /**
  * Editor a colonna sinistra: codice Typst generato e modificabile dall'utente,
@@ -35,18 +36,25 @@ export default function TypstEditor({
           <h2 className="text-sm font-medium text-ink">Codice Typst</h2>
           <span className="text-xs text-faint">modificabile</span>
         </div>
-        <button
-          onClick={() => onCompile()}
-          disabled={disabled || compiling || !value.trim()}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {compiling ? (
-            <IconSpinner width={14} height={14} />
-          ) : (
-            <IconRefresh width={14} height={14} />
-          )}
-          {compiling ? 'Compilo…' : 'Genera PDF'}
-        </button>
+        <div className="flex items-center gap-1.5">
+          <CopyButton
+            getText={() => value}
+            disabled={!value.trim()}
+            className="bg-surface-2 text-ink hover:bg-surface-3"
+          />
+          <button
+            onClick={() => onCompile()}
+            disabled={disabled || compiling || !value.trim()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {compiling ? (
+              <IconSpinner width={14} height={14} />
+            ) : (
+              <IconRefresh width={14} height={14} />
+            )}
+            {compiling ? 'Compilo…' : 'Genera PDF'}
+          </button>
+        </div>
       </header>
 
       <div className="relative flex min-h-0 flex-1">

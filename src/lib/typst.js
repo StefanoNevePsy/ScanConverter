@@ -65,12 +65,19 @@ export function initTypst() {
 }
 
 /**
- * Compila il sorgente Typst in un PDF.
+ * Compila il sorgente Typst in un PDF, incorporando eventuali figure.
  * @param {string} source codice Typst
+ * @param {{path:string,bytes:Uint8Array}[]} [figures] immagini da rendere
+ *        disponibili al compilatore (referenziate come `image("/figures/…")`)
  * @returns {Promise<Uint8Array>} byte del PDF
  */
-export async function compileToPdf(source) {
+export async function compileToPdf(source, figures = []) {
   await initTypst();
+  // Rende disponibili le figure come "shadow file" nel filesystem virtuale
+  // del compilatore. mapShadow sovrascrive: ri-compilazioni idempotenti.
+  for (const fig of figures) {
+    if (fig?.path && fig?.bytes) await $typst.mapShadow(fig.path, fig.bytes);
+  }
   const bytes = await $typst.pdf({ mainContent: source });
   if (!bytes || !bytes.length) {
     throw new Error('Il compilatore Typst non ha prodotto alcun output PDF.');

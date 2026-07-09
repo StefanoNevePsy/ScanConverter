@@ -26,6 +26,14 @@ export default defineConfig({
         secure: true,
         rewrite: (p) => p.replace(/^\/__nvidia__/, ''),
       },
+      // Gemini supporta il CORS (funziona diretto dal browser), ma il proxy
+      // in dev aiuta reti/browser restrittivi ed è simmetrico a NVIDIA.
+      '/__gemini__': {
+        target: 'https://generativelanguage.googleapis.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/__gemini__/, ''),
+      },
     },
   },
 });
