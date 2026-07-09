@@ -44,9 +44,12 @@ _Opzioni avanzate_.
 ## Come funziona
 
 1. **Caricamento** — Drag & drop di un'immagine (PNG/JPEG/WebP) o PDF.
-2. **Estrazione** (`src/lib/nvidia.js`) — l'immagine viaggia in base64 verso
-   il NIM di NVIDIA; la risposta (Markdown/JSON) preserva titoli, note e
-   tabelle.
+2. **Estrazione** (`src/lib/nvidia.js` + `src/lib/pdf.js`) — Nemotron-Parse
+   accetta **solo immagini**: se il file è un PDF, ogni pagina viene prima
+   rasterizzata a ~250 DPI con pdf.js (`renderPdfToImages`), poi ogni pagina
+   è inviata al NIM con il tool `markdown_no_bbox`. Il testo estratto arriva
+   nei `tool_calls` della risposta (`arguments.text`) e viene concatenato
+   pagina per pagina.
 3. **Strutturazione** (`src/lib/gemini.js`) — Gemini riceve il testo grezzo e
    il system prompt tipografico e restituisce codice Typst con margini ampi,
    serif per il corpo, sans per i titoli e vere note a piè di pagina.
@@ -74,6 +77,34 @@ src/
 └─ components/              Dropzone, SettingsModal, PipelineStepper,
                             TypstEditor, PdfPreview, Icons
 ```
+
+## App Android (Capacitor)
+
+Il progetto è impacchettabile come app Android nativa tramite Capacitor.
+
+```bash
+npm run build:android     # vite build + cap sync android
+npx cap open android      # apre Android Studio
+# oppure, da riga di comando:
+cd android && ./gradlew assembleDebug
+# APK: android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Requisiti: JDK 21, Android SDK (platform 36, build-tools 36). Impostare
+`ANDROID_HOME` e creare `android/local.properties` con `sdk.dir=...`.
+
+Caratteristiche native:
+
+- **CORS risolto su mobile** — `CapacitorHttp` (abilitato in
+  `capacitor.config.ts`) intercetta `fetch` e instrada le chiamate NVIDIA/
+  Google via HTTP nativo, fuori dal webview: nessun blocco cross-origin.
+- **Tasto/gesture Indietro** (`src/lib/native.js`) — chiude prima il modale,
+  poi torna dal workspace al caricamento, infine esce dall'app.
+- **Responsive** — su mobile/tablet stretto le due colonne (codice/anteprima)
+  diventano schede a tutta altezza; safe-area per notch e barre di
+  navigazione; status bar a tema scuro.
+- **Icona e splash** — generate in `assets/` (sorgenti SVG in `assets/src/`)
+  e installate in `android/app/src/main/res`.
 
 ## Note e limiti noti
 

@@ -95,6 +95,16 @@
 }
 
 @layer components {
+  /* Rispetta le safe-area di notch e barre di navigazione (Android/iOS). */
+  .app-shell {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
   .card {
     background-color: var(--color-surface);
     border: 1px solid var(--color-border);

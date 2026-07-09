@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadSettings, saveSettings } from './lib/storage.js';
 import { formatBytes } from './lib/files.js';
 import { usePipeline } from './hooks/usePipeline.js';
+import { initNativeShell, onBackButton } from './lib/native.js';
 import SettingsModal from './components/SettingsModal.jsx';
 import Dropzone from './components/Dropzone.jsx';
 import PipelineStepper from './components/PipelineStepper.jsx';
@@ -112,8 +113,29 @@ export default function App() {
 
   const hasWorkspace = file && pipe.phase !== 'idle';
 
+  // Gestione del tasto/gesture "indietro" di Android. Un ref tiene sempre
+  // aggiornata la logica senza dover ri-registrare il listener nativo.
+  const backRef = useRef(() => false);
+  backRef.current = () => {
+    if (settingsOpen) {
+      setSettingsOpen(false);
+      return true;
+    }
+    if (hasWorkspace) {
+      startOver();
+      return true;
+    }
+    return false; // nessuno stato da chiudere: l'app può uscire
+  };
+
+  useEffect(() => {
+    initNativeShell();
+    const off = onBackButton(() => backRef.current());
+    return off;
+  }, []);
+
   return (
-    <div className="flex min-h-dvh flex-col">
+    <div className="app-shell flex min-h-dvh flex-col">
       <TopBar
         keysReady={keysReady}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -158,7 +180,7 @@ export default function App() {
 function TopBar({ keysReady, onOpenSettings, status, running }) {
   return (
     <header
-      className="sticky top-0 border-b border-border bg-bg/80 backdrop-blur-md"
+      className="safe-top sticky top-0 border-b border-border bg-bg/80 backdrop-blur-md"
       style={{ zIndex: 'var(--z-sticky)' }}
     >
       <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
@@ -269,6 +291,8 @@ function Workspace({
     () => Object.values(pipe.status).filter((s) => s === 'done').length,
     [pipe.status],
   );
+  // Su schermi stretti le due colonne diventano schede a tutta altezza.
+  const [mobileTab, setMobileTab] = useState('code'); // 'code' | 'pdf'
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -286,8 +310,10 @@ function Workspace({
           </div>
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-ink">{file.name}</div>
-            <div className="text-xs text-faint">
-              {formatBytes(file.size)} · {doneCount}/3 fasi completate
+            <div className="truncate text-xs text-faint">
+              {pipe.detail
+                ? pipe.detail
+                : `${formatBytes(file.size)} · ${doneCount}/3 fasi completate`}
             </div>
           </div>
         </div>
@@ -328,9 +354,20 @@ function Workspace({
         </div>
       )}
 
-      {/* Doppia colonna: editor Typst | anteprima PDF */}
-      <div className="grid min-h-[520px] flex-1 grid-rows-2 gap-4 lg:grid-cols-2 lg:grid-rows-1">
-        <div className="flex min-h-0 flex-col">
+      {/* Selettore a schede (solo mobile/tablet stretto) */}
+      <div className="flex items-center gap-1 rounded-lg border border-border bg-surface p-1 lg:hidden">
+        <TabButton active={mobileTab === 'code'} onClick={() => setMobileTab('code')}>
+          Codice Typst
+        </TabButton>
+        <TabButton active={mobileTab === 'pdf'} onClick={() => setMobileTab('pdf')}>
+          Anteprima PDF
+        </TabButton>
+      </div>
+
+      {/* Doppia colonna: editor Typst | anteprima PDF.
+          Su mobile una scheda alla volta, a tutta altezza. */}
+      <div className="flex min-h-[60vh] flex-1 flex-col gap-4 lg:grid lg:min-h-[520px] lg:grid-cols-2">
+        <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'code' ? 'flex' : 'hidden'} lg:flex`}>
           <div className="mb-2 flex items-center justify-end">
             <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
               <span>Anteprima live</span>
@@ -356,8 +393,8 @@ function Workspace({
           />
         </div>
 
-        <div className="flex min-h-0 flex-col">
-          <div className="mb-2 h-[26px]" aria-hidden="true" />
+        <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'pdf' ? 'flex' : 'hidden'} lg:flex`}>
+          <div className="mb-2 hidden h-[26px] lg:block" aria-hidden="true" />
           <PdfPreview
             pdfUrl={pipe.pdfUrl}
             compiling={pipe.compiling || pipe.status.compile === 'active'}
@@ -367,5 +404,18 @@ function Workspace({
         </div>
       </div>
     </div>
+  );
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+        active ? 'bg-surface-2 text-ink' : 'text-muted hover:text-ink'
+      }`}
+    >
+      {children}
+    </button>
   );
 }

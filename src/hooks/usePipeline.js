@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { extractText } from '../lib/nvidia.js';
+import { extractPageText } from '../lib/nvidia.js';
 import { toTypst } from '../lib/gemini.js';
 import { compileToPdf, pdfObjectUrl, initTypst } from '../lib/typst.js';
-import { fileToDataUrl } from '../lib/files.js';
+import { fileToDataUrl, isPdf } from '../lib/files.js';
+import { renderPdfToImages } from '../lib/pdf.js';
 
 // Le tre fasi dello split delle operazioni, nell'ordine mostrato all'utente.
 export const STEPS = [
@@ -29,6 +30,7 @@ export function usePipeline(settings) {
   const [pdfUrl, setPdfUrl] = useState(null);
   const [compileError, setCompileError] = useState(null);
   const [compiling, setCompiling] = useState(false);
+  const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
 
   const abortRef = useRef(null);
   const pdfUrlRef = useRef(null);
@@ -68,6 +70,7 @@ export function usePipeline(settings) {
     setTypstCode('');
     setPdfUrl(null);
     setCompileError(null);
+    setDetail('');
   }, []);
 
   const cancel = useCallback(() => {
@@ -111,17 +114,45 @@ export function usePipeline(settings) {
       setTypstCode('');
 
       try {
-        // [1/3] Estrazione testo (NVIDIA)
+        // [1/3] Estrazione testo (NVIDIA). Nemotron-Parse accetta solo
+        // immagini: i PDF vengono prima rasterizzati pagina per pagina.
         setActiveStep('ocr');
         setStatus((s) => ({ ...s, ocr: 'active' }));
-        const imageDataUrl = await fileToDataUrl(file);
-        const extracted = await extractText({
-          apiKey: settings.nvidiaApiKey,
-          endpoint: settings.nvidiaEndpoint,
-          imageDataUrl,
-          signal,
-        });
+        setDetail('');
+
+        let pageImages;
+        if (isPdf(file)) {
+          setDetail('Rendering del PDF…');
+          const buffer = await file.arrayBuffer();
+          pageImages = await renderPdfToImages(buffer, {
+            onProgress: (p, t) => setDetail(`Rendering pagina ${p}/${t}…`),
+          });
+        } else {
+          pageImages = [await fileToDataUrl(file)];
+        }
         if (signal.aborted) return;
+        if (!pageImages.length) throw new Error('Nessuna pagina da elaborare.');
+
+        const parts = [];
+        for (let i = 0; i < pageImages.length; i++) {
+          if (pageImages.length > 1) {
+            setDetail(`OCR pagina ${i + 1}/${pageImages.length}…`);
+          }
+          const pageText = await extractPageText({
+            apiKey: settings.nvidiaApiKey,
+            endpoint: settings.nvidiaEndpoint,
+            imageDataUrl: pageImages[i],
+            signal,
+          });
+          if (signal.aborted) return;
+          parts.push(pageText);
+        }
+        const extracted =
+          pageImages.length > 1
+            ? parts.map((t, i) => `<!-- pagina ${i + 1} -->\n${t}`).join('\n\n')
+            : parts[0];
+
+        setDetail('');
         setRawText(extracted);
         setStatus((s) => ({ ...s, ocr: 'done' }));
 
@@ -147,8 +178,10 @@ export function usePipeline(settings) {
         setStatus((s) => ({ ...s, compile: 'done' }));
 
         setActiveStep(null);
+        setDetail('');
         setPhase('done');
       } catch (e) {
+        setDetail('');
         if (signal.aborted || e?.name === 'AbortError') {
           setPhase(typstCode ? 'done' : 'idle');
           return;
@@ -168,6 +201,7 @@ export function usePipeline(settings) {
     phase,
     status,
     activeStep,
+    detail,
     error,
     rawText,
     typstCode,

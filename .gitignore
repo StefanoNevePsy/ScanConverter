@@ -6,3 +6,6 @@ dist-ssr
 .vite
 npm-debug.log*
 yarn-error.log*
+
+# APK di build (consegnato a parte)
+*.apk

@@ -45,6 +45,10 @@ export function validateFile(file) {
   return null;
 }
 
+export function isPdf(file) {
+  return file?.type === 'application/pdf';
+}
+
 export function formatBytes(n) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;

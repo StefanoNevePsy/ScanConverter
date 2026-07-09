@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ScanConverter</string>
+    <string name="title_activity_main">ScanConverter</string>
+    <string name="package_name">com.scanconverter.app</string>
+    <string name="custom_url_scheme">com.scanconverter.app</string>
+</resources>
