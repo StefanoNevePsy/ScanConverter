@@ -133,10 +133,18 @@ Così un libro si converte gradualmente senza intervento manuale.
 **Persistenza su IndexedDB** (`src/lib/store.js`): dopo ogni chunk completato,
 lo stato (testo, corpi Typst, preambolo, figure) viene salvato. IndexedDB
 gestisce testo esteso e byte delle immagini, ben oltre i limiti di
-localStorage, sia su web sia nella WebView Android. Se chiudi l'app a metà, al
-riavvio compare **“Sessione in sospeso — Riprendi”** e l'elaborazione continua
-da dove si era fermata, gerarchia inclusa. L'editor mostra il documento che si
-costruisce progressivamente.
+localStorage, sia su web sia nella WebView Android. L'editor mostra il
+documento che si costruisce progressivamente.
+
+**Gestione sessioni**: la home elenca le **Sessioni salvate** — quelle in
+sospeso si **riprendono**, quelle completate si **riaprono** (per rigenerare o
+scaricare il PDF), e ognuna si può **eliminare**.
+
+**Configurabile** (Impostazioni → Opzioni avanzate):
+
+- **Max pagine PDF** per singolo caricamento (default 20, fino a 2000);
+- **Dimensione chunk** in caratteri per richiesta a Gemini (default 5000):
+  più piccola = più richieste ma più tolleranza ai rate limit.
 
 ## Tabelle, gerarchia, figure e testo OCR
 

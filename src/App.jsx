@@ -10,6 +10,7 @@ import TypstEditor from './components/TypstEditor.jsx';
 import PdfPreview from './components/PdfPreview.jsx';
 import RestylePanel from './components/RestylePanel.jsx';
 import OcrTextPanel from './components/OcrTextPanel.jsx';
+import SessionsList from './components/SessionsList.jsx';
 import {
   IconSettings,
   IconRefresh,
@@ -113,15 +114,17 @@ export default function App() {
     lastCompiledRef.current = '';
   }, [pipe]);
 
-  // Riprende una sessione salvata: l'immagine originale non serve più (OCR
-  // già fatto), basta un file segnaposto per aprire il workspace.
-  const resumePersisted = useCallback(async () => {
-    const meta = pipe.persisted;
-    if (!meta) return;
-    setFile({ name: meta.fileName || 'documento', size: 0, type: '' });
-    lastCompiledRef.current = '';
-    await pipe.loadPersisted();
-  }, [pipe]);
+  // Apre/riprende una sessione salvata: l'immagine originale non serve più
+  // (OCR già fatto), basta un file segnaposto per aprire il workspace.
+  const openSavedSession = useCallback(
+    async (meta) => {
+      if (!meta) return;
+      setFile({ name: meta.fileName || 'documento', size: 0, type: '' });
+      lastCompiledRef.current = '';
+      await pipe.openSession(meta);
+    },
+    [pipe],
+  );
 
   const hasWorkspace = file && pipe.phase !== 'idle';
 
@@ -161,9 +164,9 @@ export default function App() {
             keysReady={keysReady}
             onFile={handleFile}
             onOpenSettings={() => setSettingsOpen(true)}
-            persisted={pipe.persisted}
-            onResumePersisted={resumePersisted}
-            onDiscardPersisted={() => pipe.discardPersisted()}
+            sessions={pipe.sessions}
+            onOpenSession={openSavedSession}
+            onDeleteSession={pipe.deleteSavedSession}
           />
         ) : (
           <Workspace
@@ -239,16 +242,7 @@ function TopBar({ keysReady, onOpenSettings, status, running }) {
 
 /* ---------------------------------------------------------------- Landing */
 
-function Landing({
-  keysReady,
-  onFile,
-  onOpenSettings,
-  persisted,
-  onResumePersisted,
-  onDiscardPersisted,
-}) {
-  const doneChunks = persisted?.chunks?.filter((c) => c.status === 'done').length ?? 0;
-  const totalChunks = persisted?.chunks?.length ?? 0;
+function Landing({ keysReady, onFile, onOpenSettings, sessions, onOpenSession, onDeleteSession }) {
   return (
     <div className="mx-auto grid w-full max-w-3xl flex-1 place-items-center py-6">
       <div className="w-full">
@@ -263,32 +257,12 @@ function Landing({
           </p>
         </div>
 
-        {persisted && (
-          <div className="mb-4 flex flex-col gap-3 rounded-xl border border-primary/40 bg-primary-soft px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
-              <IconRefresh width={18} height={18} className="shrink-0 text-primary" />
-              <div className="text-sm">
-                <div className="font-medium text-ink">Sessione in sospeso</div>
-                <div className="text-muted">
-                  {persisted.fileName} · {doneChunks}/{totalChunks} sezioni completate
-                </div>
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                onClick={onDiscardPersisted}
-                className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:text-ink"
-              >
-                Scarta
-              </button>
-              <button
-                onClick={onResumePersisted}
-                className="rounded-lg bg-primary px-3.5 py-1.5 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong"
-              >
-                Riprendi
-              </button>
-            </div>
-          </div>
+        {sessions?.length > 0 && (
+          <SessionsList
+            sessions={sessions}
+            onOpen={onOpenSession}
+            onDelete={onDeleteSession}
+          />
         )}
 
         {!keysReady && (

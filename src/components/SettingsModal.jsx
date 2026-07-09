@@ -136,6 +136,30 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 placeholder={DEFAULTS.geminiModel}
                 mono
               />
+              <div className="grid grid-cols-2 gap-3">
+                <Field
+                  label="Max pagine PDF"
+                  hint="Per caricamento (1–2000)."
+                  type="number"
+                  min={1}
+                  max={2000}
+                  value={form.maxPages}
+                  onChange={update('maxPages')}
+                  placeholder={String(DEFAULTS.maxPages)}
+                  mono
+                />
+                <Field
+                  label="Dimensione chunk"
+                  hint="Caratteri per richiesta (1000–30000)."
+                  type="number"
+                  min={1000}
+                  max={30000}
+                  value={form.chunkSize}
+                  onChange={update('chunkSize')}
+                  placeholder={String(DEFAULTS.chunkSize)}
+                  mono
+                />
+              </div>
             </div>
           </details>
         </div>

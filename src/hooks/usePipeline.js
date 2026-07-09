@@ -17,7 +17,7 @@ import {
   saveSession,
   saveFigures,
   getFigures,
-  getResumableSession,
+  listSessions,
   deleteSession,
 } from '../lib/store.js';
 
@@ -67,7 +67,7 @@ export function usePipeline(settings) {
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [canResume, setCanResume] = useState(false); // sessione interrotta ripristinabile
-  const [persisted, setPersisted] = useState(null); // sessione salvata su IndexedDB da riprendere
+  const [sessions, setSessions] = useState([]); // sessioni salvate su IndexedDB
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
 
@@ -82,12 +82,16 @@ export function usePipeline(settings) {
     });
   }, []);
 
-  // All'avvio, cerca una sessione incompleta da riprendere.
-  useEffect(() => {
-    getResumableSession().then((s) => {
-      if (s) setPersisted(s);
-    });
+  // Elenca le sessioni salvate (più recenti prima).
+  const refreshSessions = useCallback(async () => {
+    const all = await listSessions();
+    setSessions(all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
   }, []);
+
+  // All'avvio, carica l'elenco delle sessioni salvate.
+  useEffect(() => {
+    refreshSessions();
+  }, [refreshSessions]);
 
   // Salva su IndexedDB lo stato corrente della sessione (metadati testuali).
   const persist = useCallback(async () => {
@@ -137,7 +141,8 @@ export function usePipeline(settings) {
     setCanResume(false);
     figuresRef.current = [];
     sessionRef.current = null;
-  }, []);
+    refreshSessions(); // riallinea l'elenco al ritorno sulla home
+  }, [refreshSessions]);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
@@ -305,40 +310,46 @@ export function usePipeline(settings) {
   }, [runFormat]);
 
   /** Riprende una sessione salvata su IndexedDB (dopo chiusura dell'app). */
-  const loadPersisted = useCallback(async () => {
-    const meta = persisted;
-    if (!meta) return null;
-    const figs = await getFigures(meta.id);
-    figuresRef.current = figs;
-    sessionRef.current = {
-      id: meta.id,
-      fileName: meta.fileName,
-      rawText: meta.rawText,
-      chunks: meta.chunks.map((c) => ({ ...c })),
-      preamble: meta.preamble || '',
-      styleHint: meta.styleHint || undefined,
-      lastError: '',
-    };
-    setRawText(meta.rawText || '');
-    setTypstCode(combineDocument(meta.preamble || '', meta.chunks.map((c) => c.body || '')));
-    setStatus({ ocr: 'done', format: 'active', compile: 'pending' });
-    setPersisted(null);
-    setPhase('running');
-    setActiveStep('format');
-    const controller = new AbortController();
-    abortRef.current = controller;
-    sessionRef.current.chunks.forEach((c) => {
-      if (c.status === 'error') c.status = 'pending';
-    });
-    await runFormat(controller.signal);
-    return meta;
-  }, [persisted, runFormat]);
+  const openSession = useCallback(
+    async (meta) => {
+      if (!meta) return null;
+      const figs = await getFigures(meta.id);
+      figuresRef.current = figs;
+      sessionRef.current = {
+        id: meta.id,
+        fileName: meta.fileName,
+        rawText: meta.rawText,
+        chunks: meta.chunks.map((c) => ({ ...c })),
+        preamble: meta.preamble || '',
+        styleHint: meta.styleHint || undefined,
+        lastError: '',
+      };
+      setRawText(meta.rawText || '');
+      setTypstCode(combineDocument(meta.preamble || '', meta.chunks.map((c) => c.body || '')));
+      setStatus({ ocr: 'done', format: 'active', compile: 'pending' });
+      setCanResume(false);
+      setError(null);
+      setPhase('running');
+      setActiveStep('format');
+      const controller = new AbortController();
+      abortRef.current = controller;
+      sessionRef.current.chunks.forEach((c) => {
+        if (c.status === 'error') c.status = 'pending';
+      });
+      await runFormat(controller.signal);
+      return meta;
+    },
+    [runFormat],
+  );
 
-  /** Scarta la sessione salvata. */
-  const discardPersisted = useCallback(async () => {
-    if (persisted) await deleteSession(persisted.id);
-    setPersisted(null);
-  }, [persisted]);
+  /** Elimina una sessione salvata (per id) e aggiorna l'elenco. */
+  const deleteSavedSession = useCallback(
+    async (id) => {
+      await deleteSession(id);
+      await refreshSessions();
+    },
+    [refreshSessions],
+  );
 
   /** Compila localmente il codice Typst corrente in PDF. */
   const recompile = useCallback(
@@ -382,7 +393,11 @@ export function usePipeline(settings) {
         id: prev?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         fileName: prev?.fileName || 'documento',
         rawText,
-        chunks: chunkDocument(rawText).map((t) => ({ text: t, body: '', status: 'pending' })),
+        chunks: chunkDocument(rawText, settings.chunkSize).map((t) => ({
+          text: t,
+          body: '',
+          status: 'pending',
+        })),
         preamble: '',
         styleHint,
         lastError: '',
@@ -424,6 +439,7 @@ export function usePipeline(settings) {
           setDetail('Rendering del PDF…');
           const buffer = await file.arrayBuffer();
           pageImages = await renderPdfToImages(buffer, {
+            maxPages: settings.maxPages,
             onProgress: (p, t) => setDetail(`Rendering pagina ${p}/${t}…`),
           });
         } else {
@@ -471,7 +487,11 @@ export function usePipeline(settings) {
           id,
           fileName: file.name,
           rawText: extracted,
-          chunks: chunkDocument(extracted).map((t) => ({ text: t, body: '', status: 'pending' })),
+          chunks: chunkDocument(extracted, settings.chunkSize).map((t) => ({
+            text: t,
+            body: '',
+            status: 'pending',
+          })),
           preamble: '',
           styleHint: undefined,
           lastError: '',
@@ -513,9 +533,10 @@ export function usePipeline(settings) {
     compiling,
     chunkProgress,
     canResume,
-    persisted,
-    loadPersisted,
-    discardPersisted,
+    sessions,
+    openSession,
+    deleteSavedSession,
+    refreshSessions,
     runPipeline,
     recompile,
     restyle,

@@ -11,6 +11,8 @@ const KEYS = {
   nvidiaEndpoint: 'sc.nvidiaEndpoint',
   nvidiaModel: 'sc.nvidiaModel',
   geminiModel: 'sc.geminiModel',
+  maxPages: 'sc.maxPages',
+  chunkSize: 'sc.chunkSize',
 };
 
 export const DEFAULTS = {
@@ -19,7 +21,21 @@ export const DEFAULTS = {
   nvidiaEndpoint: 'https://integrate.api.nvidia.com/v1/chat/completions',
   nvidiaModel: 'nvidia/nemotron-parse',
   geminiModel: 'gemini-flash-latest',
+  maxPages: 20, // pagine PDF per singolo caricamento
+  chunkSize: 5000, // caratteri per chunk inviato a Gemini
 };
+
+const LIMITS = {
+  maxPages: { min: 1, max: 2000 },
+  chunkSize: { min: 1000, max: 30000 },
+};
+
+function readInt(key, fallback, { min, max }) {
+  const raw = read(key, '');
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
 
 // Endpoint non più validi salvati da versioni precedenti: vengono migrati
 // automaticamente al default corrente.
@@ -56,7 +72,15 @@ export function loadSettings() {
     nvidiaEndpoint,
     nvidiaModel: read(KEYS.nvidiaModel, DEFAULTS.nvidiaModel),
     geminiModel: read(KEYS.geminiModel, DEFAULTS.geminiModel),
+    maxPages: readInt(KEYS.maxPages, DEFAULTS.maxPages, LIMITS.maxPages),
+    chunkSize: readInt(KEYS.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize),
   };
+}
+
+function writeInt(key, value, fallback, { min, max }) {
+  const n = parseInt(value, 10);
+  const clamped = Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+  write(key, String(clamped));
 }
 
 export function saveSettings(s) {
@@ -65,4 +89,6 @@ export function saveSettings(s) {
   write(KEYS.nvidiaEndpoint, s.nvidiaEndpoint?.trim() || DEFAULTS.nvidiaEndpoint);
   write(KEYS.nvidiaModel, s.nvidiaModel?.trim() || DEFAULTS.nvidiaModel);
   write(KEYS.geminiModel, s.geminiModel?.trim() || DEFAULTS.geminiModel);
+  writeInt(KEYS.maxPages, s.maxPages, DEFAULTS.maxPages, LIMITS.maxPages);
+  writeInt(KEYS.chunkSize, s.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize);
 }
