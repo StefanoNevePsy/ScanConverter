@@ -11,6 +11,7 @@ import PdfPreview from './components/PdfPreview.jsx';
 import RestylePanel from './components/RestylePanel.jsx';
 import FigureReviewPanel from './components/FigureReviewPanel.jsx';
 import FidelityPanel from './components/FidelityPanel.jsx';
+import SpellPanel from './components/SpellPanel.jsx';
 import OcrTextPanel from './components/OcrTextPanel.jsx';
 import SessionsList from './components/SessionsList.jsx';
 import {
@@ -320,6 +321,7 @@ function Workspace({
   const [mobileTab, setMobileTab] = useState('code'); // 'code' | 'pdf'
   const [styleHint, setStyleHint] = useState(''); // scelte di impaginazione correnti
   const [autofixMsg, setAutofixMsg] = useState(null);
+  const [searchReq, setSearchReq] = useState(null); // ricerca pilotata nell'editor
 
   const handleAutofix = useCallback(async () => {
     const { changes } = await pipe.autofix();
@@ -336,6 +338,18 @@ function Workspace({
     setAutofixMsg(res?.message || null);
     setTimeout(() => setAutofixMsg(null), 15000);
   }, [pipe]);
+
+  const handleSpellFixAll = useCallback(async () => {
+    const res = await pipe.spellFixAll();
+    setAutofixMsg(res?.message || null);
+    setTimeout(() => setAutofixMsg(null), 15000);
+  }, [pipe]);
+
+  // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
+  const locateWord = useCallback((word) => {
+    setMobileTab('code');
+    setSearchReq({ query: word, id: Date.now() });
+  }, []);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -416,6 +430,17 @@ function Workspace({
 
       <FidelityPanel warnings={pipe.fidelityWarnings} />
 
+      {pipe.spellReport && (
+        <SpellPanel
+          report={pipe.spellReport}
+          busy={pipe.spellBusy}
+          onFixAll={handleSpellFixAll}
+          onRecheck={pipe.runSpellcheck}
+          onLocate={locateWord}
+          onClose={pipe.closeSpellReport}
+        />
+      )}
+
       {pipe.rawText && !pipe.figureReview && (
         <RestylePanel
           onRestyle={(hint) => pipe.restyle(hint)}
@@ -469,6 +494,9 @@ function Workspace({
             onAutofix={handleAutofix}
             onAiFix={handleAiFix}
             aiFixing={pipe.aiFixing}
+            onSpellcheck={pipe.runSpellcheck}
+            spellBusy={pipe.spellBusy}
+            searchRequest={searchReq}
             compiling={pipe.compiling}
             error={pipe.compileError}
             disabled={pipe.phase === 'running' && !pipe.typstCode}

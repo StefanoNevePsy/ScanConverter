@@ -48,6 +48,14 @@ export const IconCheck = (p) => (
   </svg>
 );
 
+export const IconSpell = (p) => (
+  <svg {...base} {...p}>
+    <path d="M3 15l4-9 4 9" />
+    <path d="M4.3 12h5.4" />
+    <path d="M13 14l3 3 5-6" />
+  </svg>
+);
+
 export const IconSearch = (p) => (
   <svg {...base} {...p}>
     <circle cx="11" cy="11" r="7" />

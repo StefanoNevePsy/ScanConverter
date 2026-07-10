@@ -19,6 +19,13 @@ import { autofixTypst } from '../lib/typstfix.js';
 import { checkFidelity, fidelityNoteFrom } from '../lib/fidelity.js';
 import { requestTypstFix, applyFixes, describeFix } from '../lib/aifix.js';
 import {
+  loadSpeller,
+  findSuspects,
+  requestSpellFixes,
+  validateCorrections,
+  applySpellFixes,
+} from '../lib/spell.js';
+import {
   saveSession,
   saveFigures,
   getFigures,
@@ -75,6 +82,8 @@ export function usePipeline(settings) {
   const [compiling, setCompiling] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [aiFixing, setAiFixing] = useState(false);
+  const [spellReport, setSpellReport] = useState(null); // {suspects, error?} | null
+  const [spellBusy, setSpellBusy] = useState(false);
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [canResume, setCanResume] = useState(false); // sessione interrotta ripristinabile
@@ -182,6 +191,7 @@ export function usePipeline(settings) {
     setChunkProgress(null);
     setCanResume(false);
     setFidelityWarnings([]);
+    setSpellReport(null);
     figuresRef.current = [];
     sessionRef.current = null;
     refreshSessions(); // riallinea l'elenco al ritorno sulla home
@@ -521,8 +531,9 @@ export function usePipeline(settings) {
    */
   const aiFix = useCallback(async () => {
     if (!typstCode.trim()) return { ok: false, message: 'Nessun codice da correggere.' };
+    // NB: l'errore corrente NON viene azzerato qui: il banner resta visibile
+    // con lo spinner «Correggo…» finché non c'è un esito (fix o errore nuovo).
     setAiFixing(true);
-    setCompileError(null);
     let code = typstCode;
     const log = [];
     try {
@@ -537,6 +548,7 @@ export function usePipeline(settings) {
           const svg = await compileToSvg(code, figuresRef.current);
           setTypstCode(code);
           setPreviewSvg(svg);
+          setCompileError(null); // risolto: ora il banner può sparire
           return {
             ok: true,
             message: log.length
@@ -585,6 +597,78 @@ export function usePipeline(settings) {
       setAiFixing(false);
     }
   }, [typstCode, settings, describeCompileError]);
+
+  /**
+   * Controllo ortografico locale (dizionari it+en impacchettati): elenca le
+   * parole ignote a entrambi, con conteggio e contesto.
+   */
+  const runSpellcheck = useCallback(async () => {
+    if (!typstCode.trim()) return;
+    setSpellBusy(true);
+    try {
+      const speller = await loadSpeller();
+      setSpellReport({ suspects: findSuspects(typstCode, speller) });
+    } catch (e) {
+      setSpellReport({ suspects: [], error: e.message || 'Dizionari non disponibili.' });
+    } finally {
+      setSpellBusy(false);
+    }
+  }, [typstCode]);
+
+  const closeSpellReport = useCallback(() => setSpellReport(null), []);
+
+  /**
+   * Correzione rapida di TUTTI i sospetti con un LLM veloce: invia solo
+   * parola + contesto (mai il documento), applica le sostituzioni di parola
+   * intera, ricompila e ri-esegue il controllo.
+   * @returns {Promise<{ok:boolean, message:string}>}
+   */
+  const spellFixAll = useCallback(async () => {
+    const suspects = spellReport?.suspects || [];
+    if (!suspects.length) return { ok: true, message: 'Nessuna parola sospetta da correggere.' };
+    setSpellBusy(true);
+    try {
+      // A lotti, per non superare i limiti di output del modello.
+      const proposals = [];
+      for (let i = 0; i < suspects.length; i += 60) {
+        proposals.push(
+          ...(await requestSpellFixes({ settings, entries: suspects.slice(i, i + 60) })),
+        );
+      }
+      // Guardrail deterministico: si applica solo una parola singola nota ai
+      // dizionari — le allucinazioni dell'LLM veloce vengono scartate.
+      const speller = await loadSpeller();
+      const { ok: corrections, rejected } = validateCorrections(proposals, speller);
+      const { code, applied } = applySpellFixes(typstCode, corrections);
+      if (!applied.length) {
+        return {
+          ok: true,
+          message:
+            'Nessuna correzione applicata: le parole restanti sembrano nomi ' +
+            'propri o termini tecnici' +
+            (rejected.length
+              ? ` (${rejected.length} proposte dell’AI scartate dai dizionari).`
+              : '.'),
+        };
+      }
+      setTypstCode(code);
+      setSpellReport({ suspects: findSuspects(code, speller) });
+      await recompile(code);
+      return {
+        ok: true,
+        message:
+          `Corrette ${applied.length} parole: ` +
+          applied
+            .map((a) => `${a.word}→${a.fix}${a.count > 1 ? ` (×${a.count})` : ''}`)
+            .join(' · ') +
+          (rejected.length ? ` · ${rejected.length} proposte scartate dai dizionari` : ''),
+      };
+    } catch (e) {
+      return { ok: false, message: e.message || 'Errore nella correzione ortografica.' };
+    } finally {
+      setSpellBusy(false);
+    }
+  }, [spellReport, typstCode, settings, recompile]);
 
   /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
@@ -833,6 +917,11 @@ export function usePipeline(settings) {
     autofix,
     aiFix,
     aiFixing,
+    spellReport,
+    spellBusy,
+    runSpellcheck,
+    spellFixAll,
+    closeSpellReport,
     resume,
     reset,
     cancel,

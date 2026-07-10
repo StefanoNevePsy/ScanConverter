@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand } from './Icons.jsx';
+import { IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand, IconSpell } from './Icons.jsx';
 import CopyButton from './CopyButton.jsx';
 
 // Altezza riga dell'editor (leading-6): serve per centrare i risultati.
@@ -17,6 +17,9 @@ export default function TypstEditor({
   onAutofix,
   onAiFix,
   aiFixing,
+  onSpellcheck,
+  spellBusy,
+  searchRequest,
   compiling,
   error,
   disabled,
@@ -24,6 +27,7 @@ export default function TypstEditor({
   const taRef = useRef(null);
   const gutterRef = useRef(null);
   const searchRef = useRef(null);
+  const pendingJumpRef = useRef(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -53,6 +57,16 @@ export default function TypstEditor({
     if (current >= matches.length) setCurrent(0);
   }, [matches, current]);
 
+  // Ricerca pilotata dall'esterno (es. clic su una parola sospetta nel
+  // controllo ortografico): apre la barra, imposta la query e salta al primo
+  // risultato appena i match sono calcolati.
+  useEffect(() => {
+    if (!searchRequest?.query) return;
+    setQuery(searchRequest.query);
+    setSearchOpen(true);
+    pendingJumpRef.current = true;
+  }, [searchRequest]);
+
   const syncScroll = () => {
     if (gutterRef.current && taRef.current) {
       gutterRef.current.scrollTop = taRef.current.scrollTop;
@@ -73,6 +87,15 @@ export default function TypstEditor({
     ta.scrollTop = Math.max(0, (line - 1) * LINE_H - ta.clientHeight / 2);
     syncScroll();
   };
+
+  // Salto al primo risultato di una ricerca esterna (dopo il ricalcolo).
+  useEffect(() => {
+    if (pendingJumpRef.current && matches.length) {
+      pendingJumpRef.current = false;
+      goto(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matches]);
 
   const replaceCurrent = () => {
     if (!matches.length) return;
@@ -121,6 +144,17 @@ export default function TypstEditor({
           <span className="hidden text-xs text-faint sm:inline">modificabile</span>
         </div>
         <div className="flex items-center gap-1.5">
+          {onSpellcheck && (
+            <button
+              onClick={onSpellcheck}
+              disabled={!value.trim() || spellBusy}
+              title="Controllo ortografico (dizionari italiano + inglese)"
+              aria-label="Controllo ortografico"
+              className="rounded-lg bg-surface-2 p-1.5 text-ink transition-colors hover:bg-surface-3 disabled:opacity-50"
+            >
+              {spellBusy ? <IconSpinner width={14} height={14} /> : <IconSpell width={14} height={14} />}
+            </button>
+          )}
           <button
             onClick={() => (searchOpen ? closeSearch() : openSearch())}
             disabled={!value.trim()}
