@@ -6,6 +6,7 @@ import { savePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assemble.js';
+import { extractPdfText } from '../lib/pdftext.js';
 import {
   chunkDocument,
   splitPreamble,
@@ -31,8 +32,14 @@ import {
   saveSession,
   saveFigures,
   getFigures,
+  deleteFigures,
   listSessions,
   deleteSession,
+  savePages,
+  getPages,
+  deletePage,
+  deletePagesFor,
+  requestPersistentStorage,
 } from '../lib/store.js';
 
 // Pausa interrompibile (per il backoff sui rate limit).
@@ -56,6 +63,26 @@ function abortableSleep(ms, signal) {
 // "UNAVAILABLE"). Gli errori definitivi (400, chiave errata…) NON si riprovano.
 const RETRYABLE_RE =
   /(^|\D)(429|500|503)(\D|$)|rate.?limit|RESOURCE_EXHAUSTED|quota|overloaded|unavailable|temporarily|try again/i;
+
+/**
+ * Esegue `fn` con auto-retry ed exponential backoff sugli errori transitori
+ * (rate limit / servizio occupato). Interrompibile via signal. `onWait(secs)`
+ * riporta l'attesa corrente all'interfaccia.
+ */
+async function withRetry(fn, signal, onWait, { max = 6, start = 15000, cap = 120000 } = {}) {
+  let delay = start;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (signal?.aborted || e?.name === 'AbortError') throw e;
+      if (!RETRYABLE_RE.test(e.message || '') || attempt >= max) throw e;
+      onWait?.(Math.round(delay / 1000));
+      await abortableSleep(delay, signal);
+      delay = Math.min(delay * 2, cap);
+    }
+  }
+}
 
 // Le tre fasi dello split delle operazioni, nell'ordine mostrato all'utente.
 export const STEPS = [
@@ -88,6 +115,7 @@ export function usePipeline(settings) {
   const [spellBusy, setSpellBusy] = useState(false);
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
+  const [ocrProgress, setOcrProgress] = useState(null); // {done,total} | null (fase OCR)
   const [canResume, setCanResume] = useState(false); // sessione interrotta ripristinabile
   const [sessions, setSessions] = useState([]); // sessioni salvate su IndexedDB
   // Revisione figure dopo l'OCR: [{path,url,junk,keep}] | null. La pipeline
@@ -100,6 +128,12 @@ export function usePipeline(settings) {
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
 
   const abortRef = useRef(null);
+
+  // Rende persistente lo storage IndexedDB (best-effort) così le sessioni di
+  // libri lunghi non vengono sfrattate dal browser sotto pressione di disco.
+  useEffect(() => {
+    requestPersistentStorage();
+  }, []);
 
   /**
    * Arricchisce un errore di compilazione con la posizione trovata per
@@ -178,6 +212,26 @@ export function usePipeline(settings) {
     });
   }, []);
 
+  // Salva lo stato della FASE OCR (avanzamento pagine + parti già estratte),
+  // così un libro interrotto a metà estrazione riparte da dove era.
+  const persistOcr = useCallback(async (status) => {
+    const s = sessionRef.current;
+    if (!s?.id || !s.ocr) return;
+    await saveSession({
+      id: s.id,
+      fileName: s.fileName,
+      status, // 'ocr' (in corso/in pausa) — diventa 'paused'/'done' in fase 2
+      ocr: {
+        total: s.ocr.total,
+        done: s.ocr.done,
+        parts: s.ocr.parts,
+        figCount: s.ocr.figCount,
+        source: s.ocr.source || 'ocr',
+      },
+      styleHint: s.styleHint || null,
+    });
+  }, []);
+
   const reset = useCallback(() => {
     abortRef.current?.abort();
     clearReview();
@@ -191,6 +245,7 @@ export function usePipeline(settings) {
     setCompileError(null);
     setDetail('');
     setChunkProgress(null);
+    setOcrProgress(null);
     setCanResume(false);
     setFidelityWarnings([]);
     setSpellReport(null);
@@ -239,19 +294,9 @@ export function usePipeline(settings) {
               fidelityNote: args.fidelityNote,
               signal,
             });
-      let delay = 15000;
-      for (let attempt = 0; ; attempt++) {
-        try {
-          return await call();
-        } catch (e) {
-          if (signal.aborted || e?.name === 'AbortError') throw e;
-          if (!RETRYABLE_RE.test(e.message || '') || attempt >= 6) throw e;
-          const secs = Math.round(delay / 1000);
-          setDetail(`${chunkLabel} · servizio occupato: nuovo tentativo tra ${secs}s…`);
-          await abortableSleep(delay, signal);
-          delay = Math.min(delay * 2, 120000);
-        }
-      }
+      return withRetry(call, signal, (secs) =>
+        setDetail(`${chunkLabel} · servizio occupato: nuovo tentativo tra ${secs}s…`),
+      );
     },
     [settings],
   );
@@ -387,55 +432,244 @@ export function usePipeline(settings) {
     [processChunks, finalizeCompile, collectFidelity],
   );
 
-  /** Riprende una sessione interrotta dai chunk non ancora completati. */
+  /**
+   * Fase 2+3 su un testo pronto: crea la sessione a chunk, la persiste e avvia
+   * la formattazione. Riusa l'id della sessione OCR corrente (transizione dalla
+   * fase OCR alla fase formato sotto lo stesso id), così l'elenco non duplica.
+   */
+  const startFormat = useCallback(
+    async (extracted, fileName, signal) => {
+      const id = sessionRef.current?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      sessionRef.current = {
+        id,
+        fileName,
+        rawText: extracted,
+        chunks: chunkDocument(extracted, settings.chunkSize).map((t) => ({
+          text: t,
+          body: '',
+          status: 'pending',
+        })),
+        preamble: '',
+        styleHint: undefined,
+        lastError: '',
+      };
+      await saveFigures(id, figuresRef.current);
+      await persist();
+      setPhase('running');
+      setActiveStep('format');
+      setStatus((s) => ({ ...s, format: 'active' }));
+      await runFormat(signal);
+    },
+    [settings, runFormat, persist],
+  );
+
+  /**
+   * Esegue/riprende la FASE OCR sulla sessione corrente (sessionRef.ocr).
+   * Estrae pagina per pagina con auto-retry sul rate limit, salvando dopo OGNI
+   * pagina: un libro interrotto (quota esaurita o app chiusa) riparte da dove
+   * era, senza rifare le pagine già estratte. Ritorna 'done'|'error'|'aborted'.
+   * @param {Map<number,string>} [pagesInMemory] pagine della run fresca; in
+   *        ripresa vengono lette dalla cache su IndexedDB.
+   */
+  const runOcr = useCallback(
+    async (signal, pagesInMemory) => {
+      const s = sessionRef.current;
+      const total = s.ocr.total;
+      const figCounter = makeFigureCounter(s.ocr.figCount || 0);
+      let pageMap = pagesInMemory;
+      if (!pageMap) {
+        const stored = await getPages(s.id);
+        pageMap = new Map(stored.map((p) => [p.index, p.dataUrl]));
+      }
+      for (let i = s.ocr.done; i < total; i++) {
+        setOcrProgress({ done: i, total });
+        const label = total > 1 ? `OCR pagina ${i + 1}/${total}` : 'Estrazione testo';
+        setDetail(total > 1 ? `${label}…` : '');
+        const dataUrl = pageMap.get(i);
+        if (!dataUrl) {
+          s.lastError = `Immagine della pagina ${i + 1} non più disponibile.`;
+          await persistOcr('ocr');
+          return 'error';
+        }
+        try {
+          const blocks = await withRetry(
+            () =>
+              extractPageBlocks({
+                apiKey: settings.nvidiaApiKey,
+                endpoint: settings.nvidiaEndpoint,
+                model: settings.nvidiaModel,
+                imageDataUrl: dataUrl,
+                signal,
+              }),
+            signal,
+            (secs) => setDetail(`${label} · servizio occupato: nuovo tentativo tra ${secs}s…`),
+          );
+          if (signal.aborted) return 'aborted';
+          const page = await assemblePage(blocks, dataUrl, figCounter);
+          s.ocr.parts[i] = total > 1 ? `<!-- pagina ${i + 1} -->\n${page.markdown}` : page.markdown;
+          s.ocr.figCount = figCounter.count();
+          figuresRef.current.push(...page.figures);
+          await saveFigures(s.id, page.figures);
+          s.ocr.done = i + 1;
+          await persistOcr('ocr');
+          await deletePage(s.id, i);
+        } catch (e) {
+          if (signal.aborted || e?.name === 'AbortError') return 'aborted';
+          s.lastError = e.message || 'Errore di estrazione OCR.';
+          await persistOcr('ocr');
+          return 'error';
+        }
+      }
+      setOcrProgress({ done: total, total });
+      return 'done';
+    },
+    [settings, persistOcr],
+  );
+
+  /**
+   * OCR completato: libera le pagine in cache, ricompone il testo estratto
+   * (gerarchia normalizzata) e apre la revisione figure — o avvia la fase 2 se
+   * non ci sono figure.
+   */
+  const finishOcr = useCallback(
+    async (signal) => {
+      const s = sessionRef.current;
+      await deletePagesFor(s.id);
+      const extracted = normalizeHeadingLevels(s.ocr.parts.filter(Boolean).join('\n\n'));
+      s.rawText = extracted;
+      setRawText(extracted);
+      setStatus((x) => ({ ...x, ocr: 'done' }));
+      setOcrProgress(null);
+      setDetail('');
+      const figures = figuresRef.current;
+      if (figures.length) {
+        pendingRef.current = { extracted, fileName: s.fileName };
+        setFigureReview(
+          figures.map((f) => ({
+            path: f.path,
+            url: URL.createObjectURL(new Blob([f.bytes], { type: 'image/png' })),
+            junk: !!f.junk,
+            keep: !f.junk,
+          })),
+        );
+        setActiveStep(null);
+        setDetail('Scegli le immagini da tenere, poi premi Continua.');
+        setPhase('review');
+        return;
+      }
+      await startFormat(extracted, s.fileName, signal);
+    },
+    [startFormat],
+  );
+
+  /** Esegue/riprende la fase OCR e, se completa, prosegue con la fase 2. */
+  const runOcrPhase = useCallback(
+    async (signal, pagesInMemory) => {
+      setStatus((x) => ({ ...x, ocr: 'active' }));
+      setActiveStep('ocr');
+      const r = await runOcr(signal, pagesInMemory);
+      if (r === 'aborted') return;
+      if (r === 'error') {
+        setStatus((x) => ({ ...x, ocr: 'error' }));
+        setCanResume(true);
+        setActiveStep(null);
+        setDetail('');
+        setError(
+          `Estrazione interrotta: ${sessionRef.current.lastError} · Le pagine già ` +
+            'estratte sono state salvate. Attendi qualche minuto e premi “Riprendi”.',
+        );
+        setPhase('error');
+        return;
+      }
+      await finishOcr(signal);
+    },
+    [runOcr, finishOcr],
+  );
+
+  /** Riprende la sessione corrente interrotta (fase OCR o fase formato). */
   const resume = useCallback(async () => {
     const s = sessionRef.current;
-    if (!s?.chunks?.length) return;
+    if (!s) return;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    s.chunks.forEach((c) => {
-      if (c.status === 'error') c.status = 'pending';
-    });
     setError(null);
     setCanResume(false);
     setPhase('running');
+    // Fase OCR ancora incompleta → riprendi l'estrazione dalle pagine in cache.
+    if (s.ocr && s.ocr.done < s.ocr.total) {
+      await runOcrPhase(controller.signal);
+      return;
+    }
+    if (!s.chunks?.length) return;
+    s.chunks.forEach((c) => {
+      if (c.status === 'error') c.status = 'pending';
+    });
     setActiveStep('format');
     setStatus((x) => ({ ...x, format: 'active' }));
     await runFormat(controller.signal);
-  }, [runFormat]);
+  }, [runFormat, runOcrPhase]);
 
   /** Riprende una sessione salvata su IndexedDB (dopo chiusura dell'app). */
   const openSession = useCallback(
     async (meta) => {
       if (!meta) return null;
-      const figs = await getFigures(meta.id);
-      figuresRef.current = figs;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setError(null);
+      setCompileError(null);
+      setCanResume(false);
+
+      // Sessione ancora in fase OCR (estrazione incompleta): riprendi le
+      // pagine mancanti dalla cache, senza rifare quelle già estratte.
+      if (meta.ocr && meta.ocr.done < meta.ocr.total) {
+        figuresRef.current = await getFigures(meta.id);
+        sessionRef.current = {
+          id: meta.id,
+          fileName: meta.fileName,
+          ocr: {
+            total: meta.ocr.total,
+            done: meta.ocr.done,
+            parts: meta.ocr.parts || new Array(meta.ocr.total).fill(null),
+            figCount: meta.ocr.figCount || 0,
+            source: meta.ocr.source || 'ocr',
+          },
+          styleHint: meta.styleHint || undefined,
+          lastError: '',
+        };
+        setRawText('');
+        setTypstCode('');
+        setStatus({ ocr: 'active', format: 'pending', compile: 'pending' });
+        setOcrProgress({ done: meta.ocr.done, total: meta.ocr.total });
+        setPhase('running');
+        await runOcrPhase(controller.signal);
+        return meta;
+      }
+
+      // Fase formato: riprendi dai chunk non completati.
+      figuresRef.current = await getFigures(meta.id);
       sessionRef.current = {
         id: meta.id,
         fileName: meta.fileName,
         rawText: meta.rawText,
-        chunks: meta.chunks.map((c) => ({ ...c })),
+        chunks: (meta.chunks || []).map((c) => ({ ...c })),
         preamble: meta.preamble || '',
         styleHint: meta.styleHint || undefined,
         lastError: '',
       };
       setRawText(meta.rawText || '');
-      setTypstCode(combineDocument(meta.preamble || '', meta.chunks.map((c) => c.body || '')));
+      setTypstCode(combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || '')));
       setStatus({ ocr: 'done', format: 'active', compile: 'pending' });
-      setCanResume(false);
-      setError(null);
       setPhase('running');
       setActiveStep('format');
-      const controller = new AbortController();
-      abortRef.current = controller;
       sessionRef.current.chunks.forEach((c) => {
         if (c.status === 'error') c.status = 'pending';
       });
       await runFormat(controller.signal);
       return meta;
     },
-    [runFormat],
+    [runFormat, runOcrPhase],
   );
 
   /** Elimina una sessione salvata (per id) e aggiorna l'elenco. */
@@ -777,37 +1011,6 @@ export function usePipeline(settings) {
   );
 
   /**
-   * Fase 2+3 su un testo OCR pronto: crea la sessione a chunk, la persiste e
-   * avvia la formattazione. Usata sia dal flusso diretto (nessuna figura) sia
-   * dopo la conferma della revisione figure.
-   */
-  const startFormat = useCallback(
-    async (extracted, fileName, signal) => {
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      sessionRef.current = {
-        id,
-        fileName,
-        rawText: extracted,
-        chunks: chunkDocument(extracted, settings.chunkSize).map((t) => ({
-          text: t,
-          body: '',
-          status: 'pending',
-        })),
-        preamble: '',
-        styleHint: undefined,
-        lastError: '',
-      };
-      await saveFigures(id, figuresRef.current);
-      await persist();
-      setPhase('running');
-      setActiveStep('format');
-      setStatus((s) => ({ ...s, format: 'active' }));
-      await runFormat(signal);
-    },
-    [settings, runFormat, persist],
-  );
-
-  /**
    * Conferma della revisione figure: mantiene solo i percorsi indicati,
    * rimuove i segnaposto delle figure scartate dal testo OCR e avvia la
    * formattazione.
@@ -819,13 +1022,19 @@ export function usePipeline(settings) {
       if (!pending) return;
       const keep = new Set(keptPaths);
       let text = pending.extracted;
+      const discarded = [];
       for (const fig of figuresRef.current) {
         if (keep.has(fig.path)) continue;
+        discarded.push(fig.path);
         const escaped = fig.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         text = text.replace(new RegExp(`^!\\[[^\\]\\n]*\\]\\(${escaped}\\)[ \\t]*$\\n?`, 'gm'), '');
       }
       text = text.replace(/\n{3,}/g, '\n\n').trim();
       figuresRef.current = figuresRef.current.filter((f) => keep.has(f.path));
+      // Libera anche dallo storage le figure scartate (già salvate durante OCR).
+      if (discarded.length && sessionRef.current?.id) {
+        await deleteFigures(sessionRef.current.id, discarded);
+      }
       clearReview();
       setRawText(text);
       const controller = new AbortController();
@@ -856,7 +1065,9 @@ export function usePipeline(settings) {
       setRawText('');
       setTypstCode('');
       setFidelityWarnings([]);
+      setOcrProgress(null);
       clearReview();
+      figuresRef.current = [];
 
       try {
         // [1/3] Estrazione testo (NVIDIA). Nemotron-Parse accetta solo
@@ -866,10 +1077,34 @@ export function usePipeline(settings) {
         setDetail('');
 
         let pageImages;
+        let pdfBuffer = null;
         if (isPdf(file)) {
+          pdfBuffer = await file.arrayBuffer();
+          // PDF con layer di testo (vettoriale / già OCR'd): estrai il testo
+          // esatto e SALTA l'OCR NVIDIA. Se non c'è testo utile → OCR.
+          if (settings.pdfTextMode !== 'ocr') {
+            setDetail('Lettura del testo del PDF…');
+            const text = await extractPdfText(pdfBuffer, {
+              maxPages: settings.maxPages,
+              onProgress: (p, t) => setDetail(`Lettura testo pagina ${p}/${t}…`),
+            });
+            if (signal.aborted) return;
+            if (text) {
+              const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+              sessionRef.current = { id, fileName: file.name, styleHint: undefined, lastError: '' };
+              figuresRef.current = [];
+              const extracted = normalizeHeadingLevels(text);
+              setRawText(extracted);
+              setStatus((s) => ({ ...s, ocr: 'done' }));
+              setDetail('');
+              // Nessuna figura da rivedere: dritti alla fase 2 (ripartibile).
+              await startFormat(extracted, file.name, signal);
+              return;
+            }
+            setDetail(''); // niente testo digitale: si procede con l'OCR
+          }
           setDetail('Rendering del PDF…');
-          const buffer = await file.arrayBuffer();
-          pageImages = await renderPdfToImages(buffer, {
+          pageImages = await renderPdfToImages(pdfBuffer, {
             maxPages: settings.maxPages,
             onProgress: (p, t) => setDetail(`Rendering pagina ${p}/${t}…`),
           });
@@ -879,61 +1114,29 @@ export function usePipeline(settings) {
         if (signal.aborted) return;
         if (!pageImages.length) throw new Error('Nessuna pagina da elaborare.');
 
-        const figCounter = makeFigureCounter();
-        const parts = [];
-        const figures = [];
-        for (let i = 0; i < pageImages.length; i++) {
-          if (pageImages.length > 1) {
-            setDetail(`OCR pagina ${i + 1}/${pageImages.length}…`);
-          }
-          const blocks = await extractPageBlocks({
-            apiKey: settings.nvidiaApiKey,
-            endpoint: settings.nvidiaEndpoint,
-            model: settings.nvidiaModel,
-            imageDataUrl: pageImages[i],
-            signal,
-          });
-          if (signal.aborted) return;
-          // Ricostruisce il testo (gerarchia preservata) e ritaglia le figure.
-          const page = await assemblePage(blocks, pageImages[i], figCounter);
-          parts.push(
-            pageImages.length > 1 ? `<!-- pagina ${i + 1} -->\n${page.markdown}` : page.markdown,
-          );
-          figures.push(...page.figures);
-        }
-        // Normalizza i livelli di titolo sull'INTERO documento (coerenza
-        // gerarchica deterministica su tutte le pagine).
-        const extracted = normalizeHeadingLevels(parts.join('\n\n'));
-
-        figuresRef.current = figures;
-        setDetail('');
-        setRawText(extracted);
-        setStatus((s) => ({ ...s, ocr: 'done' }));
-
-        // Se l'OCR ha trovato figure, PAUSA per la revisione: l'utente
-        // sceglie quali tenere (gli artefatti — numeri di pagina scritti a
-        // mano, timbri — sono pre-deselezionati). Poi confirmFigures avvia
-        // la fase 2.
-        if (figures.length) {
-          pendingRef.current = { extracted, fileName: file.name };
-          setFigureReview(
-            figures.map((f) => ({
-              path: f.path,
-              url: URL.createObjectURL(new Blob([f.bytes], { type: 'image/png' })),
-              junk: !!f.junk,
-              keep: !f.junk,
-            })),
-          );
-          setActiveStep(null);
-          setDetail('Scegli le immagini da tenere, poi premi Continua.');
-          setPhase('review');
-          return;
-        }
-
-        // [2/3] + [3/3] Formattazione a chunk (gerarchia continua) e
-        // compilazione. La sessione persiste su IndexedDB per riprendere
-        // dopo rate limit o chiusura dell'app.
-        await startFormat(extracted, file.name, signal);
+        // Crea la sessione in FASE OCR e mette in cache le immagini di pagina,
+        // così un'estrazione lunga (libri) è ripartibile pagina per pagina:
+        // se la quota NVIDIA si esaurisce o l'app si chiude, al ritorno si
+        // riprende dalle pagine mancanti senza rifare quelle già estratte.
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        sessionRef.current = {
+          id,
+          fileName: file.name,
+          ocr: {
+            total: pageImages.length,
+            done: 0,
+            parts: new Array(pageImages.length).fill(null),
+            figCount: 0,
+            source: 'ocr',
+          },
+          styleHint: undefined,
+          lastError: '',
+        };
+        if (pageImages.length > 1) setDetail('Preparazione ripresa…');
+        await savePages(id, pageImages);
+        await persistOcr('ocr');
+        const pageMap = new Map(pageImages.map((d, i) => [i, d]));
+        await runOcrPhase(signal, pageMap);
         return;
       } catch (e) {
         setDetail('');
@@ -949,7 +1152,7 @@ export function usePipeline(settings) {
         setPhase('error');
       }
     },
-    [settings, startFormat, clearReview, typstCode],
+    [settings, runOcrPhase, persistOcr, startFormat, clearReview, typstCode],
   );
 
   return {
@@ -967,6 +1170,7 @@ export function usePipeline(settings) {
     compileError,
     compiling,
     chunkProgress,
+    ocrProgress,
     canResume,
     figureReview,
     confirmFigures,

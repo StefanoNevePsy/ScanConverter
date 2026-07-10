@@ -15,6 +15,7 @@ const KEYS = {
   nvidiaTypstModel: 'sc.nvidiaTypstModel',
   fixEngine: 'sc.fixEngine',
   fixModel: 'sc.fixModel',
+  pdfTextMode: 'sc.pdfTextMode',
   maxPages: 'sc.maxPages',
   chunkSize: 'sc.chunkSize',
 };
@@ -34,12 +35,17 @@ export const DEFAULTS = {
   // (un modello "forte" da codice; la chiave NVIDIA c'è sempre, serve all'OCR).
   fixEngine: 'nvidia',
   fixModel: 'z-ai/glm-5.2',
+  // Ingestione dei PDF con layer di testo (vettoriali / già OCR'd):
+  //  'auto' → usa il testo del PDF quando c'è, saltando l'OCR NVIDIA;
+  //  'ocr'  → rasterizza sempre e passa da Nemotron-Parse (per estrarre figure).
+  pdfTextMode: 'auto',
   maxPages: 20, // pagine PDF per singolo caricamento
   chunkSize: 5000, // caratteri per chunk inviato a Gemini
 };
 
 // Valori ammessi per il motore Typst.
 const ENGINES = ['gemini', 'nvidia'];
+const PDF_MODES = ['auto', 'ocr'];
 
 const LIMITS = {
   maxPages: { min: 1, max: 2000 },
@@ -96,6 +102,9 @@ export function loadSettings() {
       ? read(KEYS.fixEngine, DEFAULTS.fixEngine)
       : DEFAULTS.fixEngine,
     fixModel: read(KEYS.fixModel, DEFAULTS.fixModel),
+    pdfTextMode: PDF_MODES.includes(read(KEYS.pdfTextMode, DEFAULTS.pdfTextMode))
+      ? read(KEYS.pdfTextMode, DEFAULTS.pdfTextMode)
+      : DEFAULTS.pdfTextMode,
     maxPages: readInt(KEYS.maxPages, DEFAULTS.maxPages, LIMITS.maxPages),
     chunkSize: readInt(KEYS.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize),
   };
@@ -143,6 +152,7 @@ export function saveSettings(s) {
   write(KEYS.nvidiaTypstModel, s.nvidiaTypstModel?.trim() || DEFAULTS.nvidiaTypstModel);
   write(KEYS.fixEngine, ENGINES.includes(s.fixEngine) ? s.fixEngine : DEFAULTS.fixEngine);
   write(KEYS.fixModel, s.fixModel?.trim() || DEFAULTS.fixModel);
+  write(KEYS.pdfTextMode, PDF_MODES.includes(s.pdfTextMode) ? s.pdfTextMode : DEFAULTS.pdfTextMode);
   writeInt(KEYS.maxPages, s.maxPages, DEFAULTS.maxPages, LIMITS.maxPages);
   writeInt(KEYS.chunkSize, s.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize);
 }

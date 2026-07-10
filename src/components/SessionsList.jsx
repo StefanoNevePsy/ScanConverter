@@ -32,9 +32,15 @@ export default function SessionsList({ sessions, onOpen, onDelete }) {
       </header>
       <ul className="divide-y divide-border">
         {sessions.map((s) => {
-          const done = s.chunks?.filter((c) => c.status === 'done').length ?? 0;
-          const total = s.chunks?.length ?? 0;
+          const isOcr = s.status === 'ocr' && s.ocr;
+          const done = isOcr
+            ? s.ocr.done
+            : (s.chunks?.filter((c) => c.status === 'done').length ?? 0);
+          const total = isOcr ? s.ocr.total : (s.chunks?.length ?? 0);
           const complete = s.status === 'done';
+          const label = isOcr
+            ? `Estrazione OCR · ${done}/${total} pagine`
+            : `In sospeso · ${done}/${total} sezioni`;
           return (
             <li key={s.id} className="flex items-center gap-3 px-4 py-3">
               <span
@@ -54,8 +60,7 @@ export default function SessionsList({ sessions, onOpen, onDelete }) {
                   <span className="truncate">{s.fileName || 'documento'}</span>
                 </div>
                 <div className="mt-0.5 text-xs text-faint">
-                  {complete ? 'Completata' : `In sospeso · ${done}/${total} sezioni`} ·{' '}
-                  {relTime(s.updatedAt)}
+                  {complete ? 'Completata' : label} · {relTime(s.updatedAt)}
                 </div>
               </div>
 

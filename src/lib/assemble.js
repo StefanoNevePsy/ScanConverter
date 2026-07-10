@@ -171,7 +171,12 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
   return { markdown: lines.join('\n\n'), figures };
 }
 
-export function makeFigureCounter() {
-  let n = 0;
-  return { next: () => ++n };
+/**
+ * Contatore progressivo delle figure. `start` consente di riprendere la
+ * numerazione dopo un OCR interrotto (le figure già estratte hanno indici
+ * 1..start). `count` espone il valore corrente da persistere.
+ */
+export function makeFigureCounter(start = 0) {
+  let n = start;
+  return { next: () => ++n, count: () => n };
 }

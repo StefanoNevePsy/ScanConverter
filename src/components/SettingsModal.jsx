@@ -303,6 +303,31 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                   listId="dl-fix"
                 />
               </div>
+              {/* Ingestione dei PDF con testo (vettoriali / già OCR'd). */}
+              <div>
+                <span className="mb-1.5 block text-sm font-medium text-ink">
+                  PDF con testo già presente
+                </span>
+                <span className="mb-2 block text-xs text-faint">
+                  Molti PDF (vettoriali o già passati per un OCR) hanno un layer
+                  di testo esatto: usarlo salta l’OCR NVIDIA ed è più fedele, ma
+                  non estrae figure/tabelle.
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  <EngineButton
+                    active={form.pdfTextMode !== 'ocr'}
+                    onClick={() => setForm((f) => ({ ...f, pdfTextMode: 'auto' }))}
+                    title="Automatico"
+                    sub="usa il testo se c’è, altrimenti OCR"
+                  />
+                  <EngineButton
+                    active={form.pdfTextMode === 'ocr'}
+                    onClick={() => setForm((f) => ({ ...f, pdfTextMode: 'ocr' }))}
+                    title="Sempre OCR"
+                    sub="rasterizza e usa Nemotron-Parse"
+                  />
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field
                   label="Max pagine PDF"

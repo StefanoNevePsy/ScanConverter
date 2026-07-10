@@ -13,7 +13,7 @@
 */
 
 const DB_NAME = 'scanconverter';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise = null;
 
@@ -32,12 +32,35 @@ function openDB() {
         if (!db.objectStoreNames.contains('figure')) {
           db.createObjectStore('figure', { keyPath: 'key' });
         }
+        // v2: immagini delle pagine rasterizzate, cache di ripresa dell'OCR.
+        // Vengono cancellate mano a mano che ogni pagina è estratta.
+        if (!db.objectStoreNames.contains('page')) {
+          db.createObjectStore('page', { keyPath: 'key' });
+        }
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
   }
   return dbPromise;
+}
+
+/**
+ * Chiede al browser di rendere PERSISTENTE lo storage dell'origine, così i
+ * dati (sessioni, pagine, figure) non vengono sfrattati sotto pressione di
+ * disco. Best-effort: su app Android/desktop è di fatto già permanente.
+ */
+export async function requestPersistentStorage() {
+  try {
+    if (navigator.storage?.persist) {
+      const already = await navigator.storage.persisted?.();
+      if (!already) return await navigator.storage.persist();
+      return true;
+    }
+  } catch {
+    /* API non disponibile */
+  }
+  return false;
 }
 
 function tx(store, mode, fn) {
@@ -114,6 +137,7 @@ export async function deleteSession(id) {
           t.onerror = () => reject(t.error);
         }),
     );
+    await deletePagesFor(id);
   } catch {
     /* ignora */
   }
@@ -128,7 +152,14 @@ export async function saveFigures(id, figures) {
       const t = db.transaction('figure', 'readwrite');
       const os = t.objectStore('figure');
       for (const f of figures) {
-        os.put({ key: `${id}::${f.path}`, id, path: f.path, bytes: f.bytes });
+        os.put({
+          key: `${id}::${f.path}`,
+          id,
+          path: f.path,
+          bytes: f.bytes,
+          widthPct: f.widthPct,
+          junk: f.junk,
+        });
       }
       t.oncomplete = () => resolve();
       t.onerror = () => reject(t.error);
@@ -146,8 +177,88 @@ export async function getFigures(id) {
       .map((f) => ({
         path: f.path,
         bytes: f.bytes instanceof Uint8Array ? f.bytes : new Uint8Array(f.bytes),
+        widthPct: f.widthPct,
+        junk: f.junk,
       }));
   } catch {
     return [];
+  }
+}
+
+/** Elimina dallo storage le figure indicate (per percorso) di una sessione. */
+export async function deleteFigures(id, paths) {
+  if (!paths?.length) return;
+  try {
+    await tx('figure', 'readwrite', (s) => {
+      for (const p of paths) s.delete(`${id}::${p}`);
+    });
+  } catch {
+    /* ignora */
+  }
+}
+
+/**
+ * Salva le immagini (data URL) delle pagine rasterizzate: cache per riprendere
+ * l'OCR di documenti lunghi senza rirasterizzare né richiedere di nuovo il
+ * file. Vengono cancellate una a una man mano che l'OCR le consuma.
+ * @param {string} id
+ * @param {string[]} dataUrls una per pagina, in ordine
+ */
+export async function savePages(id, dataUrls) {
+  if (!dataUrls?.length) return;
+  try {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const t = db.transaction('page', 'readwrite');
+      const os = t.objectStore('page');
+      dataUrls.forEach((dataUrl, index) => {
+        os.put({ key: `${id}::${index}`, id, index, dataUrl });
+      });
+      t.oncomplete = () => resolve();
+      t.onerror = () => reject(t.error);
+    });
+  } catch {
+    /* persistenza non disponibile: l'OCR resta comunque in memoria */
+  }
+}
+
+/** Ritorna le pagine ancora in cache per una sessione, ordinate per indice. */
+export async function getPages(id) {
+  try {
+    const all = (await tx('page', 'readonly', (s) => s.getAll())) || [];
+    return all
+      .filter((p) => p.id === id)
+      .sort((a, b) => a.index - b.index)
+      .map((p) => ({ index: p.index, dataUrl: p.dataUrl }));
+  } catch {
+    return [];
+  }
+}
+
+/** Cancella l'immagine di una pagina (dopo che l'OCR l'ha estratta). */
+export async function deletePage(id, index) {
+  try {
+    await tx('page', 'readwrite', (s) => s.delete(`${id}::${index}`));
+  } catch {
+    /* ignora */
+  }
+}
+
+/** Cancella tutte le pagine in cache di una sessione (a OCR completato). */
+export async function deletePagesFor(id) {
+  try {
+    const all = (await tx('page', 'readonly', (s) => s.getAll())) || [];
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const t = db.transaction('page', 'readwrite');
+      const os = t.objectStore('page');
+      all.forEach((p) => {
+        if (p.id === id) os.delete(p.key);
+      });
+      t.oncomplete = () => resolve();
+      t.onerror = () => reject(t.error);
+    });
+  } catch {
+    /* ignora */
   }
 }
