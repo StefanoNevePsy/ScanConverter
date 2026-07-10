@@ -10,6 +10,7 @@ import TypstEditor from './components/TypstEditor.jsx';
 import PdfPreview from './components/PdfPreview.jsx';
 import RestylePanel from './components/RestylePanel.jsx';
 import FigureReviewPanel from './components/FigureReviewPanel.jsx';
+import PagesReviewPanel from './components/PagesReviewPanel.jsx';
 import FidelityPanel from './components/FidelityPanel.jsx';
 import SpellPanel from './components/SpellPanel.jsx';
 import OcrTextPanel from './components/OcrTextPanel.jsx';
@@ -427,6 +428,15 @@ function Workspace({
             </button>
           )}
         </div>
+      )}
+
+      {pipe.pageReview && (
+        <PagesReviewPanel
+          key={pipe.pageReview.length}
+          items={pipe.pageReview}
+          onConfirm={pipe.confirmPages}
+          busy={pipe.phase === 'running'}
+        />
       )}
 
       {pipe.figureReview && (

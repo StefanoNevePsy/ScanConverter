@@ -7,6 +7,7 @@ import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assemble.js';
 import { extractPdfText } from '../lib/pdftext.js';
+import { isSpreadLike, preparePages } from '../lib/pagePrep.js';
 import {
   chunkDocument,
   splitPreamble,
@@ -121,6 +122,11 @@ export function usePipeline(settings) {
   // Revisione figure dopo l'OCR: [{path,url,junk,keep}] | null. La pipeline
   // resta in pausa (phase 'review') finché l'utente non conferma la selezione.
   const [figureReview, setFigureReview] = useState(null);
+  // Anteprima pagine PRIMA dell'OCR: [{index,url,rotate,split}] | null.
+  // L'utente ruota le pagine storte e conferma/divide le doppie pagine
+  // rilevate; la pipeline resta in pausa (phase 'pages') fino alla conferma.
+  const [pageReview, setPageReview] = useState(null);
+  const pendingPagesRef = useRef(null); // { pageImages, fileName }
   // Esito della verifica di fedeltà per chunk: [{chunk,total,coverage,missing}].
   const [fidelityWarnings, setFidelityWarnings] = useState([]);
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
@@ -170,6 +176,8 @@ export function usePipeline(settings) {
       return null;
     });
     pendingRef.current = null;
+    setPageReview(null);
+    pendingPagesRef.current = null;
   }, []);
 
   // Precarica il WASM di Typst appena montato: rende istantanea la prima
@@ -584,6 +592,68 @@ export function usePipeline(settings) {
       await finishOcr(signal);
     },
     [runOcr, finishOcr],
+  );
+
+  /**
+   * Crea la sessione in FASE OCR: mette in cache le immagini di pagina (per
+   * la ripresa) e avvia l'estrazione pagina per pagina.
+   */
+  const beginOcrSession = useCallback(
+    async (pageImages, fileName, signal) => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      sessionRef.current = {
+        id,
+        fileName,
+        ocr: {
+          total: pageImages.length,
+          done: 0,
+          parts: new Array(pageImages.length).fill(null),
+          figCount: 0,
+          source: 'ocr',
+        },
+        styleHint: undefined,
+        lastError: '',
+      };
+      if (pageImages.length > 1) setDetail('Preparazione ripresa…');
+      await savePages(id, pageImages);
+      await persistOcr('ocr');
+      const pageMap = new Map(pageImages.map((d, i) => [i, d]));
+      await runOcrPhase(signal, pageMap);
+    },
+    [persistOcr, runOcrPhase],
+  );
+
+  /**
+   * Conferma dell'anteprima pagine: applica rotazioni e divisioni delle
+   * doppie pagine, poi avvia l'estrazione OCR.
+   * @param {{rotate:number, split:boolean}[]} edits una voce per pagina
+   */
+  const confirmPages = useCallback(
+    async (edits) => {
+      const pending = pendingPagesRef.current;
+      if (!pending) return;
+      pendingPagesRef.current = null;
+      setPageReview(null);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setPhase('running');
+      setActiveStep('ocr');
+      setStatus((x) => ({ ...x, ocr: 'active' }));
+      try {
+        const hasEdits = edits?.some((e) => e.rotate || e.split);
+        if (hasEdits) setDetail('Applico rotazioni e divisioni…');
+        const finalPages = await preparePages(pending.pageImages, edits, (n, t) => {
+          if (hasEdits) setDetail(`Preparo le pagine ${n}/${t}…`);
+        });
+        if (controller.signal.aborted) return;
+        await beginOcrSession(finalPages, pending.fileName, controller.signal);
+      } catch (e) {
+        if (controller.signal.aborted || e?.name === 'AbortError') return;
+        setError(e.message || 'Errore nella preparazione delle pagine.');
+        setPhase('error');
+      }
+    },
+    [beginOcrSession],
   );
 
   /** Riprende la sessione corrente interrotta (fase OCR o fase formato). */
@@ -1114,29 +1184,22 @@ export function usePipeline(settings) {
         if (signal.aborted) return;
         if (!pageImages.length) throw new Error('Nessuna pagina da elaborare.');
 
-        // Crea la sessione in FASE OCR e mette in cache le immagini di pagina,
-        // così un'estrazione lunga (libri) è ripartibile pagina per pagina:
-        // se la quota NVIDIA si esaurisce o l'app si chiude, al ritorno si
-        // riprende dalle pagine mancanti senza rifare quelle già estratte.
-        const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        sessionRef.current = {
-          id,
-          fileName: file.name,
-          ocr: {
-            total: pageImages.length,
-            done: 0,
-            parts: new Array(pageImages.length).fill(null),
-            figCount: 0,
-            source: 'ocr',
-          },
-          styleHint: undefined,
-          lastError: '',
-        };
-        if (pageImages.length > 1) setDetail('Preparazione ripresa…');
-        await savePages(id, pageImages);
-        await persistOcr('ocr');
-        const pageMap = new Map(pageImages.map((d, i) => [i, d]));
-        await runOcrPhase(signal, pageMap);
+        // ANTEPRIMA PAGINE prima dell'OCR: le doppie pagine (spread) vengono
+        // rilevate dal rapporto d'aspetto e proposte per la divisione; le
+        // pagine ruotate si raddrizzano col tasto ↻. La pipeline resta in
+        // pausa finché l'utente non conferma.
+        pendingPagesRef.current = { pageImages, fileName: file.name };
+        setPageReview(
+          pageImages.map((d, i) => ({
+            index: i,
+            url: d,
+            rotate: 0,
+            split: isSpreadLike(d),
+          })),
+        );
+        setActiveStep(null);
+        setDetail('Controlla rotazione e doppie pagine, poi avvia l’estrazione.');
+        setPhase('pages');
         return;
       } catch (e) {
         setDetail('');
@@ -1152,7 +1215,7 @@ export function usePipeline(settings) {
         setPhase('error');
       }
     },
-    [settings, runOcrPhase, persistOcr, startFormat, clearReview, typstCode],
+    [settings, startFormat, clearReview, typstCode],
   );
 
   return {
@@ -1174,6 +1237,8 @@ export function usePipeline(settings) {
     canResume,
     figureReview,
     confirmFigures,
+    pageReview,
+    confirmPages,
     fidelityWarnings,
     sessions,
     openSession,

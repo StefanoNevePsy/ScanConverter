@@ -120,6 +120,94 @@ function nearestCaption(captions, picture) {
 }
 
 /**
+ * ORDINE DI LETTURA per XY-cut ricorsivo (standard dell'analisi layout):
+ * si cerca un "taglio" verticale che nessun blocco attraversa (il canale tra
+ * due colonne, o la piega di una doppia pagina) → prima tutto il lato
+ * sinistro, poi il destro; altrimenti un taglio orizzontale (bande
+ * alto→basso); altrimenti si emette in ordine (y, x). Un titolo a tutta
+ * larghezza impedisce il taglio verticale al suo livello, quindi separa
+ * correttamente "sopra" e "sotto" prima delle colonne. Sulla colonna singola
+ * non esistono tagli verticali validi → identico al semplice alto→basso.
+ * @param {Array} blocks blocchi con bbox normalizzata
+ * @returns {Array} blocchi in ordine di lettura
+ */
+export function orderBlocks(blocks) {
+  const boxed = blocks.filter((b) => b?.bbox);
+  const unboxed = blocks.filter((b) => !b?.bbox);
+  const out = [];
+  xyCut(boxed, out, 0);
+  return [...out, ...unboxed];
+}
+
+function xyCut(items, out, depth) {
+  if (items.length <= 1 || depth > 12) {
+    emitByPosition(items, out);
+    return;
+  }
+  // Taglio VERTICALE (colonne/piega): decide l'ordine di lettura.
+  const xCut = widestGap(items, 'xmin', 'xmax', 0.015);
+  if (xCut != null) {
+    const left = items.filter((b) => (b.bbox.xmin + b.bbox.xmax) / 2 < xCut);
+    const right = items.filter((b) => (b.bbox.xmin + b.bbox.xmax) / 2 >= xCut);
+    if (left.length && right.length) {
+      xyCut(left, out, depth + 1);
+      xyCut(right, out, depth + 1);
+      return;
+    }
+  }
+  // Nessun taglio verticale: se a impedirlo sono blocchi a tutta larghezza
+  // (titolo, figura panoramica) sopra/sotto/fra colonne, trattali come
+  // SEPARATORI orizzontali: le colonne si ordinano DENTRO ciascuna banda.
+  // (Il taglio orizzontale "più largo" qui sarebbe sbagliato: può cadere fra
+  // le righe allineate delle due colonne e alternarle riga per riga.)
+  const narrow = items.filter((b) => b.bbox.xmax - b.bbox.xmin < 0.55);
+  const wide = items.filter((b) => b.bbox.xmax - b.bbox.xmin >= 0.55);
+  if (wide.length && narrow.length >= 2 && widestGap(narrow, 'xmin', 'xmax', 0.015) != null) {
+    const spanners = [...wide].sort((a, b) => a.bbox.ymin - b.bbox.ymin);
+    const regions = Array.from({ length: spanners.length + 1 }, () => []);
+    for (const b of narrow) {
+      const cy = (b.bbox.ymin + b.bbox.ymax) / 2;
+      let k = 0;
+      while (k < spanners.length && cy > (spanners[k].bbox.ymin + spanners[k].bbox.ymax) / 2) k++;
+      regions[k].push(b);
+    }
+    regions.forEach((region, k) => {
+      if (region.length) xyCut(region, out, depth + 1);
+      if (k < spanners.length) out.push(spanners[k]);
+    });
+    return;
+  }
+  emitByPosition(items, out);
+}
+
+/** Centro del varco più largo (≥ minGap) che nessun intervallo attraversa. */
+function widestGap(items, lo, hi, minGap) {
+  const iv = items
+    .map((b) => [b.bbox[lo] ?? 0, b.bbox[hi] ?? 0])
+    .sort((a, b) => a[0] - b[0]);
+  let end = iv[0][1];
+  let best = null;
+  let bestW = minGap;
+  for (let i = 1; i < iv.length; i++) {
+    const gap = iv[i][0] - end;
+    if (gap >= bestW) {
+      bestW = gap;
+      best = end + gap / 2;
+    }
+    end = Math.max(end, iv[i][1]);
+  }
+  return best;
+}
+
+function emitByPosition(items, out) {
+  out.push(
+    ...[...items].sort(
+      (a, b) => (a.bbox?.ymin ?? 0) - (b.bbox?.ymin ?? 0) || (a.bbox?.xmin ?? 0) - (b.bbox?.xmin ?? 0),
+    ),
+  );
+}
+
+/**
  * Ricostruisce una pagina: markdown (con segnaposti immagine) + figure
  * ritagliate. `figureCounter.next()` fornisce indici progressivi globali.
  *
@@ -129,9 +217,9 @@ function nearestCaption(captions, picture) {
  * @returns {Promise<{markdown:string, figures:{path:string,bytes:Uint8Array}[]}>}
  */
 export async function assemblePage(blocks, pageDataUrl, figureCounter) {
-  const sorted = [...blocks].sort(
-    (a, b) => (a.bbox?.ymin ?? 0) - (b.bbox?.ymin ?? 0) || (a.bbox?.xmin ?? 0) - (b.bbox?.xmin ?? 0),
-  );
+  // L'arredo di pagina esce subito; il resto va in ordine di lettura XY-cut
+  // (colonne e doppie pagine lette nel verso giusto).
+  const sorted = orderBlocks(blocks.filter((b) => !isPageFurniture(b)));
   const captions = sorted.filter((b) => CAPTION_TYPES.has(b.type));
   const hasPictures = sorted.some((b) => PICTURE_TYPES.has(b.type) && b.bbox);
   const img = hasPictures ? await loadImage(pageDataUrl) : null;
