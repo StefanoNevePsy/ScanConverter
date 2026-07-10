@@ -126,40 +126,31 @@ async function callNemotron({ apiKey, endpoint, model, imageDataUrl, tool, signa
  * @param {AbortSignal} [params.signal]
  * @returns {Promise<string>} codice Typst
  */
-export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHint, continuation, fidelityNote, signal }) {
+/**
+ * Chiamata chat generica (OpenAI-compatibile) a un NIM NVIDIA. Restituisce il
+ * testo della risposta, già ripulito dagli eventuali blocchi di ragionamento.
+ * @param {object} p
+ * @param {string} p.apiKey
+ * @param {string} p.endpoint  URL chat/completions
+ * @param {string} p.model
+ * @param {string} [p.system]  messaggio di sistema
+ * @param {string} p.user      messaggio utente
+ * @param {number} [p.temperature]
+ * @param {number} [p.maxTokens]
+ * @param {AbortSignal} [p.signal]
+ * @returns {Promise<string>}
+ */
+export async function nvidiaChat({ apiKey, endpoint, model, system, user, temperature = 0.2, maxTokens = 8192, signal }) {
   if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
-  if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
-
-  const guidance =
-    buildGuidance(styleHint) +
-    (continuation
-      ? '\n\nCONTINUAZIONE DI DOCUMENTO: il documento è GIÀ iniziato. Il ' +
-        'preambolo Typst è già definito, NON ripeterlo e NON usare #set / ' +
-        '#show / #import. Restituisci SOLO il corpo che continua il ' +
-        'documento, coerente con i livelli di titolo esistenti (non ' +
-        'rinumerare, non ripartire da "= 1").\n' +
-        'Preambolo già presente (solo per riferimento):\n' +
-        continuation.preamble +
-        '\n\nPosizione gerarchica corrente (continua da qui):\n' +
-        (continuation.outline || '(inizio documento)')
-      : '') +
-    (fidelityNote ? '\n\n' + fidelityNote : '');
 
   const body = {
-    model: model || 'meta/llama-3.3-70b-instruct',
+    model,
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content:
-          guidance +
-          '\n\nTesto estratto dall’OCR da convertire in Typst:\n\n"""\n' +
-          rawText +
-          '\n"""',
-      },
+      ...(system ? [{ role: 'system', content: system }] : []),
+      { role: 'user', content: user },
     ],
-    temperature: 0.2,
-    max_tokens: 8192,
+    temperature,
+    max_tokens: maxTokens,
   };
 
   let res;
@@ -186,17 +177,52 @@ export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHin
 
   const data = await res.json();
   const msg = data?.choices?.[0]?.message;
-  // Alcuni modelli "reasoning" antepongono il ragionamento in `reasoning_content`
-  // e mettono la risposta in `content`: usiamo sempre e solo `content`.
+  // Alcuni modelli "reasoning" antepongono il ragionamento: usiamo solo content.
   let text = typeof msg?.content === 'string' ? msg.content : '';
   if (Array.isArray(msg?.content)) {
     text = msg.content.map((p) => (typeof p === 'string' ? p : p?.text || '')).join('');
   }
   if (!text.trim()) {
     const reason = data?.choices?.[0]?.finish_reason;
-    throw new Error(`Il modello NVIDIA non ha restituito codice (finish_reason: ${reason || 'n/d'}).`);
+    throw new Error(`Il modello NVIDIA non ha restituito testo (finish_reason: ${reason || 'n/d'}).`);
   }
-  return unwrapCodeBlock(stripReasoning(text));
+  return stripReasoning(text);
+}
+
+export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHint, continuation, fidelityNote, signal }) {
+  if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
+  if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
+
+  const guidance =
+    buildGuidance(styleHint) +
+    (continuation
+      ? '\n\nCONTINUAZIONE DI DOCUMENTO: il documento è GIÀ iniziato. Il ' +
+        'preambolo Typst è già definito, NON ripeterlo e NON usare #set / ' +
+        '#show / #import. Restituisci SOLO il corpo che continua il ' +
+        'documento, coerente con i livelli di titolo esistenti (non ' +
+        'rinumerare, non ripartire da "= 1").\n' +
+        'Preambolo già presente (solo per riferimento):\n' +
+        continuation.preamble +
+        '\n\nPosizione gerarchica corrente (continua da qui):\n' +
+        (continuation.outline || '(inizio documento)')
+      : '') +
+    (fidelityNote ? '\n\n' + fidelityNote : '');
+
+  const text = await nvidiaChat({
+    apiKey,
+    endpoint,
+    model: model || 'meta/llama-3.3-70b-instruct',
+    system: SYSTEM_PROMPT,
+    user:
+      guidance +
+      '\n\nTesto estratto dall’OCR da convertire in Typst:\n\n"""\n' +
+      rawText +
+      '\n"""',
+    temperature: 0.2,
+    maxTokens: 8192,
+    signal,
+  });
+  return unwrapCodeBlock(text);
 }
 
 /**

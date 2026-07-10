@@ -17,6 +17,7 @@ import {
 import { buildPreamble, extractTitle } from '../lib/preamble.js';
 import { autofixTypst } from '../lib/typstfix.js';
 import { checkFidelity, fidelityNoteFrom } from '../lib/fidelity.js';
+import { requestTypstFix, applyFixes, describeFix } from '../lib/aifix.js';
 import {
   saveSession,
   saveFigures,
@@ -73,6 +74,7 @@ export function usePipeline(settings) {
   const [compileError, setCompileError] = useState(null);
   const [compiling, setCompiling] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [aiFixing, setAiFixing] = useState(false);
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [canResume, setCanResume] = useState(false); // sessione interrotta ripristinabile
@@ -496,6 +498,75 @@ export function usePipeline(settings) {
   }, [typstCode, recompile]);
 
   /**
+   * Correzione AI puntiforme: compila → se fallisce chiede al modello forte
+   * (fixEngine/fixModel) le sostituzioni minime {find, replace}, le applica e
+   * ricompila; fino a 3 giri. Prova prima l'autofix deterministico (gratuito).
+   * Il documento non viene MAI riscritto per intero: solo sostituzioni esatte.
+   * @returns {Promise<{ok:boolean, message:string}>}
+   */
+  const aiFix = useCallback(async () => {
+    if (!typstCode.trim()) return { ok: false, message: 'Nessun codice da correggere.' };
+    setAiFixing(true);
+    setCompileError(null);
+    let code = typstCode;
+    const log = [];
+    try {
+      const det = autofixTypst(code);
+      if (det.changes.length) {
+        code = det.fixed;
+        log.push(...det.changes);
+      }
+      let lastError = '';
+      for (let round = 0; round < 3; round++) {
+        try {
+          const svg = await compileToSvg(code, figuresRef.current);
+          setTypstCode(code);
+          setPreviewSvg(svg);
+          return {
+            ok: true,
+            message: log.length
+              ? `Corretto e compilato. Modifiche: ${log.join(' · ')}`
+              : 'Il codice compila già, nessuna correzione necessaria.',
+          };
+        } catch (e) {
+          lastError = e.message || 'Errore di compilazione Typst.';
+          if (round === 2) break; // niente più tentativi AI
+          const res = await requestTypstFix({ settings, code, error: lastError });
+          const { code: next, applied } = applyFixes(code, res.fixes);
+          if (!applied.length) {
+            setTypstCode(code);
+            setCompileError(lastError);
+            return {
+              ok: false,
+              message:
+                'L’AI non ha prodotto correzioni applicabili' +
+                (res.explanation ? ` (${res.explanation})` : '.'),
+            };
+          }
+          code = next;
+          if (res.explanation && !log.includes(res.explanation)) log.push(res.explanation);
+          log.push(...applied.map(describeFix));
+        }
+      }
+      // Tre compilazioni fallite: mantieni comunque le modifiche applicate
+      // (spesso avvicinano alla soluzione) e mostra l'errore residuo.
+      setTypstCode(code);
+      setCompileError(lastError);
+      return {
+        ok: false,
+        message:
+          (log.length ? `Applicate: ${log.join(' · ')} — ` : '') +
+          `errore residuo: ${lastError}`,
+      };
+    } catch (e) {
+      setCompileError(e.message || 'Errore nella correzione AI.');
+      return { ok: false, message: e.message || 'Errore nella correzione AI.' };
+    } finally {
+      setAiFixing(false);
+    }
+  }, [typstCode, settings]);
+
+  /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
    * fase 2 (Gemini con indicazioni di stile) + fase 3 (compilazione). Non
    * ripete l'OCR (nessun costo/latenza NVIDIA, nessun re-render del PDF).
@@ -740,6 +811,8 @@ export function usePipeline(settings) {
     restyle,
     applyLocalStyle,
     autofix,
+    aiFix,
+    aiFixing,
     resume,
     reset,
     cancel,

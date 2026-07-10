@@ -264,6 +264,45 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                   listId="dl-nvidia-typst-adv"
                 />
               )}
+              {/* Correzione AI degli errori di compilazione. */}
+              <div>
+                <span className="mb-1.5 block text-sm font-medium text-ink">
+                  Correzioni AI (errori di compilazione)
+                </span>
+                <span className="mb-2 block text-xs text-faint">
+                  Modello forte per il tasto «Correggi con AI»: riceve errore e
+                  codice, restituisce sostituzioni puntiformi.
+                </span>
+                <div className="mb-3 grid grid-cols-2 gap-2">
+                  <EngineButton
+                    active={form.fixEngine !== 'gemini'}
+                    onClick={() => setForm((f) => ({ ...f, fixEngine: 'nvidia' }))}
+                    title="Modello NVIDIA"
+                    sub="es. DeepSeek, GLM, Qwen"
+                  />
+                  <EngineButton
+                    active={form.fixEngine === 'gemini'}
+                    onClick={() => setForm((f) => ({ ...f, fixEngine: 'gemini' }))}
+                    title="Google Gemini"
+                    sub="es. gemini-pro di livello alto"
+                  />
+                </div>
+                <ModelSelect
+                  label="Modello per le correzioni"
+                  value={form.fixModel}
+                  onChange={update('fixModel')}
+                  options={form.fixEngine === 'gemini' ? gemini.list : nvidia.list}
+                  loading={form.fixEngine === 'gemini' ? gemini.loading : nvidia.loading}
+                  error={form.fixEngine === 'gemini' ? gemini.error : nvidia.error}
+                  onRefresh={() =>
+                    form.fixEngine === 'gemini'
+                      ? fetchGemini(form.googleApiKey)
+                      : fetchNvidia(form.nvidiaApiKey, form.nvidiaEndpoint)
+                  }
+                  placeholder={DEFAULTS.fixModel}
+                  listId="dl-fix"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field
                   label="Max pagine PDF"

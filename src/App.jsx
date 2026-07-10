@@ -331,6 +331,12 @@ function Workspace({
     setTimeout(() => setAutofixMsg(null), 7000);
   }, [pipe]);
 
+  const handleAiFix = useCallback(async () => {
+    const res = await pipe.aiFix();
+    setAutofixMsg(res?.message || null);
+    setTimeout(() => setAutofixMsg(null), 15000);
+  }, [pipe]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       {/* Barra sorgente + stato pipeline + azioni */}
@@ -461,6 +467,8 @@ function Workspace({
             onChange={pipe.setTypstCode}
             onCompile={onCompile}
             onAutofix={handleAutofix}
+            onAiFix={handleAiFix}
+            aiFixing={pipe.aiFixing}
             compiling={pipe.compiling}
             error={pipe.compileError}
             disabled={pipe.phase === 'running' && !pipe.typstCode}

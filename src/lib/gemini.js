@@ -185,6 +185,77 @@ export async function toTypst({ apiKey, model, rawText, styleHint, continuation,
   return unwrapCodeBlock(text);
 }
 
+/** Base URL dell'API Gemini (proxy del dev server in sviluppo web). */
+function geminiBase() {
+  try {
+    if (import.meta.env.DEV) return '/__gemini__';
+  } catch {
+    /* Node/prod: URL diretto */
+  }
+  return 'https://generativelanguage.googleapis.com';
+}
+
+/**
+ * Chiamata generica a Gemini: system + user → testo. Con `json: true` chiede
+ * una risposta JSON (responseMimeType).
+ * @param {object} p
+ * @param {string} p.apiKey
+ * @param {string} p.model
+ * @param {string} [p.system]
+ * @param {string} p.user
+ * @param {number} [p.temperature]
+ * @param {number} [p.maxTokens]
+ * @param {boolean} [p.json]
+ * @param {AbortSignal} [p.signal]
+ * @returns {Promise<string>}
+ */
+export async function geminiGenerate({ apiKey, model, system, user, temperature = 0.2, maxTokens = 4096, json = false, signal }) {
+  if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
+  const endpoint = `${geminiBase()}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+
+  const body = {
+    ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+    contents: [{ role: 'user', parts: [{ text: user }] }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens: maxTokens,
+      ...(json ? { responseMimeType: 'application/json' } : {}),
+    },
+  };
+
+  let res;
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw e;
+    throw new Error(`Impossibile contattare Google Gemini (rete). ${e.message}`);
+  }
+
+  if (!res.ok) {
+    const detail = await safeErrorDetail(res);
+    throw new Error(`Google Gemini ha risposto ${res.status}. ${detail}`);
+  }
+
+  const data = await res.json();
+  const parts = data?.candidates?.[0]?.content?.parts;
+  const text = Array.isArray(parts) ? parts.map((p) => p?.text || '').join('') : '';
+  if (!text.trim()) {
+    const block = data?.promptFeedback?.blockReason;
+    const finish = data?.candidates?.[0]?.finishReason;
+    throw new Error(
+      block
+        ? `Richiesta bloccata da Gemini (${block}).`
+        : `Gemini non ha restituito testo (finishReason: ${finish || 'n/d'}).`,
+    );
+  }
+  return text;
+}
+
 /**
  * Elenca i modelli Gemini disponibili per l'API key, filtrando quelli che
  * supportano `generateContent`. Ritorna gli id (senza il prefisso "models/").

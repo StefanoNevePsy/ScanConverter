@@ -48,6 +48,19 @@ export const IconCheck = (p) => (
   </svg>
 );
 
+export const IconSearch = (p) => (
+  <svg {...base} {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="M21 21l-4.35-4.35" />
+  </svg>
+);
+
+export const IconWand = (p) => (
+  <svg {...base} {...p}>
+    <path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8L19 13M15 9h.01M17.8 6.2L19 5M11 13l-8 8M12.2 6.2L11 5" />
+  </svg>
+);
+
 export const IconImage = (p) => (
   <svg {...base} {...p}>
     <rect x="3" y="3" width="18" height="18" rx="2" />

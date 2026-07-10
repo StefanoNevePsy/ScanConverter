@@ -13,6 +13,8 @@ const KEYS = {
   geminiModel: 'sc.geminiModel',
   typstEngine: 'sc.typstEngine',
   nvidiaTypstModel: 'sc.nvidiaTypstModel',
+  fixEngine: 'sc.fixEngine',
+  fixModel: 'sc.fixModel',
   maxPages: 'sc.maxPages',
   chunkSize: 'sc.chunkSize',
 };
@@ -28,6 +30,10 @@ export const DEFAULTS = {
   // Modello NVIDIA usato quando typstEngine === 'nvidia' (istruct generico,
   // adatto alla generazione di codice).
   nvidiaTypstModel: 'meta/llama-3.3-70b-instruct',
+  // Correzione AI degli errori di compilazione: motore e modello dedicati
+  // (un modello "forte" da codice; la chiave NVIDIA c'è sempre, serve all'OCR).
+  fixEngine: 'nvidia',
+  fixModel: 'z-ai/glm-5.2',
   maxPages: 20, // pagine PDF per singolo caricamento
   chunkSize: 5000, // caratteri per chunk inviato a Gemini
 };
@@ -86,6 +92,10 @@ export function loadSettings() {
       ? read(KEYS.typstEngine, DEFAULTS.typstEngine)
       : DEFAULTS.typstEngine,
     nvidiaTypstModel: read(KEYS.nvidiaTypstModel, DEFAULTS.nvidiaTypstModel),
+    fixEngine: ENGINES.includes(read(KEYS.fixEngine, DEFAULTS.fixEngine))
+      ? read(KEYS.fixEngine, DEFAULTS.fixEngine)
+      : DEFAULTS.fixEngine,
+    fixModel: read(KEYS.fixModel, DEFAULTS.fixModel),
     maxPages: readInt(KEYS.maxPages, DEFAULTS.maxPages, LIMITS.maxPages),
     chunkSize: readInt(KEYS.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize),
   };
@@ -105,6 +115,8 @@ export function saveSettings(s) {
   write(KEYS.geminiModel, s.geminiModel?.trim() || DEFAULTS.geminiModel);
   write(KEYS.typstEngine, ENGINES.includes(s.typstEngine) ? s.typstEngine : DEFAULTS.typstEngine);
   write(KEYS.nvidiaTypstModel, s.nvidiaTypstModel?.trim() || DEFAULTS.nvidiaTypstModel);
+  write(KEYS.fixEngine, ENGINES.includes(s.fixEngine) ? s.fixEngine : DEFAULTS.fixEngine);
+  write(KEYS.fixModel, s.fixModel?.trim() || DEFAULTS.fixModel);
   writeInt(KEYS.maxPages, s.maxPages, DEFAULTS.maxPages, LIMITS.maxPages);
   writeInt(KEYS.chunkSize, s.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize);
 }
