@@ -109,6 +109,69 @@ Caratteristiche native:
 - **Icona e splash** — generate in `assets/` (sorgenti SVG in `assets/src/`)
   e installate in `android/app/src/main/res`.
 
+## Uso da PC — webapp su GitHub Pages
+
+La GitHub Action `.github/workflows/deploy-pages.yml` pubblica la build statica
+su **GitHub Pages** a ogni push sul branch di sviluppo: l'app diventa usabile da
+qualsiasi browser (PC compreso) all'indirizzo
+
+```
+https://<utente>.github.io/<repo>/     # es. https://stefanonevepsy.github.io/ScanConverter/
+```
+
+**Attivazione (una tantum):** nelle impostazioni del repo → **Settings → Pages
+→ Build and deployment → Source: “GitHub Actions”**. Da lì in poi ogni push
+ripubblica automaticamente; l'URL finale compare nel log del job *Deploy* e
+sotto Settings → Pages. Il `base` del sottopercorso è impostato dall'Action via
+`VITE_BASE` (in locale e su Android resta la radice `/`).
+
+**Cosa funziona da browser, senza altro:** l'editor Typst, la compilazione in
+PDF (WASM locale), il download, il **controllo ortografico** (dizionari
+impacchettati) e tutta la **fase Typst via Gemini** (formattazione, «Correggi
+con AI», correzione refusi) — Google invia gli header CORS, quindi le chiamate
+dal browser passano.
+
+**Limite CORS di NVIDIA.** L'endpoint NVIDIA NIM **non** invia header CORS: da
+una pagina statica il browser blocca le chiamate dirette, quindi **l'OCR
+Nemotron-Parse, l'elenco modelli NVIDIA e i motori NVIDIA (Typst/GLM/DeepSeek)
+non funzionano dalla webapp** così com'è. In dev il proxy del dev server risolve
+il problema; nell'app Android lo risolve `CapacitorHttp`. Da PC hai due opzioni:
+
+1. **Usa l'app Android** per l'OCR e la webapp per rifinire/compilare (le
+   sessioni sono locali a ciascun dispositivo, non sincronizzate).
+2. **Instrada NVIDIA attraverso un tuo piccolo proxy CORS** e imposta
+   *Impostazioni → Opzioni avanzate → Endpoint NVIDIA NIM* a
+   `https://<tuo-proxy>/https://integrate.api.nvidia.com/v1/chat/completions`
+   (l'app deriva da sé l'URL `/v1/models`). Esempio di Cloudflare Worker
+   gratuito, che inoltra il percorso e aggiunge gli header CORS:
+
+   ```js
+   export default {
+     async fetch(req) {
+       const target = new URL(req.url).pathname.slice(1) + new URL(req.url).search;
+       const cors = {
+         'access-control-allow-origin': req.headers.get('origin') || '*',
+         'access-control-allow-methods': 'GET,POST,OPTIONS',
+         'access-control-allow-headers':
+           req.headers.get('access-control-request-headers') || 'authorization,content-type',
+       };
+       if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
+       if (!target.startsWith('https://')) return new Response('bad target', { status: 400 });
+       const r = await fetch(target, {
+         method: req.method,
+         headers: req.headers,
+         body: ['GET', 'HEAD'].includes(req.method) ? undefined : req.body,
+       });
+       const h = new Headers(r.headers);
+       for (const [k, v] of Object.entries(cors)) h.set(k, v);
+       return new Response(r.body, { status: r.status, headers: h });
+     },
+   };
+   ```
+
+   La chiave NVIDIA transita solo dalla *tua* infrastruttura. Non usare proxy
+   CORS pubblici di terzi: vedrebbero la chiave.
+
 ## Sessione a chunk, libri interi & rate limiting
 
 Pensato per convertire **documenti lunghi o libri interi**, anche lentamente.

@@ -1,0 +1,69 @@
+name: Deploy webapp su GitHub Pages
+
+# Pubblica la build statica (dist/) su GitHub Pages, così ScanConverter è
+# usabile da qualsiasi browser (PC compreso) all'indirizzo
+#   https://<utente>.github.io/<repo>/
+#
+# Prerequisito da fare UNA volta nelle impostazioni del repo:
+#   Settings → Pages → Build and deployment → Source: "GitHub Actions".
+
+on:
+  # Pubblica a ogni push sul branch di sviluppo (attualmente il default del
+  # repo). Se in futuro unisci su main, aggiungi "main" all'elenco.
+  push:
+    branches:
+      - claude/academic-doc-digitizer-bscu9m
+      - main
+      - master
+  # Consente anche l'avvio manuale dalla tab "Actions".
+  workflow_dispatch:
+
+# Permessi minimi necessari al deploy su Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Un solo deploy alla volta; non annulla quello in corso per non lasciare il
+# sito in uno stato incoerente.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        # VITE_BASE = "/<nome-repo>/": il sottopercorso servito da Pages.
+        run: npm run build
+        env:
+          VITE_BASE: /${{ github.event.repository.name }}/
+
+      - name: Upload artifact per Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy su GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

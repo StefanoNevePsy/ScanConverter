@@ -6,6 +6,11 @@ import tailwindcss from '@tailwindcss/vite';
 // pre-bundling di esbuild così Vite lo serve nativamente e le fetch dei .wasm
 // (risolte via `?url`) restano coerenti.
 export default defineConfig({
+  // Percorso base degli asset. In locale e nell'app Android è la radice ("/");
+  // su GitHub Pages il sito vive in un sottopercorso (es. "/ScanConverter/"),
+  // impostato dalla GitHub Action tramite la variabile VITE_BASE. Tutti gli
+  // asset (?url, BASE_URL) vengono così risolti in modo coerente.
+  base: process.env.VITE_BASE || '/',
   plugins: [react(), tailwindcss()],
   optimizeDeps: {
     exclude: [
