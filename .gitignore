@@ -9,3 +9,4 @@ yarn-error.log*
 
 # APK di build (consegnato a parte)
 *.apk
+release/

@@ -45,6 +45,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        env:
+          # La build web non usa Electron: evita di scaricarne il binario.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
 
       - name: Build
         # VITE_BASE = "/<nome-repo>/": il sottopercorso servito da Pages.

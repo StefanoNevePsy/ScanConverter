@@ -175,6 +175,42 @@ il problema; nell'app Android lo risolve `CapacitorHttp`. Da PC hai tre opzioni:
    La chiave NVIDIA transita solo dalla *tua* infrastruttura. Non usare proxy
    CORS pubblici di terzi: vedrebbero la chiave.
 
+## App desktop (Mac & Windows) — con NVIDIA funzionante
+
+A differenza della webapp su Pages, l'**app desktop** fa funzionare anche i
+modelli NVIDIA (OCR compreso), senza proxy: il processo Electron inietta gli
+header CORS mancanti sulle risposte remote — esattamente come `CapacitorHttp`
+su Android — quindi le chiamate a NVIDIA non sono bloccate dal browser.
+(Verificato: senza iniezione la fetch a NVIDIA fallisce per CORS, con
+iniezione risponde `200`.)
+
+**Come ottenere gli installabili.** Il workflow
+`.github/workflows/build-desktop.yml` compila per macOS e Windows. Avvialo da
+**Actions → “Build app desktop (Mac + Windows)” → Run workflow** (oppure crea
+un tag di versione: `git tag v0.1.0 && git push --tags`). Al termine, in fondo
+al run, sotto **Artifacts**, trovi:
+
+- **macOS** — `scanconverter-macos-latest` (`.dmg` e `.zip`)
+- **Windows** — `scanconverter-windows-latest` (`.exe`: installer NSIS e portable)
+
+**App non firmata** (nessun certificato di sviluppatore): al primo avvio il
+sistema avvisa. Basta autorizzarla una volta:
+
+- **macOS** — click destro sull'app → *Apri* → *Apri*; oppure *Impostazioni di
+  Sistema → Privacy e sicurezza → Apri comunque*.
+- **Windows** — *Windows ha protetto il PC* → *Ulteriori informazioni* →
+  *Esegui comunque*.
+
+**Esecuzione locale (sviluppo):**
+
+```bash
+npm run build      # genera dist/
+npm run electron   # avvia l'app desktop sulla build
+# pacchetto per il tuo OS:  npm run build:desktop  (output in release/)
+```
+
+Le chiavi API e le sessioni restano locali all'app, come sul web.
+
 ## Sessione a chunk, libri interi & rate limiting
 
 Pensato per convertire **documenti lunghi o libri interi**, anche lentamente.

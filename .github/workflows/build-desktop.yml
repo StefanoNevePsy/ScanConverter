@@ -1,0 +1,57 @@
+name: Build app desktop (Mac + Windows)
+
+# Compila l'app desktop Electron per macOS e Windows. A differenza della
+# webapp su Pages, l'app desktop fa funzionare ANCHE i modelli NVIDIA: come
+# CapacitorHttp su Android, il processo Electron inietta gli header CORS
+# mancanti, quindi OCR ed engine NVIDIA non sono bloccati dal browser.
+#
+# Avvio: manuale dalla tab "Actions" → "Run workflow", oppure creando un tag
+# di versione (es. git tag v0.1.0 && git push --tags). Gli installabili
+# compaiono come "Artifacts" del run (Mac: .dmg/.zip · Windows: .exe).
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build webapp (Vite)
+        run: npm run build
+
+      - name: Build desktop (electron-builder)
+        run: npx electron-builder --publish never
+        env:
+          # App non firmata (nessun certificato): niente firma/notarizzazione.
+          # All'utente basta autorizzarla una volta (vedi README).
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installabili
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanconverter-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe

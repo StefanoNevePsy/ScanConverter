@@ -4,13 +4,17 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Digitalizzazione e re-impaginazione di documenti accademici: OCR (Nvidia Nemotron-Parse) → Typst (Google Gemini) → PDF vettoriale (Typst WASM).",
+  "author": "ScanConverter",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "sync": "cap sync",
     "build:android": "vite build && cap sync android",
-    "open:android": "cap open android"
+    "open:android": "cap open android",
+    "electron": "electron .",
+    "build:desktop": "vite build && electron-builder"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.0",
@@ -31,8 +35,41 @@
     "@capacitor/cli": "^8.4.1",
     "@tailwindcss/vite": "^4.1.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^43.1.0",
+    "electron-builder": "^25.1.8",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.9.3",
     "vite": "^6.0.0"
+  },
+  "build": {
+    "appId": "com.scanconverter.app",
+    "productName": "ScanConverter",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Office"
+    }
   }
 }
