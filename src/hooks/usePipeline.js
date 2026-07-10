@@ -16,6 +16,7 @@ import {
 } from '../lib/session.js';
 import { buildPreamble, extractTitle } from '../lib/preamble.js';
 import { autofixTypst } from '../lib/typstfix.js';
+import { checkFidelity, fidelityNoteFrom } from '../lib/fidelity.js';
 import {
   saveSession,
   saveFigures,
@@ -79,11 +80,30 @@ export function usePipeline(settings) {
   // Revisione figure dopo l'OCR: [{path,url,junk,keep}] | null. La pipeline
   // resta in pausa (phase 'review') finché l'utente non conferma la selezione.
   const [figureReview, setFigureReview] = useState(null);
+  // Esito della verifica di fedeltà per chunk: [{chunk,total,coverage,missing}].
+  const [fidelityWarnings, setFidelityWarnings] = useState([]);
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
 
   const abortRef = useRef(null);
+
+  // Raccoglie i warning di fedeltà dai chunk della sessione corrente.
+  const collectFidelity = useCallback(() => {
+    const s = sessionRef.current;
+    const warns = [];
+    s?.chunks?.forEach((c, idx) => {
+      if (c.fidelity && c.fidelity.coverage < 0.98 && c.fidelity.missing?.length) {
+        warns.push({
+          chunk: idx + 1,
+          total: s.chunks.length,
+          coverage: c.fidelity.coverage,
+          missing: c.fidelity.missing,
+        });
+      }
+    });
+    setFidelityWarnings(warns);
+  }, []);
 
   // Chiude la revisione figure revocando gli object URL delle miniature.
   const clearReview = useCallback(() => {
@@ -124,7 +144,12 @@ export function usePipeline(settings) {
       rawText: s.rawText,
       preamble: s.preamble,
       styleHint: s.styleHint || null,
-      chunks: s.chunks.map((c) => ({ text: c.text, body: c.body, status: c.status })),
+      chunks: s.chunks.map((c) => ({
+        text: c.text,
+        body: c.body,
+        status: c.status,
+        fidelity: c.fidelity || null,
+      })),
       status: allDone ? 'done' : 'paused',
     });
   }, []);
@@ -143,6 +168,7 @@ export function usePipeline(settings) {
     setDetail('');
     setChunkProgress(null);
     setCanResume(false);
+    setFidelityWarnings([]);
     figuresRef.current = [];
     sessionRef.current = null;
     refreshSessions(); // riallinea l'elenco al ritorno sulla home
@@ -176,6 +202,7 @@ export function usePipeline(settings) {
               rawText: args.rawText,
               styleHint: args.styleHint,
               continuation: args.continuation,
+              fidelityNote: args.fidelityNote,
               signal,
             })
           : toTypst({
@@ -184,6 +211,7 @@ export function usePipeline(settings) {
               rawText: args.rawText,
               styleHint: args.styleHint,
               continuation: args.continuation,
+              fidelityNote: args.fidelityNote,
               signal,
             });
       let delay = 15000;
@@ -215,38 +243,52 @@ export function usePipeline(settings) {
         const label = total > 1 ? `Layout: chunk ${i + 1}/${total}` : 'Formattazione';
         setDetail(total > 1 ? `${label}…` : '');
         try {
-          if (i === 0) {
+          const continuation =
+            i > 0
+              ? {
+                  preamble: s.preamble,
+                  outline: outlineFromBody(
+                    s.chunks.slice(0, i).map((c) => c.body).filter(Boolean).join('\n\n'),
+                  ),
+                }
+              : undefined;
+
+          // Un tentativo di conversione + verifica di fedeltà deterministica
+          // (ogni frase del sorgente deve comparire nell'output).
+          const attempt = async (fidelityNote) => {
             const code = await callGeminiWithRetry(
-              {
-                rawText: ch.text,
-                styleHint: s.styleHint,
-              },
+              { rawText: ch.text, styleHint: s.styleHint, continuation, fidelityNote },
               signal,
               label,
             );
-            const { preamble, body } = splitPreamble(code);
-            s.preamble = preamble;
-            ch.body = enforceHeadingLevels(body, ch.text);
-          } else {
-            const prior = s.chunks
-              .slice(0, i)
-              .map((c) => c.body)
-              .filter(Boolean)
-              .join('\n\n');
-            const body = await callGeminiWithRetry(
-              {
-                rawText: ch.text,
-                styleHint: s.styleHint,
-                continuation: { preamble: s.preamble, outline: outlineFromBody(prior) },
-              },
-              signal,
-              label,
+            let preamble = s.preamble;
+            let body = code;
+            if (i === 0) ({ preamble, body } = splitPreamble(code));
+            // Impone in modo deterministico i livelli di titolo del sorgente
+            // e la larghezza delle figure dal bbox reale.
+            body = enforceHeadingLevels(body, ch.text);
+            body = applyFigureWidths(body, figuresRef.current);
+            return { preamble, body, fid: checkFidelity(ch.text, body) };
+          };
+
+          // Multipasso: se la copertura è bassa si ri-prompta elencando i
+          // passaggi omessi; si tiene il tentativo con la copertura migliore.
+          let best = await attempt();
+          for (let r = 0; r < 2 && best.fid.coverage < 0.9 && best.fid.missing.length; r++) {
+            setDetail(
+              `${label} · fedeltà ${Math.round(best.fid.coverage * 100)}%: ` +
+                `richiedo i passaggi mancanti (tentativo ${r + 2})…`,
             );
-            // Impone in modo deterministico i livelli di titolo del sorgente.
-            ch.body = enforceHeadingLevels(body, ch.text);
+            const again = await attempt(fidelityNoteFrom(best.fid.missing));
+            if (again.fid.coverage > best.fid.coverage) best = again;
           }
-          // Larghezza figure dal bbox reale (ignora quella scelta dall'LLM).
-          ch.body = applyFigureWidths(ch.body, figuresRef.current);
+
+          if (i === 0) s.preamble = best.preamble;
+          ch.body = best.body;
+          ch.fidelity = {
+            coverage: best.fid.coverage,
+            missing: best.fid.missing.slice(0, 8),
+          };
           ch.status = 'done';
           // Aggiorna progressivamente l'editor e salva i progressi.
           setTypstCode(combineDocument(s.preamble, s.chunks.map((c) => c.body || '')));
@@ -274,6 +316,7 @@ export function usePipeline(settings) {
       setStatus((x) => ({ ...x, format: 'done', compile: 'active' }));
       setActiveStep('compile');
       setDetail('');
+      collectFidelity();
       try {
         const svg = await compileToSvg(combined, figuresRef.current);
         if (signal.aborted) return;
@@ -291,7 +334,7 @@ export function usePipeline(settings) {
         setPhase('done');
       }
     },
-    [persist],
+    [persist, collectFidelity],
   );
 
   /** Esegue la fase 2+3 sulla sessione corrente (fresh o resume). */
@@ -300,6 +343,7 @@ export function usePipeline(settings) {
       const r = await processChunks(signal);
       if (r === 'aborted') return;
       if (r === 'error') {
+        collectFidelity(); // mostra comunque l'esito dei chunk completati
         setStatus((x) => ({ ...x, format: 'error' }));
         setCanResume(true);
         setDetail('');
@@ -313,7 +357,7 @@ export function usePipeline(settings) {
       }
       await finalizeCompile(signal);
     },
-    [processChunks, finalizeCompile],
+    [processChunks, finalizeCompile, collectFidelity],
   );
 
   /** Riprende una sessione interrotta dai chunk non ancora completati. */
@@ -466,6 +510,7 @@ export function usePipeline(settings) {
       setError(null);
       setCompileError(null);
       setCanResume(false);
+      setFidelityWarnings([]);
       // Nuova sessione a chunk sul testo OCR, con lo stile richiesto.
       const prev = sessionRef.current;
       sessionRef.current = {
@@ -570,6 +615,7 @@ export function usePipeline(settings) {
       setStatus({ ...emptyStatus });
       setRawText('');
       setTypstCode('');
+      setFidelityWarnings([]);
       clearReview();
 
       try {
@@ -684,6 +730,7 @@ export function usePipeline(settings) {
     canResume,
     figureReview,
     confirmFigures,
+    fidelityWarnings,
     sessions,
     openSession,
     deleteSavedSession,

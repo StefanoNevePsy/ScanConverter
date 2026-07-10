@@ -97,7 +97,7 @@ export function buildGuidance(styleHint) {
  * @param {AbortSignal} [params.signal]
  * @returns {Promise<string>} codice Typst
  */
-export async function toTypst({ apiKey, model, rawText, styleHint, continuation, signal }) {
+export async function toTypst({ apiKey, model, rawText, styleHint, continuation, fidelityNote, signal }) {
   if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
   if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
 
@@ -123,7 +123,8 @@ export async function toTypst({ apiKey, model, rawText, styleHint, continuation,
         continuation.preamble +
         '\n\nPosizione gerarchica corrente (continua da qui):\n' +
         (continuation.outline || '(inizio documento)')
-      : '');
+      : '') +
+    (fidelityNote ? '\n\n' + fidelityNote : '');
 
   const body = {
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },

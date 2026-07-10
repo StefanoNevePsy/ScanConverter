@@ -10,6 +10,7 @@ import TypstEditor from './components/TypstEditor.jsx';
 import PdfPreview from './components/PdfPreview.jsx';
 import RestylePanel from './components/RestylePanel.jsx';
 import FigureReviewPanel from './components/FigureReviewPanel.jsx';
+import FidelityPanel from './components/FidelityPanel.jsx';
 import OcrTextPanel from './components/OcrTextPanel.jsx';
 import SessionsList from './components/SessionsList.jsx';
 import {
@@ -406,6 +407,8 @@ function Workspace({
           onConfirm={pipe.confirmFigures}
         />
       )}
+
+      <FidelityPanel warnings={pipe.fidelityWarnings} />
 
       {pipe.rawText && !pipe.figureReview && (
         <RestylePanel

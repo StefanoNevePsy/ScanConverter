@@ -126,7 +126,7 @@ async function callNemotron({ apiKey, endpoint, model, imageDataUrl, tool, signa
  * @param {AbortSignal} [params.signal]
  * @returns {Promise<string>} codice Typst
  */
-export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHint, continuation, signal }) {
+export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHint, continuation, fidelityNote, signal }) {
   if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
   if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
 
@@ -142,7 +142,8 @@ export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHin
         continuation.preamble +
         '\n\nPosizione gerarchica corrente (continua da qui):\n' +
         (continuation.outline || '(inizio documento)')
-      : '');
+      : '') +
+    (fidelityNote ? '\n\n' + fidelityNote : '');
 
   const body = {
     model: model || 'meta/llama-3.3-70b-instruct',
