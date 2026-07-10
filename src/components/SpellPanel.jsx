@@ -1,15 +1,44 @@
-import { IconSpell, IconSpinner, IconX, IconWand, IconRefresh, IconCheck } from './Icons.jsx';
+import { useEffect, useState } from 'react';
+import { IconSpell, IconSpinner, IconX, IconWand, IconRefresh, IconCheck, IconSearch } from './Icons.jsx';
 
 /*
-  Esito del controllo ortografico locale (dizionari it+en): le parole ignote
-  a entrambi i dizionari, con conteggio. Un tocco sulla parola la cerca
-  nell'editor (per la correzione manuale); «Correggi con AI» invia SOLO
-  parola + contesto a un modello veloce e applica le sostituzioni.
+  Esito del controllo ortografico locale (dizionari it+en). Ogni parola è un
+  chip selezionabile: un tocco la include/esclude dall'invio all'AI (es.
+  «Bateson» è un nome, inutile farlo valutare); la lente la cerca
+  nell'editor. Le escluse si possono aggiungere al dizionario personale, così
+  non vengono più segnalate. «Correggi con AI» invia SOLO parola + contesto
+  delle selezionate.
 */
 
-export default function SpellPanel({ report, busy, onFixAll, onRecheck, onLocate, onClose }) {
+export default function SpellPanel({
+  report,
+  busy,
+  onFixAll,
+  onRecheck,
+  onLocate,
+  onClose,
+  onIgnore,
+  onFixSpacing,
+}) {
+  const suspects = report?.suspects || [];
+  const [skip, setSkip] = useState(() => new Set());
+
+  // Nuovo report → riparti con tutte le parole selezionate.
+  useEffect(() => {
+    setSkip(new Set());
+  }, [report]);
+
   if (!report) return null;
-  const suspects = report.suspects || [];
+
+  const toggle = (word) =>
+    setSkip((k) => {
+      const next = new Set(k);
+      if (next.has(word)) next.delete(word);
+      else next.add(word);
+      return next;
+    });
+
+  const selected = suspects.filter((s) => !skip.has(s.word)).map((s) => s.word);
 
   return (
     <section className="card overflow-hidden">
@@ -21,7 +50,7 @@ export default function SpellPanel({ report, busy, onFixAll, onRecheck, onLocate
             {report.error
               ? report.error
               : suspects.length
-                ? `${suspects.length} parole sospette (refusi OCR, nomi propri o termini tecnici)`
+                ? `${selected.length}/${suspects.length} selezionate per l’AI · tocca per escludere`
                 : 'nessun sospetto'}
           </span>
         </div>
@@ -36,17 +65,40 @@ export default function SpellPanel({ report, busy, onFixAll, onRecheck, onLocate
 
       {suspects.length > 0 ? (
         <div className="flex flex-wrap gap-1.5 px-4 py-3">
-          {suspects.map((s) => (
-            <button
-              key={s.word}
-              onClick={() => onLocate(s.word)}
-              title={`Cerca nell'editor · contesto: «${s.context}»`}
-              className="rounded-full border border-warning/50 bg-warning/10 px-2.5 py-1 font-mono text-xs text-ink transition-colors hover:bg-warning/20"
-            >
-              {s.word}
-              {s.count > 1 && <span className="ml-1 text-faint">×{s.count}</span>}
-            </button>
-          ))}
+          {suspects.map((s) => {
+            const excluded = skip.has(s.word);
+            return (
+              <span
+                key={s.word}
+                className={`inline-flex items-center overflow-hidden rounded-full border font-mono text-xs transition-all ${
+                  excluded
+                    ? 'border-border bg-surface-2 text-faint line-through opacity-60'
+                    : 'border-warning/50 bg-warning/10 text-ink'
+                }`}
+              >
+                <button
+                  onClick={() => toggle(s.word)}
+                  title={
+                    excluded
+                      ? 'Esclusa: tocca per reincludere nell’invio all’AI'
+                      : `Inclusa nell’invio all’AI: tocca per escludere · «${s.context}»`
+                  }
+                  className="py-1 pl-2.5 pr-1.5 transition-colors hover:bg-warning/20"
+                >
+                  {s.word}
+                  {s.count > 1 && <span className="ml-1 text-faint">×{s.count}</span>}
+                </button>
+                <button
+                  onClick={() => onLocate(s.word)}
+                  title="Cerca nell'editor"
+                  aria-label={`Cerca «${s.word}» nell'editor`}
+                  className="border-l border-border/50 px-1.5 py-1 text-muted transition-colors hover:text-ink"
+                >
+                  <IconSearch width={11} height={11} />
+                </button>
+              </span>
+            );
+          })}
         </div>
       ) : (
         !report.error && (
@@ -58,11 +110,15 @@ export default function SpellPanel({ report, busy, onFixAll, onRecheck, onLocate
       )}
 
       <footer className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-xs text-faint">
-          Tocca una parola per trovarla nell’editor. «Correggi con AI» invia
-          solo parola + contesto a un modello veloce: i nomi propri restano.
-        </p>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={onFixSpacing}
+            disabled={busy}
+            title="Rimuove spazi prima della punteggiatura, li aggiunge dove mancano, sistema parentesi e trattini — deterministico, senza AI"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-medium text-muted transition-colors hover:text-ink disabled:opacity-50"
+          >
+            Spazi e punteggiatura
+          </button>
           <button
             onClick={onRecheck}
             disabled={busy}
@@ -71,17 +127,27 @@ export default function SpellPanel({ report, busy, onFixAll, onRecheck, onLocate
             <IconRefresh width={14} height={14} />
             Ricontrolla
           </button>
-          {suspects.length > 0 && (
+          {skip.size > 0 && (
             <button
-              onClick={onFixAll}
+              onClick={() => onIgnore([...skip])}
               disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-60"
+              title="Le parole escluse non verranno più segnalate (dizionario personale, salvato sul dispositivo)"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-medium text-muted transition-colors hover:text-ink disabled:opacity-50"
             >
-              {busy ? <IconSpinner width={14} height={14} /> : <IconWand width={14} height={14} />}
-              {busy ? 'Correggo…' : 'Correggi tutte con AI'}
+              Non segnalare più ({skip.size})
             </button>
           )}
         </div>
+        {suspects.length > 0 && (
+          <button
+            onClick={() => onFixAll(selected)}
+            disabled={busy || !selected.length}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-60"
+          >
+            {busy ? <IconSpinner width={14} height={14} /> : <IconWand width={14} height={14} />}
+            {busy ? 'Correggo…' : `Correggi ${selected.length} con AI`}
+          </button>
+        )}
       </footer>
     </section>
   );

@@ -24,7 +24,9 @@ import {
   requestSpellFixes,
   validateCorrections,
   applySpellFixes,
+  fixSpacing,
 } from '../lib/spell.js';
+import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import {
   saveSession,
   saveFigures,
@@ -607,7 +609,8 @@ export function usePipeline(settings) {
     setSpellBusy(true);
     try {
       const speller = await loadSpeller();
-      setSpellReport({ suspects: findSuspects(typstCode, speller) });
+      const ignore = new Set(loadSpellIgnore());
+      setSpellReport({ suspects: findSuspects(typstCode, speller, ignore) });
     } catch (e) {
       setSpellReport({ suspects: [], error: e.message || 'Dizionari non disponibili.' });
     } finally {
@@ -618,57 +621,119 @@ export function usePipeline(settings) {
   const closeSpellReport = useCallback(() => setSpellReport(null), []);
 
   /**
+   * Aggiunge parole al dizionario personale (localStorage): non verranno più
+   * segnalate né inviate all'AI, in questa e nelle prossime sessioni.
+   */
+  const ignoreSpellWords = useCallback((words) => {
+    if (!words?.length) return;
+    addSpellIgnore(words);
+    const set = new Set(words.map((w) => w.toLowerCase()));
+    setSpellReport((r) =>
+      r ? { ...r, suspects: (r.suspects || []).filter((s) => !set.has(s.word.toLowerCase())) } : r,
+    );
+  }, []);
+
+  /**
+   * Normalizzazione deterministica di spaziature/punteggiatura (solo prosa,
+   * zone di codice mascherate) + ricompilazione.
+   */
+  const fixPunctuation = useCallback(async () => {
+    if (!typstCode.trim()) return { ok: false, message: 'Nessun codice.' };
+    const { fixed, changes } = fixSpacing(typstCode);
+    if (!changes.length) {
+      return { ok: true, message: 'Spaziatura e punteggiatura già a posto.' };
+    }
+    setTypstCode(fixed);
+    await recompile(fixed);
+    return { ok: true, message: `Spaziatura sistemata: ${changes.join(' · ')}` };
+  }, [typstCode, recompile]);
+
+  /**
    * Correzione rapida di TUTTI i sospetti con un LLM veloce: invia solo
    * parola + contesto (mai il documento), applica le sostituzioni di parola
    * intera, ricompila e ri-esegue il controllo.
    * @returns {Promise<{ok:boolean, message:string}>}
    */
-  const spellFixAll = useCallback(async () => {
-    const suspects = spellReport?.suspects || [];
-    if (!suspects.length) return { ok: true, message: 'Nessuna parola sospetta da correggere.' };
-    setSpellBusy(true);
-    try {
-      // A lotti, per non superare i limiti di output del modello.
-      const proposals = [];
-      for (let i = 0; i < suspects.length; i += 60) {
-        proposals.push(
-          ...(await requestSpellFixes({ settings, entries: suspects.slice(i, i + 60) })),
-        );
+  const spellFixAll = useCallback(
+    async (selectedWords) => {
+      let suspects = spellReport?.suspects || [];
+      // Solo le parole selezionate dall'utente (es. escludendo «Bateson»).
+      if (selectedWords) {
+        const sel = new Set(selectedWords);
+        suspects = suspects.filter((s) => sel.has(s.word));
       }
-      // Guardrail deterministico: si applica solo una parola singola nota ai
-      // dizionari — le allucinazioni dell'LLM veloce vengono scartate.
-      const speller = await loadSpeller();
-      const { ok: corrections, rejected } = validateCorrections(proposals, speller);
-      const { code, applied } = applySpellFixes(typstCode, corrections);
-      if (!applied.length) {
+      if (!suspects.length) return { ok: true, message: 'Nessuna parola selezionata da correggere.' };
+      setSpellBusy(true);
+      try {
+        // A lotti, per non superare i limiti di output del modello.
+        const proposals = [];
+        for (let i = 0; i < suspects.length; i += 60) {
+          proposals.push(
+            ...(await requestSpellFixes({ settings, entries: suspects.slice(i, i + 60) })),
+          );
+        }
+        // Guardrail deterministici: parola singola, nota ai dizionari, e
+        // SOLO tra quelle inviate (mai «correzioni» a parole non richieste).
+        const speller = await loadSpeller();
+        const allowed = new Set(suspects.map((s) => s.word));
+        const { ok: corrections, rejected } = validateCorrections(proposals, speller, allowed);
+        const before = typstCode;
+        const { code, applied } = applySpellFixes(before, corrections);
+        if (!applied.length) {
+          return {
+            ok: true,
+            message:
+              'Nessuna correzione applicata: le parole restanti sembrano nomi ' +
+              'propri o termini tecnici' +
+              (rejected.length
+                ? ` (${rejected.length} proposte dell’AI scartate dai guardrail).`
+                : '.'),
+          };
+        }
+        // Rete di sicurezza: se il documento compilava PRIMA ma non DOPO le
+        // correzioni, si annulla tutto (mai peggiorare la compilazione).
+        try {
+          const svg = await compileToSvg(code, figuresRef.current);
+          setPreviewSvg(svg);
+          setCompileError(null);
+        } catch (eAfter) {
+          let beforeOk = false;
+          try {
+            await compileToSvg(before, figuresRef.current);
+            beforeOk = true;
+          } catch {
+            /* era già rotto prima: le correzioni non c'entrano */
+          }
+          if (beforeOk) {
+            return {
+              ok: false,
+              message:
+                'Correzioni ANNULLATE: avrebbero rotto la compilazione ' +
+                `(${(eAfter.message || '').slice(0, 140)}). Il documento non è stato toccato.`,
+            };
+          }
+          setCompileError(eAfter.message || 'Errore di compilazione Typst.');
+        }
+        setTypstCode(code);
+        const ignore = new Set(loadSpellIgnore());
+        setSpellReport({ suspects: findSuspects(code, speller, ignore) });
         return {
           ok: true,
           message:
-            'Nessuna correzione applicata: le parole restanti sembrano nomi ' +
-            'propri o termini tecnici' +
-            (rejected.length
-              ? ` (${rejected.length} proposte dell’AI scartate dai dizionari).`
-              : '.'),
+            `Corrette ${applied.length} parole: ` +
+            applied
+              .map((a) => `${a.word}→${a.fix}${a.count > 1 ? ` (×${a.count})` : ''}`)
+              .join(' · ') +
+            (rejected.length ? ` · ${rejected.length} proposte scartate dai guardrail` : ''),
         };
+      } catch (e) {
+        return { ok: false, message: e.message || 'Errore nella correzione ortografica.' };
+      } finally {
+        setSpellBusy(false);
       }
-      setTypstCode(code);
-      setSpellReport({ suspects: findSuspects(code, speller) });
-      await recompile(code);
-      return {
-        ok: true,
-        message:
-          `Corrette ${applied.length} parole: ` +
-          applied
-            .map((a) => `${a.word}→${a.fix}${a.count > 1 ? ` (×${a.count})` : ''}`)
-            .join(' · ') +
-          (rejected.length ? ` · ${rejected.length} proposte scartate dai dizionari` : ''),
-      };
-    } catch (e) {
-      return { ok: false, message: e.message || 'Errore nella correzione ortografica.' };
-    } finally {
-      setSpellBusy(false);
-    }
-  }, [spellReport, typstCode, settings, recompile]);
+    },
+    [spellReport, typstCode, settings],
+  );
 
   /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
@@ -921,6 +986,8 @@ export function usePipeline(settings) {
     spellBusy,
     runSpellcheck,
     spellFixAll,
+    ignoreSpellWords,
+    fixPunctuation,
     closeSpellReport,
     resume,
     reset,

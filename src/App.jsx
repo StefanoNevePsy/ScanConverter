@@ -339,10 +339,19 @@ function Workspace({
     setTimeout(() => setAutofixMsg(null), 15000);
   }, [pipe]);
 
-  const handleSpellFixAll = useCallback(async () => {
-    const res = await pipe.spellFixAll();
+  const handleSpellFixAll = useCallback(
+    async (selectedWords) => {
+      const res = await pipe.spellFixAll(selectedWords);
+      setAutofixMsg(res?.message || null);
+      setTimeout(() => setAutofixMsg(null), 15000);
+    },
+    [pipe],
+  );
+
+  const handleFixSpacing = useCallback(async () => {
+    const res = await pipe.fixPunctuation();
     setAutofixMsg(res?.message || null);
-    setTimeout(() => setAutofixMsg(null), 15000);
+    setTimeout(() => setAutofixMsg(null), 12000);
   }, [pipe]);
 
   // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
@@ -438,6 +447,8 @@ function Workspace({
           onRecheck={pipe.runSpellcheck}
           onLocate={locateWord}
           onClose={pipe.closeSpellReport}
+          onIgnore={pipe.ignoreSpellWords}
+          onFixSpacing={handleFixSpacing}
         />
       )}
 

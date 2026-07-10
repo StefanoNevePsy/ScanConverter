@@ -135,11 +135,14 @@ dal browser passano.
 una pagina statica il browser blocca le chiamate dirette, quindi **l'OCR
 Nemotron-Parse, l'elenco modelli NVIDIA e i motori NVIDIA (Typst/GLM/DeepSeek)
 non funzionano dalla webapp** così com'è. In dev il proxy del dev server risolve
-il problema; nell'app Android lo risolve `CapacitorHttp`. Da PC hai due opzioni:
+il problema; nell'app Android lo risolve `CapacitorHttp`. Da PC hai tre opzioni:
 
-1. **Usa l'app Android** per l'OCR e la webapp per rifinire/compilare (le
+1. **Esegui l'app in locale** (`git clone` + `npm install` + `npm run dev`):
+   il dev server include già il proxy verso NVIDIA, quindi **tutto funziona**,
+   OCR compreso — è l'opzione zero-config per l'uso da PC.
+2. **Usa l'app Android** per l'OCR e la webapp per rifinire/compilare (le
    sessioni sono locali a ciascun dispositivo, non sincronizzate).
-2. **Instrada NVIDIA attraverso un tuo piccolo proxy CORS** e imposta
+3. **Instrada NVIDIA attraverso un tuo piccolo proxy CORS** e imposta
    *Impostazioni → Opzioni avanzate → Endpoint NVIDIA NIM* a
    `https://<tuo-proxy>/https://integrate.api.nvidia.com/v1/chat/completions`
    (l'app deriva da sé l'URL `/v1/models`). Esempio di Cloudflare Worker

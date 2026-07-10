@@ -101,6 +101,32 @@ export function loadSettings() {
   };
 }
 
+// Dizionario personale del controllo ortografico: parole (minuscole) che
+// l'utente ha marcato come corrette (nomi propri, termini tecnici) e che non
+// vanno più segnalate né inviate all'AI.
+const SPELL_IGNORE_KEY = 'sc.spellIgnore';
+
+/** @returns {string[]} parole ignorate (minuscole) */
+export function loadSpellIgnore() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SPELL_IGNORE_KEY));
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Aggiunge parole al dizionario personale. @returns {string[]} lista aggiornata */
+export function addSpellIgnore(words) {
+  const cur = new Set(loadSpellIgnore());
+  for (const w of words || []) {
+    if (typeof w === 'string' && w.trim()) cur.add(w.trim().toLowerCase());
+  }
+  const list = [...cur];
+  write(SPELL_IGNORE_KEY, JSON.stringify(list));
+  return list;
+}
+
 function writeInt(key, value, fallback, { min, max }) {
   const n = parseInt(value, 10);
   const clamped = Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;

@@ -102,15 +102,17 @@ const WORD_RE = /\p{L}[\p{L}'’]{2,}/gu;
  * Trova le parole sospette (ignote a entrambi i dizionari) nel codice Typst.
  * @param {string} typst
  * @param {{correct:(w:string)=>boolean}} speller
+ * @param {Set<string>} [ignore] dizionario personale (minuscole): mai segnalate
  * @returns {{word:string,count:number,context:string}[]} ordinate per frequenza
  */
-export function findSuspects(typst, speller) {
+export function findSuspects(typst, speller, ignore = new Set()) {
   const prose = extractProse(typst);
   const seen = new Map(); // parola (forma originale) → {count, context}
   for (const m of prose.matchAll(WORD_RE)) {
     const word = m[0].replace(/['’]$/, '');
     if (word.length < 4) continue;
     if (/^\p{Lu}+$/u.test(word)) continue; // sigle/nomi parlanti in MAIUSCOLO
+    if (ignore.has(word.toLowerCase())) continue; // dizionario personale
     const known = seen.get(word);
     if (known) {
       known.count++;
@@ -194,20 +196,25 @@ export async function requestSpellFixes({ settings, entries, signal }) {
 
 /**
  * Valida le proposte dell'LLM con i dizionari: si accetta SOLO una parola
- * singola che i dizionari conoscono. Blocca deterministicamente le
- * allucinazioni dei modelli deboli (nomi espansi, «correzioni» inventate):
- * l'LLM propone, il dizionario dispone. Le proposte scartate lasciano la
- * parola tra i sospetti, correggibile a mano.
+ * singola che i dizionari conoscono, e SOLO tra le parole effettivamente
+ * inviate (i modelli a volte «correggono» parole mai chieste — es.
+ * block→blocco, che romperebbe #block). L'LLM propone, il dizionario dispone.
+ * Le proposte scartate lasciano la parola tra i sospetti.
  * @param {{word:string,fix:string}[]} corrections
  * @param {{correct:(w:string)=>boolean}} speller
+ * @param {Set<string>} [allowedWords] parole che erano state inviate al modello
  * @returns {{ok:{word:string,fix:string}[], rejected:{word:string,fix:string}[]}}
  */
-export function validateCorrections(corrections, speller) {
+export function validateCorrections(corrections, speller, allowedWords = null) {
   const ok = [];
   const rejected = [];
   for (const c of corrections || []) {
     const fix = (c.fix || '').trim();
     if (!fix || /\s/.test(fix) || fix === c.word) {
+      rejected.push(c);
+      continue;
+    }
+    if (allowedWords && !allowedWords.has(c.word)) {
       rejected.push(c);
       continue;
     }
@@ -221,22 +228,89 @@ export function validateCorrections(corrections, speller) {
 }
 
 /**
+ * Maschera le zone di CODICE (preambolo, stringhe, token #funzione, math,
+ * commenti) con segnaposto, applica `transform` alla sola prosa e ripristina.
+ * Impedisce a qualunque sostituzione testuale di toccare la sintassi Typst.
+ */
+function onProse(source, transform) {
+  const masks = [];
+  const stash = (s, re) =>
+    s.replace(re, (m) => {
+      masks.push(m);
+      return `${masks.length - 1}`;
+    });
+  let s = source;
+  s = stash(s, /^#(set|show|let|import)\b[^\n]*$/gm);
+  s = stash(s, /"[^"\n]*"/g); // stringhe (font, percorsi immagine)
+  s = stash(s, /<!--[\s\S]*?-->/g);
+  s = stash(s, /\$[^$\n]*\$/g); // matematica inline
+  s = stash(s, /#[a-zA-Z][\w.]*/g); // token funzione (#figure, #block…)
+  // Nomi di argomento nelle chiamate («inset:», «left:», «caption:»): sono
+  // codice anche se non preceduti da #.
+  s = stash(s, /(?<=[(,]\s*)[a-zA-Z][\w.-]*(?=\s*:)/g);
+  s = transform(s);
+  return s.replace(/(\d+)/g, (_, i) => masks[Number(i)]);
+}
+
+/**
  * Applica le correzioni come sostituzioni di parola intera (tutte le
- * occorrenze, confini di parola Unicode).
+ * occorrenze, confini di parola Unicode), SOLO nella prosa: le zone di
+ * codice sono mascherate e non possono essere alterate.
  * @param {string} code
  * @param {{word:string,fix:string}[]} corrections
  * @returns {{code:string, applied:{word:string,fix:string,count:number}[]}}
  */
 export function applySpellFixes(code, corrections) {
-  let s = code;
   const applied = [];
-  for (const c of corrections || []) {
-    const escaped = c.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`(?<!\\p{L})${escaped}(?!\\p{L})`, 'gu');
-    const count = (s.match(re) || []).length;
-    if (!count) continue;
-    s = s.replace(re, c.fix);
-    applied.push({ word: c.word, fix: c.fix, count });
-  }
-  return { code: s, applied };
+  const out = onProse(code, (s) => {
+    for (const c of corrections || []) {
+      const escaped = c.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(?<!\\p{L})${escaped}(?!\\p{L})`, 'gu');
+      const count = (s.match(re) || []).length;
+      if (!count) continue;
+      s = s.replace(re, c.fix);
+      applied.push({ word: c.word, fix: c.fix, count });
+    }
+    return s;
+  });
+  return { code: out, applied };
+}
+
+/**
+ * Normalizzazione deterministica di spaziature e punteggiatura nella prosa
+ * (le zone di codice sono mascherate): niente spazi prima di ,.;:!?, spazio
+ * dopo la punteggiatura quando manca, parentesi senza spazi interni,
+ * trattini d'inciso con spazio su entrambi i lati, doppi spazi collassati.
+ * @param {string} source
+ * @returns {{fixed:string, changes:string[]}}
+ */
+export function fixSpacing(source) {
+  const changes = [];
+  const fixed = onProse(source, (s) => {
+    const apply = (re, to, label) => {
+      const n = (s.match(re) || []).length;
+      if (!n) return;
+      s = s.replace(re, to);
+      changes.push(`${n} ${label}`);
+    };
+    apply(/[ \t]+([,;:!?.])/g, '$1', 'spazi prima della punteggiatura rimossi');
+    apply(/([,;])(?=\p{L})/gu, '$1 ', 'spazi dopo virgola/punto e virgola aggiunti');
+    apply(/([!?])(?=\p{L})/gu, '$1 ', 'spazi dopo !/? aggiunti');
+    // Punto a fine frase: solo minuscola.Maiuscola (non tocca sigle «N.B.»,
+    // decimali, nomi file — comunque mascherati se tra virgolette).
+    apply(/(\p{Ll})\.(?=\p{Lu})/gu, '$1. ', 'spazi dopo il punto aggiunti');
+    apply(/\([ \t]+/g, '(', 'spazi dopo parentesi aperta rimossi');
+    apply(/[ \t]+\)/g, ')', 'spazi prima di parentesi chiusa rimossi');
+    // Trattino d'inciso con spazio da un solo lato → spazio su entrambi
+    // (i composti «socio-politico», senza spazi, non vengono toccati).
+    apply(/(\p{L})-[ \t]+(?=\p{L})/gu, '$1 - ', 'trattini d’inciso normalizzati');
+    apply(/(\p{L})[ \t]+-(?=\p{L})/gu, '$1 - ', 'trattini d’inciso normalizzati');
+    // Lineette em/en tra lettere → spazi attorno (i range numerici 1970–80
+    // non c'entrano: qui servono lettere su entrambi i lati).
+    apply(/(\p{L})([—–])(?=\p{L})/gu, '$1 $2 ', 'lineette spaziate');
+    // Doppi spazi a metà riga (l'indentazione a inizio riga resta).
+    apply(/(\S)[ \t]{2,}/g, '$1 ', 'spazi doppi collassati');
+    return s;
+  });
+  return { fixed, changes };
 }
