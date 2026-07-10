@@ -147,6 +147,58 @@ export async function compileToSvg(source, figures = []) {
 }
 
 /**
+ * Localizza un errore di compilazione per BISEZIONE: gli errori di Typst non
+ * riportano la riga (gli span sono id opachi), così su un documento lungo un
+ * «unclosed delimiter» è introvabile. Qui si compilano prefissi crescenti di
+ * paragrafi col compilatore locale (gratis) e si trova il primo blocco che fa
+ * fallire la compilazione: riga e snippet da mostrare all'utente e da passare
+ * alla correzione AI.
+ *
+ * @param {string} source codice Typst che NON compila
+ * @param {{path:string,bytes:Uint8Array}[]} [figures]
+ * @returns {Promise<{line:number,snippet:string}|null>} null se non localizzabile
+ */
+export async function locateTypstError(source, figures = []) {
+  try {
+    await initTypst();
+    for (const fig of figures || []) {
+      if (fig?.path && fig?.bytes) await $typst.mapShadow(fig.path, fig.bytes);
+    }
+    // Paragrafi con la loro riga di partenza (1-based).
+    const paras = [];
+    let line = 1;
+    for (const part of source.split('\n\n')) {
+      paras.push({ text: part, line });
+      line += part.split('\n').length + 1;
+    }
+    if (paras.length < 2) return null;
+
+    const compiles = async (src) => {
+      try {
+        return !!(await $typst.svg({ mainContent: src }));
+      } catch {
+        return false;
+      }
+    };
+    const prefix = (k) => paras.slice(0, k + 1).map((p) => p.text).join('\n\n');
+
+    // Primo indice k il cui prefisso non compila (bisezione: ~log2(N) compile).
+    let lo = 0;
+    let hi = paras.length - 1;
+    if (await compiles(prefix(hi))) return null; // in realtà compila
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (await compiles(prefix(mid))) lo = mid + 1;
+      else hi = mid;
+    }
+    const p = paras[lo];
+    return { line: p.line, snippet: p.text.trim().replace(/\s+/g, ' ').slice(0, 140) };
+  } catch {
+    return null; // best-effort: la localizzazione non deve mai bloccare
+  }
+}
+
+/**
  * Crea un object URL a partire dai byte del PDF, per <iframe> o download.
  * Il chiamante è responsabile della revoca (URL.revokeObjectURL).
  * @param {Uint8Array} bytes

@@ -18,11 +18,18 @@ export const FIX_SYSTEM =
   'alterare il contenuto testuale del documento. Rispondi SOLTANTO con JSON ' +
   'valido, senza alcun altro testo.';
 
-/** Costruisce il messaggio utente con errore + codice. */
-export function buildFixUser(code, error) {
+/** Costruisce il messaggio utente con errore + codice (+ posizione, se nota). */
+export function buildFixUser(code, error, hint) {
   return (
     'Questo codice Typst NON compila.\n\n' +
     `ERRORE DEL COMPILATORE:\n${error}\n\n` +
+    (hint
+      ? 'POSIZIONE INDIZIATA (trovata per bisezione con il compilatore ' +
+        `locale): il primo blocco che fa fallire la compilazione inizia alla ` +
+        `riga ${hint.line} e comincia con: «${hint.snippet}». Concentra la ` +
+        'correzione lì (l’errore può però nascere poco prima, es. un ' +
+        'delimitatore aperto nel blocco precedente).\n\n'
+      : '') +
     'CODICE COMPLETO:\n```typst\n' +
     code +
     '\n```\n\n' +
@@ -103,11 +110,11 @@ export function applyFixes(code, fixes) {
 // Errori transitori (rate limit / servizio saturo) da riprovare con attesa.
 const TRANSIENT_RE = /(^|\D)(429|500|503)(\D|$)|rate.?limit|exhausted|overloaded|unavailable/i;
 
-export async function requestTypstFix({ settings, code, error, signal }) {
+export async function requestTypstFix({ settings, code, error, hint, signal }) {
   let delay = 5000;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await requestOnce({ settings, code, error, signal });
+      return await requestOnce({ settings, code, error, hint, signal });
     } catch (e) {
       if (signal?.aborted || e?.name === 'AbortError') throw e;
       if (attempt >= 2 || !TRANSIENT_RE.test(e.message || '')) throw e;
@@ -117,9 +124,9 @@ export async function requestTypstFix({ settings, code, error, signal }) {
   }
 }
 
-async function requestOnce({ settings, code, error, signal }) {
+async function requestOnce({ settings, code, error, hint, signal }) {
   const engine = settings.fixEngine || 'nvidia';
-  const user = buildFixUser(code, error);
+  const user = buildFixUser(code, error, hint);
   let text;
   if (engine === 'gemini') {
     text = await geminiGenerate({

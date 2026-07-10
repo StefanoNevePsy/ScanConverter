@@ -17,6 +17,9 @@
 function normalize(s) {
   return s
     .toLowerCase()
+    // Scioglie le sillabazioni OCR («quest'ul-timo», «con- cretamente»):
+    // l'LLM le ricompone e non devono contare come differenza.
+    .replace(/([a-zà-ÿ])-\s*([a-zà-ÿ])/g, '$1$2')
     .normalize('NFD')
     .replace(/\p{M}/gu, '') // rimuove i diacritici (perché → perche)
     .replace(/[^a-z0-9\s]/g, ' ')
@@ -28,6 +31,7 @@ function normalize(s) {
 function stripSourceMarkup(md) {
   return md
     .replace(/<!--[\s\S]*?-->/g, ' ') // marcatori di pagina
+    .replace(/<\/?[a-zA-Z][^>]*>/g, ' ') // tag HTML residui (<sup>…</sup>)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, ' $1 ') // figure: resta la didascalia
     .replace(/^#{1,6}[ \t]+/gm, '') // marcatori di titolo
     .replace(/\\begin\{[^}]*\}|\\end\{[^}]*\}/g, ' '); // involucri LaTeX

@@ -9,6 +9,10 @@ import { loadImage, cropToPng } from './figures.js';
 
 const PICTURE_TYPES = new Set(['Picture', 'Figure', 'Image']);
 const CAPTION_TYPES = new Set(['Caption']);
+// Arredo di pagina della scansione (testatine, numeri di pagina): non è
+// contenuto e sporca sia il prompt sia la verifica di fedeltà. Le vere note
+// a piè di pagina (Footnote) invece SONO contenuto e restano.
+const FURNITURE_TYPES = new Set(['Page-header', 'Page-footer']);
 
 const cy = (b) => ((b.bbox?.ymin ?? 0) + (b.bbox?.ymax ?? 0)) / 2;
 
@@ -42,6 +46,23 @@ export function isLikelyArtifact(bbox) {
 const SPEAKER = String.raw`[A-ZÀ-ÖØ-Þ][A-ZÀ-ÖØ-Þ'’.\-]+(?:\s+[A-ZÀ-ÖØ-Þ'’.\-]{2,}){0,3}(?:\s*\([^)\n]{0,100}\))?\s*:`;
 const SPEAKER_LINE_RE = new RegExp(`^[ \\t]{0,3}(?:\\*\\*|__)?${SPEAKER}`);
 const SPEAKER_MIDLINE_RE = new RegExp(`([.!?…»”\\)\\]])[ \\t]+(?=${SPEAKER})`, 'g');
+
+/**
+ * Riconosce l'arredo di pagina: o il tipo dichiarato dall'OCR, oppure —
+ * quando l'OCR lo classifica come Text — un blocco CORTO attaccato al bordo
+ * alto/basso della pagina (testatina con autori, numero di pagina). I veri
+ * paragrafi ai bordi sono lunghi; le note (Footnote) e i titoli
+ * (Section-header/Title) non vengono mai toccati.
+ */
+export function isPageFurniture(b) {
+  if (FURNITURE_TYPES.has(b?.type)) return true;
+  if (b?.type !== 'Text' || !b.bbox) return false;
+  const text = (b.text || '').trim();
+  if (text.length > 90) return false;
+  const nearTop = (b.bbox.ymax ?? 1) < 0.09;
+  const nearBottom = (b.bbox.ymin ?? 0) > 0.93;
+  return nearTop || nearBottom;
+}
 
 /**
  * Normalizza i dialoghi trascritti dall'OCR: ogni battuta introdotta dal nome
@@ -119,6 +140,7 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
   const lines = [];
 
   for (const b of sorted) {
+    if (isPageFurniture(b)) continue; // testatine/numeri di pagina
     if (PICTURE_TYPES.has(b.type) && b.bbox && img) {
       const n = figureCounter.next();
       const path = `/figures/fig-${n}.png`;

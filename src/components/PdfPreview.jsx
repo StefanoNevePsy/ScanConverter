@@ -36,11 +36,15 @@ export default function PdfPreview({ svg, compiling, downloading, onDownload }) 
 
       <div className="relative min-h-0 flex-1 overflow-auto bg-surface-2">
         {svg ? (
-          <div
-            className="mx-auto max-w-3xl p-3 [&_svg]:h-auto [&_svg]:w-full"
-            // eslint-disable-next-line react/no-danger
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
+          // Il documento su "carta" bianca: l'SVG di Typst ha sfondo
+          // trasparente e in tema scuro il testo nero sparirebbe.
+          <div className="mx-auto max-w-3xl p-3">
+            <div
+              className="overflow-hidden rounded-lg bg-white shadow-lg [&_svg]:h-auto [&_svg]:w-full"
+              // eslint-disable-next-line react/no-danger
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          </div>
         ) : (
           <div className="grid size-full place-items-center p-8 text-center">
             <div className="max-w-xs">

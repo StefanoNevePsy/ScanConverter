@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractPageBlocks, toTypstNvidia } from '../lib/nvidia.js';
 import { toTypst } from '../lib/gemini.js';
-import { compileToPdf, compileToSvg, initTypst } from '../lib/typst.js';
+import { compileToPdf, compileToSvg, initTypst, locateTypstError } from '../lib/typst.js';
 import { savePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
@@ -89,6 +89,17 @@ export function usePipeline(settings) {
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
 
   const abortRef = useRef(null);
+
+  /**
+   * Arricchisce un errore di compilazione con la posizione trovata per
+   * bisezione (gli errori Typst non hanno numero di riga).
+   */
+  const describeCompileError = useCallback(async (source, message) => {
+    const loc = await locateTypstError(source, figuresRef.current);
+    return loc
+      ? `${message} — L’errore è vicino alla riga ${loc.line}: «${loc.snippet}»`
+      : message;
+  }, []);
 
   // Raccoglie i warning di fedeltà dai chunk della sessione corrente.
   const collectFidelity = useCallback(() => {
@@ -331,12 +342,14 @@ export function usePipeline(settings) {
         if (signal.aborted) return;
         // Errore di compilazione Typst: non fatale, l'editor resta usabile.
         setStatus((x) => ({ ...x, compile: 'error' }));
-        setCompileError(e.message || 'Errore di compilazione Typst.');
+        setCompileError(
+          await describeCompileError(combined, e.message || 'Errore di compilazione Typst.'),
+        );
         setActiveStep(null);
         setPhase('done');
       }
     },
-    [persist, collectFidelity],
+    [persist, collectFidelity, describeCompileError],
   );
 
   /** Esegue la fase 2+3 sulla sessione corrente (fresh o resume). */
@@ -434,13 +447,15 @@ export function usePipeline(settings) {
         setPreviewSvg(svg);
         return true;
       } catch (e) {
-        setCompileError(e.message || 'Errore di compilazione Typst.');
+        setCompileError(
+          await describeCompileError(source, e.message || 'Errore di compilazione Typst.'),
+        );
         return false;
       } finally {
         setCompiling(false);
       }
     },
-    [typstCode],
+    [typstCode, describeCompileError],
   );
 
   /** Compila il PDF (on-demand) e lo salva/condivide. */
@@ -531,11 +546,14 @@ export function usePipeline(settings) {
         } catch (e) {
           lastError = e.message || 'Errore di compilazione Typst.';
           if (round === 2) break; // niente più tentativi AI
-          const res = await requestTypstFix({ settings, code, error: lastError });
+          // Localizza l'errore per bisezione: il modello riceve riga e blocco
+          // indiziato (gli errori Typst non hanno posizione).
+          const loc = await locateTypstError(code, figuresRef.current);
+          const res = await requestTypstFix({ settings, code, error: lastError, hint: loc });
           const { code: next, applied } = applyFixes(code, res.fixes);
           if (!applied.length) {
             setTypstCode(code);
-            setCompileError(lastError);
+            setCompileError(await describeCompileError(code, lastError));
             return {
               ok: false,
               message:
@@ -549,14 +567,16 @@ export function usePipeline(settings) {
         }
       }
       // Tre compilazioni fallite: mantieni comunque le modifiche applicate
-      // (spesso avvicinano alla soluzione) e mostra l'errore residuo.
+      // (spesso avvicinano alla soluzione) e mostra l'errore residuo con la
+      // posizione localizzata per bisezione.
+      const described = await describeCompileError(code, lastError);
       setTypstCode(code);
-      setCompileError(lastError);
+      setCompileError(described);
       return {
         ok: false,
         message:
           (log.length ? `Applicate: ${log.join(' · ')} — ` : '') +
-          `errore residuo: ${lastError}`,
+          `errore residuo: ${described}`,
       };
     } catch (e) {
       setCompileError(e.message || 'Errore nella correzione AI.');
@@ -564,7 +584,7 @@ export function usePipeline(settings) {
     } finally {
       setAiFixing(false);
     }
-  }, [typstCode, settings]);
+  }, [typstCode, settings, describeCompileError]);
 
   /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
