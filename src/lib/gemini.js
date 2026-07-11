@@ -19,14 +19,37 @@ export const SYSTEM_PROMPT =
   'codice Typst all’interno di un blocco di codice pulito, senza altre ' +
   'spiegazioni.';
 
+// Direttiva di correzione conservativa dei refusi OCR, iniettata nella fase di
+// strutturazione quando l'utente attiva l'opzione. Il modello ha sotto gli
+// occhi tutto il chunk (contesto di frase), quindi può risolvere ciò che il
+// dizionario per-parola non vede: omografi accentati, parole-funzione saltate,
+// virgolette. Volutamente prudente per non intaccare la fedeltà al testo.
+export const TYPO_FIX_DIRECTIVE =
+  'CORREZIONE REFUSI OCR (conservativa): il testo proviene da un OCR e può ' +
+  'contenere errori di scansione. Mentre converti, CORREGGI SOLO gli errori ' +
+  'materiali palesi, sfruttando il contesto della frase:\n' +
+  '- accenti caduti o errati: «e»→«è» quando è il verbo essere, «piu»→«più», ' +
+  '«perche»→«perché», «si»→«sì» quando è affermazione, «citta»→«città», ' +
+  '«E»→«È» a inizio frase;\n' +
+  '- parole-funzione brevi saltate dall’OCR dove resta un vuoto/doppio spazio ' +
+  '(spesso la «è»): reinseriscile;\n' +
+  '- parole spezzate o fuse dall’OCR: «Eravam o»→«Eravamo», «sistem a»→' +
+  '«sistema», «Pra ta»→«Prata»;\n' +
+  '- virgolette/caporali «» non bilanciate e punteggiatura palesemente errata.\n' +
+  'NON riscrivere, NON parafrasare, NON tradurre, NON modernizzare, NON ' +
+  'cambiare la scelta lessicale dell’autore né lo stile: solo refusi ' +
+  'materiali. Nel dubbio, lascia il testo IDENTICO.';
+
 /**
  * Costruisce le istruzioni tecniche (font, gerarchia, tabelle, vincoli Typst)
  * incluse anche nel "Copia prompt + testo" per gli LLM esterni. `styleHint`
- * riporta le scelte di impaginazione dell'utente.
+ * riporta le scelte di impaginazione dell'utente; `fixTypos` aggiunge la
+ * direttiva di correzione conservativa dei refusi OCR.
  * @param {string} [styleHint]
+ * @param {{fixTypos?:boolean}} [opts]
  * @returns {string}
  */
-export function buildGuidance(styleHint) {
+export function buildGuidance(styleHint, opts = {}) {
   return (
     'Font disponibili nel compilatore (usa SOLO questi nomi ESATTI): serif ' +
     '"Libertinus Serif", "New Computer Modern", "PT Serif"; sans-serif ' +
@@ -83,6 +106,7 @@ export function buildGuidance(styleHint) {
     'prima occorrenza: non duplicarla.\n' +
     'COMPLETEZZA: trascrivi INTEGRALMENTE il contenuto fornito, senza ' +
     'riassumere, accorciare né omettere frasi, esempi o paragrafi.' +
+    (opts.fixTypos ? '\n\n' + TYPO_FIX_DIRECTIVE : '') +
     (styleHint
       ? '\n\nRICHIESTA DI STILE PRIORITARIA dell’utente (rispettala): ' + styleHint
       : '')
@@ -97,7 +121,7 @@ export function buildGuidance(styleHint) {
  * @param {AbortSignal} [params.signal]
  * @returns {Promise<string>} codice Typst
  */
-export async function toTypst({ apiKey, model, rawText, styleHint, continuation, fidelityNote, signal }) {
+export async function toTypst({ apiKey, model, rawText, styleHint, continuation, fidelityNote, fixTypos, signal }) {
   if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
   if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
 
@@ -112,7 +136,7 @@ export async function toTypst({ apiKey, model, rawText, styleHint, continuation,
   const endpoint = `${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   const guidance =
-    buildGuidance(styleHint) +
+    buildGuidance(styleHint, { fixTypos }) +
     (continuation
       ? '\n\nCONTINUAZIONE DI DOCUMENTO: il documento è GIÀ iniziato. Il ' +
         'preambolo Typst è già definito, NON ripeterlo e NON usare #set / ' +

@@ -19,6 +19,8 @@ const KEYS = {
   pdfTextMode: 'sc.pdfTextMode',
   maxPages: 'sc.maxPages',
   chunkSize: 'sc.chunkSize',
+  fixTypos: 'sc.fixTypos',
+  ocrLongSide: 'sc.ocrLongSide',
 };
 
 export const DEFAULTS = {
@@ -46,6 +48,13 @@ export const DEFAULTS = {
   pdfTextMode: 'auto',
   maxPages: 20, // pagine PDF per singolo caricamento
   chunkSize: 5000, // caratteri per chunk inviato a Gemini
+  // Correzione conservativa dei refusi OCR (accenti, parole saltate,
+  // virgolette) durante la strutturazione in Typst. Attiva di default: usa il
+  // contesto di frase che il dizionario per-parola non ha.
+  fixTypos: true,
+  // Lato lungo (px) di rasterizzazione dei PDF per l'OCR. Più alto = più
+  // accurato su scansioni pessime, ma payload/tempi maggiori. 2600 ≈ 320 DPI.
+  ocrLongSide: 2600,
 };
 
 // Valori ammessi per il motore Typst.
@@ -55,6 +64,7 @@ const PDF_MODES = ['auto', 'ocr'];
 const LIMITS = {
   maxPages: { min: 1, max: 2000 },
   chunkSize: { min: 1000, max: 30000 },
+  ocrLongSide: { min: 1000, max: 5000 },
 };
 
 function readInt(key, fallback, { min, max }) {
@@ -115,7 +125,17 @@ export function loadSettings() {
       : DEFAULTS.pdfTextMode,
     maxPages: readInt(KEYS.maxPages, DEFAULTS.maxPages, LIMITS.maxPages),
     chunkSize: readInt(KEYS.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize),
+    fixTypos: readBool(KEYS.fixTypos, DEFAULTS.fixTypos),
+    ocrLongSide: readInt(KEYS.ocrLongSide, DEFAULTS.ocrLongSide, LIMITS.ocrLongSide),
   };
+}
+
+/** Legge un booleano ('1'/'0'); assente → fallback. */
+function readBool(key, fallback) {
+  const v = read(key, '');
+  if (v === '1') return true;
+  if (v === '0') return false;
+  return fallback;
 }
 
 // Dizionario personale del controllo ortografico: parole (minuscole) che
@@ -164,4 +184,6 @@ export function saveSettings(s) {
   write(KEYS.pdfTextMode, PDF_MODES.includes(s.pdfTextMode) ? s.pdfTextMode : DEFAULTS.pdfTextMode);
   writeInt(KEYS.maxPages, s.maxPages, DEFAULTS.maxPages, LIMITS.maxPages);
   writeInt(KEYS.chunkSize, s.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize);
+  write(KEYS.fixTypos, s.fixTypos ? '1' : '0');
+  writeInt(KEYS.ocrLongSide, s.ocrLongSide, DEFAULTS.ocrLongSide, LIMITS.ocrLongSide);
 }

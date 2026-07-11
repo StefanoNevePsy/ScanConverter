@@ -294,6 +294,7 @@ export function usePipeline(settings) {
               styleHint: args.styleHint,
               continuation: args.continuation,
               fidelityNote: args.fidelityNote,
+              fixTypos: settings.fixTypos,
               signal,
             })
           : toTypst({
@@ -303,6 +304,7 @@ export function usePipeline(settings) {
               styleHint: args.styleHint,
               continuation: args.continuation,
               fidelityNote: args.fidelityNote,
+              fixTypos: settings.fixTypos,
               signal,
             });
       return withRetry(call, signal, (secs) =>
@@ -1278,6 +1280,7 @@ export function usePipeline(settings) {
           setDetail('Rendering del PDF…');
           pageImages = await renderPdfToImages(pdfBuffer, {
             maxPages: settings.maxPages,
+            longSide: settings.ocrLongSide,
             onProgress: (p, t) => setDetail(`Rendering pagina ${p}/${t}…`),
           });
         } else {

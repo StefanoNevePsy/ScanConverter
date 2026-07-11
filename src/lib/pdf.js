@@ -40,11 +40,17 @@ export function copyBytes(data) {
  * @param {ArrayBuffer|Uint8Array} data  contenuto del PDF
  * @param {object} [opts]
  * @param {number} [opts.maxPages]       numero massimo di pagine da renderizzare
+ * @param {number} [opts.longSide]       lato lungo target in px (default 2048).
+ *   Valori più alti = OCR più accurato su scansioni pessime, ma payload e
+ *   tempi maggiori.
  * @param {(page:number,total:number)=>void} [opts.onProgress]
  * @returns {Promise<string[]>} data URL PNG, una per pagina
  */
 export async function renderPdfToImages(data, opts = {}) {
   const { maxPages = MAX_PDF_PAGES, onProgress } = opts;
+  // Limiti prudenti: sotto ~1000px l'OCR degrada, sopra ~5000px i payload
+  // rischiano i limiti delle API (Gemini inline_data, NIM).
+  const longSide = Math.min(5000, Math.max(1000, opts.longSide || TARGET_LONG_SIDE));
   const bytes = copyBytes(data);
 
   const loadingTask = pdfjsLib.getDocument({ data: bytes, wasmUrl: WASM_URL });
@@ -56,7 +62,7 @@ export async function renderPdfToImages(data, opts = {}) {
       onProgress?.(i, total);
       const page = await pdf.getPage(i);
       const base = page.getViewport({ scale: 1 });
-      const scale = TARGET_LONG_SIDE / Math.max(base.width, base.height);
+      const scale = longSide / Math.max(base.width, base.height);
       const viewport = page.getViewport({ scale });
 
       const canvas = document.createElement('canvas');

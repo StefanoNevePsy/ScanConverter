@@ -14,7 +14,7 @@ import { chunkDocument } from '../lib/session.js';
 
 const CHUNK_SIZE = 6000;
 
-export default function OcrTextPanel({ text, styleHint }) {
+export default function OcrTextPanel({ text, styleHint, fixTypos }) {
   const [open, setOpen] = useState(false);
   const [idx, setIdx] = useState(0);
   const chunks = useMemo(() => chunkDocument(text || '', CHUNK_SIZE), [text]);
@@ -28,7 +28,7 @@ export default function OcrTextPanel({ text, styleHint }) {
       return (
         SYSTEM_PROMPT +
         '\n\n' +
-        buildGuidance(styleHint) +
+        buildGuidance(styleHint, { fixTypos }) +
         (total > 1
           ? '\n\nNOTA: il documento verrà fornito in ' +
             total +

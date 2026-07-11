@@ -506,7 +506,9 @@ function Workspace({
         />
       )}
 
-      {pipe.rawText && <OcrTextPanel text={pipe.rawText} styleHint={styleHint} />}
+      {pipe.rawText && (
+        <OcrTextPanel text={pipe.rawText} styleHint={styleHint} fixTypos={settings.fixTypos} />
+      )}
 
       {/* Selettore a schede (solo mobile/tablet stretto) */}
       <div className="flex items-center gap-1 rounded-lg border border-border bg-surface p-1 lg:hidden">

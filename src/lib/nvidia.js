@@ -189,12 +189,12 @@ export async function nvidiaChat({ apiKey, endpoint, model, system, user, temper
   return stripReasoning(text);
 }
 
-export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHint, continuation, fidelityNote, signal }) {
+export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHint, continuation, fidelityNote, fixTypos, signal }) {
   if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
   if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
 
   const guidance =
-    buildGuidance(styleHint) +
+    buildGuidance(styleHint, { fixTypos }) +
     (continuation
       ? '\n\nCONTINUAZIONE DI DOCUMENTO: il documento è GIÀ iniziato. Il ' +
         'preambolo Typst è già definito, NON ripeterlo e NON usare #set / ' +

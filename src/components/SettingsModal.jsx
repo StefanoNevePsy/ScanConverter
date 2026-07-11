@@ -245,6 +245,33 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             />
           )}
 
+          {/* Correzione conservativa dei refusi OCR durante la strutturazione. */}
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-ink">
+              Correggi i refusi durante la strutturazione
+            </span>
+            <span className="mb-2 block text-xs text-faint">
+              Il modello che genera il Typst corregge anche accenti («è/e»),
+              parole saltate e virgolette, usando il contesto della frase. In
+              caso di dubbio lascia il testo invariato. Non intacca la verifica
+              di fedeltà (che ignora gli accenti).
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <EngineButton
+                active={form.fixTypos !== false}
+                onClick={() => setForm((f) => ({ ...f, fixTypos: true }))}
+                title="Attiva"
+                sub="consigliato su scansioni pessime"
+              />
+              <EngineButton
+                active={form.fixTypos === false}
+                onClick={() => setForm((f) => ({ ...f, fixTypos: false }))}
+                title="Disattiva"
+                sub="trascrizione letterale dell’OCR"
+              />
+            </div>
+          </div>
+
           <details className="group rounded-lg border border-border bg-surface-2/60">
             <summary className="cursor-pointer select-none px-3.5 py-2.5 text-sm font-medium text-muted hover:text-ink transition-colors">
               Opzioni avanzate
@@ -360,6 +387,27 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                   />
                 </div>
               </div>
+              {/* Risoluzione di rasterizzazione per l'OCR (solo PDF). */}
+              <div>
+                <span className="mb-1.5 block text-sm font-medium text-ink">
+                  Risoluzione OCR (PDF)
+                </span>
+                <span className="mb-2 block text-xs text-faint">
+                  Più alta = OCR più accurato sulle scansioni difficili, ma
+                  pagine più pesanti e lente. Non incide sulle immagini caricate
+                  direttamente.
+                </span>
+                <select
+                  value={String(form.ocrLongSide ?? DEFAULTS.ocrLongSide)}
+                  onChange={(e) => setForm((f) => ({ ...f, ocrLongSide: parseInt(e.target.value, 10) }))}
+                  className="w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink transition-colors focus:border-primary focus:outline-none"
+                >
+                  <option value="2048">Standard · ~250 DPI (2048 px)</option>
+                  <option value="2600">Alta · ~320 DPI (2600 px)</option>
+                  <option value="3200">Molto alta · ~390 DPI (3200 px)</option>
+                  <option value="4000">Massima · ~490 DPI (4000 px)</option>
+                </select>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field
                   label="Max pagine PDF"
@@ -427,12 +475,61 @@ function EngineButton({ active, onClick, title, sub }) {
 }
 
 /**
- * Campo modello con datalist auto-aggiornante: l'utente può scegliere dagli
- * id recuperati dall'API oppure digitarne uno a mano. Il bottone ↻ ricarica.
+ * Campo modello con elenco a discesa PROPRIO (non il datalist nativo, che su
+ * macOS non scorre): l'utente digita per filtrare o sceglie dalla lista, che
+ * scorre autonomamente (max-height + overflow) ed è renderizzata nel flusso
+ * così il contenitore scrollabile del modale non la taglia. Il bottone ↻
+ * ricarica gli id dall'API. Si può sempre digitare un id a mano.
  */
-function ModelSelect({ label, hint, value, onChange, options, loading, error, onRefresh, placeholder, listId }) {
+function ModelSelect({ label, hint, value, onChange, options, loading, error, onRefresh, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const boxRef = useRef(null);
+  const listRef = useRef(null);
+
+  // Chiudi la tendina cliccando fuori dal campo.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const q = (value || '').trim().toLowerCase();
+  const filtered = q ? options.filter((m) => m.toLowerCase().includes(q)) : options;
+  const list = filtered.length ? filtered : options; // filtro a vuoto → mostra tutto
+
+  const commit = (m) => {
+    onChange({ target: { value: m } });
+    setOpen(false);
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setOpen(true);
+      setActive((a) => Math.min(list.length - 1, a + 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActive((a) => Math.max(0, a - 1));
+    } else if (e.key === 'Enter' && open && list[active]) {
+      e.preventDefault();
+      commit(list[active]);
+    } else if (e.key === 'Escape' && open) {
+      e.preventDefault();
+      setOpen(false);
+    }
+  };
+
+  // Tieni l'elemento evidenziato nella parte visibile durante la navigazione.
+  useEffect(() => {
+    if (open && listRef.current) listRef.current.children[active]?.scrollIntoView({ block: 'nearest' });
+  }, [active, open]);
+
   return (
-    <label className="block">
+    <div className="block" ref={boxRef}>
       <span className="mb-1.5 flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-ink">{label}</span>
         <button
@@ -447,22 +544,57 @@ function ModelSelect({ label, hint, value, onChange, options, loading, error, on
         </button>
       </span>
       {hint && <span className="mb-2 block text-xs text-faint">{hint}</span>}
-      <input
-        list={listId}
-        value={value}
-        onChange={onChange}
-        placeholder={placeholder}
-        className="w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 font-mono text-[13px] text-ink placeholder:text-faint transition-colors focus:border-primary focus:outline-none"
-        autoComplete="off"
-        spellCheck={false}
-      />
-      <datalist id={listId}>
-        {options.map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
+      <div className="relative">
+        <input
+          value={value}
+          onChange={(e) => {
+            onChange(e);
+            setOpen(true);
+            setActive(0);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+          placeholder={placeholder}
+          className="w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 pr-9 font-mono text-[13px] text-ink placeholder:text-faint transition-colors focus:border-primary focus:outline-none"
+          autoComplete="off"
+          spellCheck={false}
+          role="combobox"
+          aria-expanded={open}
+        />
+        <button
+          type="button"
+          tabIndex={-1}
+          onClick={() => setOpen((v) => !v)}
+          aria-label={open ? 'Nascondi elenco' : 'Mostra elenco'}
+          className="absolute inset-y-0 right-0 grid w-9 place-items-center text-muted hover:text-ink transition-colors"
+        >
+          <span className={`text-[10px] transition-transform ${open ? 'rotate-180' : ''}`}>▼</span>
+        </button>
+      </div>
+      {open && list.length > 0 && (
+        <ul
+          ref={listRef}
+          className="mt-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-surface-2 py-1 shadow-lg"
+        >
+          {list.map((m, i) => (
+            <li key={m}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()} // non perdere il focus dell'input
+                onMouseEnter={() => setActive(i)}
+                onClick={() => commit(m)}
+                className={`block w-full truncate px-3 py-1.5 text-left font-mono text-[13px] transition-colors ${
+                  i === active ? 'bg-primary-soft text-ink' : 'text-muted hover:text-ink'
+                }`}
+              >
+                {m}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {error && <span className="mt-1.5 block text-xs text-danger">{error}</span>}
-    </label>
+    </div>
   );
 }
 
