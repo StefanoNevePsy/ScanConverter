@@ -104,10 +104,13 @@ export default function App() {
     if (ok) lastCompiledRef.current = pipe.typstCode;
   }, [pipe]);
 
-  const download = useCallback(() => {
-    const base = (file?.name || 'documento').replace(/\.[^.]+$/, '');
-    pipe.downloadPdf(`${base}-typst`);
-  }, [pipe, file]);
+  const download = useCallback(
+    (mode) => {
+      const base = (file?.name || 'documento').replace(/\.[^.]+$/, '');
+      pipe.downloadPdf(`${base}-typst`, mode);
+    },
+    [pipe, file],
+  );
 
   const startOver = useCallback(() => {
     pipe.reset();

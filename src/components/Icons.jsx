@@ -48,6 +48,15 @@ export const IconCheck = (p) => (
   </svg>
 );
 
+export const IconShare = (p) => (
+  <svg {...base} {...p}>
+    <circle cx="18" cy="5" r="3" />
+    <circle cx="6" cy="12" r="3" />
+    <circle cx="18" cy="19" r="3" />
+    <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+  </svg>
+);
+
 export const IconSpell = (p) => (
   <svg {...base} {...p}>
     <path d="M3 15l4-9 4 9" />

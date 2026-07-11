@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractPageBlocks, toTypstNvidia } from '../lib/nvidia.js';
 import { toTypst } from '../lib/gemini.js';
 import { compileToPdf, compileToSvg, initTypst, locateTypstError } from '../lib/typst.js';
-import { savePdf } from '../lib/download.js';
+import { savePdf, sharePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assemble.js';
@@ -774,15 +774,22 @@ export function usePipeline(settings) {
     [typstCode, describeCompileError],
   );
 
-  /** Compila il PDF (on-demand) e lo salva/condivide. */
+  /**
+   * Compila il PDF (on-demand) e lo consegna.
+   * @param {string} fileName
+   * @param {'save'|'share'} [mode] su nativo: 'save' apre il "Salva con nome"
+   *        di sistema (scelta cartella/nome), 'share' il foglio di
+   *        condivisione. Sul web entrambe scaricano il file.
+   */
   const downloadPdf = useCallback(
-    async (fileName) => {
+    async (fileName, mode = 'save') => {
       if (!typstCode.trim()) return;
       setDownloading(true);
       setCompileError(null);
       try {
         const bytes = await compileToPdf(typstCode, figuresRef.current);
-        await savePdf(bytes, fileName || 'documento');
+        if (mode === 'share') await sharePdf(bytes, fileName || 'documento');
+        else await savePdf(bytes, fileName || 'documento');
       } catch (e) {
         setCompileError(e.message || 'Errore nella generazione del PDF.');
       } finally {

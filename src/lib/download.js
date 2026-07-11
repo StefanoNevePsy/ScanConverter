@@ -2,13 +2,19 @@
   Salvataggio del PDF, cross-platform.
 
   Sul web basta un blob + <a download>. Nella WebView Android quel meccanismo
-  NON funziona: si scrive il file con Filesystem e lo si condivide/apre con il
-  foglio di condivisione nativo (da lì l'utente può salvarlo o aprirlo).
+  NON funziona: le due vie native sono
+    - SALVA: dialogo di sistema "Salva con nome" (Storage Access Framework,
+      plugin locale SaveFile) — l'utente sceglie cartella e nome in Files,
+      senza permessi di storage;
+    - CONDIVIDI: scrittura in cache + foglio di condivisione nativo.
 */
 
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
+
+// Plugin locale Android (android/.../SaveFilePlugin.java): ACTION_CREATE_DOCUMENT.
+const SaveFile = registerPlugin('SaveFile');
 
 function bytesToBase64(bytes) {
   let binary = '';
@@ -19,32 +25,32 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+const withPdfExt = (name) => (name.endsWith('.pdf') ? name : `${name}.pdf`);
+
 /**
- * Salva/condivide i byte del PDF con il nome indicato.
+ * Salva il PDF sul dispositivo.
+ * - Web: download classico via blob.
+ * - Nativo: dialogo di sistema "Salva con nome" (scelta di cartella e nome).
  * @param {Uint8Array} bytes
  * @param {string} fileName
+ * @returns {Promise<{cancelled?:boolean}>} cancelled=true se l'utente ha annullato
  */
 export async function savePdf(bytes, fileName) {
-  const name = fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`;
+  const name = withPdfExt(fileName);
 
   if (Capacitor.isNativePlatform()) {
-    // Scrive nella cache e apre il foglio di condivisione nativo.
-    const res = await Filesystem.writeFile({
-      path: name,
-      data: bytesToBase64(bytes),
-      directory: Directory.Cache,
-    });
     try {
-      await Share.share({
-        title: name,
-        text: name,
-        url: res.uri,
+      await SaveFile.save({
+        name,
+        mime: 'application/pdf',
+        data: bytesToBase64(bytes),
       });
-    } catch {
-      // L'utente ha annullato la condivisione: il file resta comunque salvato
-      // nella cache dell'app.
+      return {};
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (/cancel/i.test(msg)) return { cancelled: true };
+      throw new Error(`Salvataggio non riuscito: ${msg}`);
     }
-    return;
   }
 
   // Web: download classico via blob.
@@ -57,4 +63,34 @@ export async function savePdf(bytes, fileName) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return {};
+}
+
+/**
+ * Condivide il PDF con il foglio di condivisione nativo (solo su nativo:
+ * scrive in cache e apre lo share sheet; sul web ricade sul download).
+ * @param {Uint8Array} bytes
+ * @param {string} fileName
+ */
+export async function sharePdf(bytes, fileName) {
+  const name = withPdfExt(fileName);
+
+  if (!Capacitor.isNativePlatform()) return savePdf(bytes, fileName);
+
+  const res = await Filesystem.writeFile({
+    path: name,
+    data: bytesToBase64(bytes),
+    directory: Directory.Cache,
+  });
+  try {
+    await Share.share({ title: name, text: name, url: res.uri });
+  } catch {
+    // L'utente ha annullato la condivisione: nessun errore da mostrare.
+  }
+  return {};
+}
+
+/** True se siamo nell'app nativa (per mostrare Salva + Condividi separati). */
+export function isNativeApp() {
+  return Capacitor.isNativePlatform();
 }

@@ -1,12 +1,16 @@
 import { useMemo } from 'react';
-import { IconDownload, IconSpinner, IconFile } from './Icons.jsx';
+import { IconDownload, IconSpinner, IconFile, IconShare } from './Icons.jsx';
+import { isNativeApp } from '../lib/download.js';
 
 /**
  * Anteprima a colonna destra. Renderizza l'SVG vettoriale prodotto da Typst
  * (funziona ovunque, anche nella WebView Android dove l'<iframe> PDF resta
- * bianco). Il download compila il PDF su richiesta e lo salva/condivide.
+ * bianco). Il PDF viene compilato su richiesta: sul web si scarica; nell'app
+ * nativa "Salva" apre il dialogo di sistema con scelta di cartella e nome,
+ * "Condividi" il foglio di condivisione.
  */
 export default function PdfPreview({ svg, compiling, downloading, onDownload }) {
+  const native = isNativeApp();
   // Rende l'SVG responsivo: larghezza 100%, altezza automatica.
   const html = useMemo(() => {
     if (!svg) return '';
@@ -24,14 +28,28 @@ export default function PdfPreview({ svg, compiling, downloading, onDownload }) 
           <h2 className="text-sm font-medium text-ink">Anteprima</h2>
           <span className="text-xs text-faint">vettoriale</span>
         </div>
-        <button
-          onClick={onDownload}
-          disabled={!svg || downloading}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {downloading ? <IconSpinner width={14} height={14} /> : <IconDownload width={14} height={14} />}
-          {downloading ? 'Genero…' : 'Scarica PDF'}
-        </button>
+        <div className="flex items-center gap-1.5">
+          {native && (
+            <button
+              onClick={() => onDownload('share')}
+              disabled={!svg || downloading}
+              title="Condividi il PDF (foglio di condivisione)"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <IconShare width={14} height={14} />
+              Condividi
+            </button>
+          )}
+          <button
+            onClick={() => onDownload('save')}
+            disabled={!svg || downloading}
+            title={native ? 'Salva in Files: scegli cartella e nome' : 'Scarica il PDF'}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {downloading ? <IconSpinner width={14} height={14} /> : <IconDownload width={14} height={14} />}
+            {downloading ? 'Genero…' : native ? 'Salva PDF' : 'Scarica PDF'}
+          </button>
+        </div>
       </header>
 
       <div className="relative min-h-0 flex-1 overflow-auto bg-surface-2">
