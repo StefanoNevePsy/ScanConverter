@@ -202,6 +202,7 @@ export default function App() {
             file={file}
             previewUrl={previewUrl}
             pipe={pipe}
+            fixTypos={settings.fixTypos}
             livePreview={livePreview}
             onToggleLive={() => setLivePreview((v) => !v)}
             onCompile={manualCompile}
@@ -335,6 +336,7 @@ function Workspace({
   file,
   previewUrl,
   pipe,
+  fixTypos,
   livePreview,
   onToggleLive,
   onCompile,
@@ -507,7 +509,7 @@ function Workspace({
       )}
 
       {pipe.rawText && (
-        <OcrTextPanel text={pipe.rawText} styleHint={styleHint} fixTypos={settings.fixTypos} />
+        <OcrTextPanel text={pipe.rawText} styleHint={styleHint} fixTypos={fixTypos} />
       )}
 
       {/* Selettore a schede (solo mobile/tablet stretto) */}
