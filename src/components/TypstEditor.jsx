@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand, IconSpell } from './Icons.jsx';
+import { IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand, IconSpell, IconText } from './Icons.jsx';
 import CopyButton from './CopyButton.jsx';
 
 // Altezza riga dell'editor (leading-6): serve per centrare i risultati.
@@ -19,6 +19,9 @@ export default function TypstEditor({
   aiFixing,
   onSpellcheck,
   spellBusy,
+  onProofread,
+  proofreadBusy,
+  proofreadDetail,
   searchRequest,
   compiling,
   error,
@@ -153,6 +156,20 @@ export default function TypstEditor({
               className="rounded-lg bg-surface-2 p-1.5 text-ink transition-colors hover:bg-surface-3 disabled:opacity-50"
             >
               {spellBusy ? <IconSpinner width={14} height={14} /> : <IconSpell width={14} height={14} />}
+            </button>
+          )}
+          {onProofread && (
+            <button
+              onClick={onProofread}
+              disabled={!value.trim() || proofreadBusy}
+              title="Rilettura AI (italiano): ripristina accenti «è/e», parole saltate e virgolette"
+              aria-label="Rilettura AI"
+              className="inline-flex items-center gap-1 rounded-lg bg-surface-2 px-2 py-1.5 text-ink transition-colors hover:bg-surface-3 disabled:opacity-50"
+            >
+              {proofreadBusy ? <IconSpinner width={14} height={14} /> : <IconText width={14} height={14} />}
+              {proofreadBusy && proofreadDetail && (
+                <span className="text-xs tabular-nums">{proofreadDetail}</span>
+              )}
             </button>
           )}
           <button

@@ -383,6 +383,12 @@ function Workspace({
     setTimeout(() => setAutofixMsg(null), 12000);
   }, [pipe]);
 
+  const handleProofread = useCallback(async () => {
+    const res = await pipe.proofreadAI();
+    setAutofixMsg(res?.message || null);
+    setTimeout(() => setAutofixMsg(null), 18000);
+  }, [pipe]);
+
   // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
   const locateWord = useCallback((word) => {
     setMobileTab('code');
@@ -545,6 +551,9 @@ function Workspace({
             aiFixing={pipe.aiFixing}
             onSpellcheck={pipe.runSpellcheck}
             spellBusy={pipe.spellBusy}
+            onProofread={handleProofread}
+            proofreadBusy={pipe.proofreadBusy}
+            proofreadDetail={pipe.proofreadDetail}
             searchRequest={searchReq}
             compiling={pipe.compiling}
             error={pipe.compileError}

@@ -28,6 +28,7 @@ import {
   applySpellFixes,
   fixSpacing,
 } from '../lib/spell.js';
+import { proofreadBody } from '../lib/proofread.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import {
   saveSession,
@@ -114,6 +115,8 @@ export function usePipeline(settings) {
   const [aiFixing, setAiFixing] = useState(false);
   const [spellReport, setSpellReport] = useState(null); // {suspects, error?} | null
   const [spellBusy, setSpellBusy] = useState(false);
+  const [proofreadBusy, setProofreadBusy] = useState(false);
+  const [proofreadDetail, setProofreadDetail] = useState(''); // "3/12 paragrafi…"
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [ocrProgress, setOcrProgress] = useState(null); // {done,total} | null (fase OCR)
@@ -1070,6 +1073,75 @@ export function usePipeline(settings) {
   );
 
   /**
+   * Rilettura AI contestuale (italiano): ripristina gli accenti sugli omografi
+   * («è»/«e», «sì»/«si»), reinserisce le parole-funzione saltate dall'OCR e
+   * bilancia le caporali — la classe di errori che dizionario e fedeltà non
+   * possono vedere. Guard di sicurezza in `proofreadBody`: mai rimuovere o
+   * cambiare parole. Rete di sicurezza sulla compilazione come per l'ortografia.
+   * @returns {Promise<{ok:boolean, message:string}>}
+   */
+  const proofreadAI = useCallback(async () => {
+    const before = typstCode;
+    if (!before.trim()) return { ok: false, message: 'Nessun codice da rileggere.' };
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setProofreadBusy(true);
+    setProofreadDetail('');
+    try {
+      const { code, changed, skipped } = await proofreadBody({
+        settings,
+        code: before,
+        signal: controller.signal,
+        onProgress: (done, total) => setProofreadDetail(`${done}/${total} paragrafi`),
+      });
+      if (!changed) {
+        return {
+          ok: true,
+          message: skipped
+            ? `Nessuna correzione applicata (${skipped} proposte scartate dal controllo di sicurezza).`
+            : 'Rilettura completata: nessun accento o parola da correggere.',
+        };
+      }
+      // Rete di sicurezza: se compilava PRIMA ma non DOPO, si annulla tutto.
+      try {
+        const svg = await compileToSvg(code, figuresRef.current);
+        setPreviewSvg(svg);
+        setCompileError(null);
+      } catch (eAfter) {
+        let beforeOk = false;
+        try {
+          await compileToSvg(before, figuresRef.current);
+          beforeOk = true;
+        } catch {
+          /* era già rotto prima */
+        }
+        if (beforeOk) {
+          return {
+            ok: false,
+            message:
+              'Rilettura ANNULLATA: avrebbe rotto la compilazione ' +
+              `(${(eAfter.message || '').slice(0, 140)}). Il documento non è stato toccato.`,
+          };
+        }
+        setCompileError(eAfter.message || 'Errore di compilazione Typst.');
+      }
+      setTypstCode(code);
+      return {
+        ok: true,
+        message:
+          `Rilettura applicata a ${changed} paragrafi (accenti, parole saltate, ` +
+          `virgolette)` + (skipped ? ` · ${skipped} proposte scartate dal controllo` : '') + '.',
+      };
+    } catch (e) {
+      if (e?.name === 'AbortError') return { ok: false, message: 'Rilettura annullata.' };
+      return { ok: false, message: e.message || 'Errore nella rilettura AI.' };
+    } finally {
+      setProofreadBusy(false);
+      setProofreadDetail('');
+    }
+  }, [typstCode, settings]);
+
+  /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
    * fase 2 (Gemini con indicazioni di stile) + fase 3 (compilazione). Non
    * ripete l'OCR (nessun costo/latenza NVIDIA, nessun re-render del PDF).
@@ -1288,6 +1360,9 @@ export function usePipeline(settings) {
     ignoreSpellWords,
     fixPunctuation,
     closeSpellReport,
+    proofreadBusy,
+    proofreadDetail,
+    proofreadAI,
     resume,
     reset,
     cancel,
