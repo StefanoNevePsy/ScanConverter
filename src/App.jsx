@@ -3,6 +3,7 @@ import { loadSettings, saveSettings } from './lib/storage.js';
 import { formatBytes } from './lib/files.js';
 import { usePipeline } from './hooks/usePipeline.js';
 import { initNativeShell, onBackButton } from './lib/native.js';
+import { getSharedFile, onSharedFile } from './lib/incoming.js';
 import SettingsModal from './components/SettingsModal.jsx';
 import Dropzone from './components/Dropzone.jsx';
 import PipelineStepper from './components/PipelineStepper.jsx';
@@ -151,6 +152,22 @@ export default function App() {
     initNativeShell();
     const off = onBackButton(() => backRef.current());
     return off;
+  }, []);
+
+  // File condiviso verso l'app (menu Condividi / "Apri con" di Android): un
+  // ref tiene aggiornato handleFile senza ri-registrare il listener nativo.
+  const handleFileRef = useRef(handleFile);
+  handleFileRef.current = handleFile;
+  useEffect(() => {
+    let alive = true;
+    getSharedFile().then((f) => {
+      if (alive && f) handleFileRef.current(f);
+    });
+    const off = onSharedFile((f) => handleFileRef.current(f));
+    return () => {
+      alive = false;
+      off();
+    };
   }, []);
 
   return (
