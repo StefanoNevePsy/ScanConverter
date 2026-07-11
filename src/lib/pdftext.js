@@ -15,6 +15,7 @@
 
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
+import { copyBytes } from './pdf.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 const WASM_URL = `${import.meta.env.BASE_URL}pdfjs/`;
@@ -82,7 +83,9 @@ function buildLevelMap(sizes, body) {
  */
 export async function extractPdfText(data, opts = {}) {
   const { maxPages = 2000, onProgress } = opts;
-  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  // Copia: pdf.js detacha il buffer passato: senza copia la successiva
+  // rasterizzazione sullo stesso buffer fallirebbe (detached ArrayBuffer).
+  const bytes = copyBytes(data);
   const loadingTask = pdfjsLib.getDocument({ data: bytes, wasmUrl: WASM_URL });
   const pdf = await loadingTask.promise;
   try {

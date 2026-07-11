@@ -25,6 +25,16 @@ const TARGET_LONG_SIDE = 2048;
 export const MAX_PDF_PAGES = 20;
 
 /**
+ * Copia i byte in un NUOVO buffer prima di passarli a pdf.js: `getDocument`
+ * trasferisce (detach) il buffer al worker, rendendolo inutilizzabile. Senza
+ * copia, chiamare pdf.js due volte sullo stesso ArrayBuffer (es. estrazione
+ * testo poi rendering) dà "Cannot perform Construct on a detached ArrayBuffer".
+ */
+export function copyBytes(data) {
+  return data instanceof Uint8Array ? data.slice() : new Uint8Array(data.slice(0));
+}
+
+/**
  * Renderizza le pagine di un PDF in data URL PNG.
  *
  * @param {ArrayBuffer|Uint8Array} data  contenuto del PDF
@@ -35,7 +45,7 @@ export const MAX_PDF_PAGES = 20;
  */
 export async function renderPdfToImages(data, opts = {}) {
   const { maxPages = MAX_PDF_PAGES, onProgress } = opts;
-  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const bytes = copyBytes(data);
 
   const loadingTask = pdfjsLib.getDocument({ data: bytes, wasmUrl: WASM_URL });
   const pdf = await loadingTask.promise;
@@ -74,7 +84,7 @@ export async function renderPdfToImages(data, opts = {}) {
  * @returns {Promise<number>}
  */
 export async function countPdfPages(data) {
-  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const bytes = copyBytes(data);
   const loadingTask = pdfjsLib.getDocument({ data: bytes, wasmUrl: WASM_URL });
   const pdf = await loadingTask.promise;
   const n = pdf.numPages;
