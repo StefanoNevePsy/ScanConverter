@@ -111,3 +111,62 @@ export async function requestStrictLayoutPlan({ settings, markdown, signal }) {
   }
   return validatePlan(parseJson(text), descriptors);
 }
+
+/** L'LLM classifica soltanto coppie già localizzate; non può modificare testo. */
+export async function requestStrictDifferenceReview({ settings, issues, signal }) {
+  if (!issues?.length) return [];
+  const system =
+    'Sei un revisore di fedeltà documentale. Confronta una frase OCR canonica ' +
+    'con il passaggio più simile estratto dal PDF. Non riscrivere il testo e ' +
+    'non proporre correzioni: classifica soltanto la causa della discrepanza. ' +
+    'Rispondi solo con JSON.';
+  const user =
+    'Per ogni coppia scegli una classe:\n' +
+    '- real_omission: il passaggio PDF perde davvero contenuto della fonte;\n' +
+    '- extraction_artifact: il contenuto sembra presente ma PDF.js lo spezza, ' +
+    'sillaba o legge in ordine diverso;\n' +
+    '- uncertain: non è possibile stabilirlo dal confronto.\n' +
+    'Fornisci una spiegazione italiana di massimo 25 parole.\n\nCOPPIE:\n' +
+    JSON.stringify(issues.map((i) => ({
+      id: i.id,
+      missing: i.missing,
+      canonical: i.source,
+      pdf: i.rendered,
+    }))) +
+    '\n\nFormato: {"items":[{"id":"diff-1","classification":"real_omission",' +
+    '"explanation":"…"}]}';
+  let text;
+  if (settings.typstEngine === 'nvidia') {
+    text = await nvidiaChat({
+      apiKey: settings.nvidiaApiKey,
+      endpoint: settings.nvidiaEndpoint,
+      model: settings.nvidiaTypstModel,
+      system,
+      user,
+      temperature: 0,
+      maxTokens: 2048,
+      signal,
+    });
+  } else {
+    text = await geminiGenerate({
+      apiKey: settings.googleApiKey,
+      model: settings.geminiTypstModel,
+      system,
+      user,
+      temperature: 0,
+      maxTokens: 2048,
+      json: true,
+      signal,
+    });
+  }
+  const parsed = parseJson(text);
+  const allowedIds = new Set(issues.map((i) => i.id));
+  const classes = new Set(['real_omission', 'extraction_artifact', 'uncertain']);
+  return (Array.isArray(parsed?.items) ? parsed.items : [])
+    .filter((i) => allowedIds.has(i?.id) && classes.has(i?.classification))
+    .map((i) => ({
+      id: i.id,
+      classification: i.classification,
+      explanation: String(i.explanation || '').slice(0, 240),
+    }));
+}

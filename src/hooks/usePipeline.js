@@ -31,12 +31,13 @@ import {
 import { proofreadBody } from '../lib/proofread.js';
 import {
   buildStrictDocument,
+  buildDifferenceContexts,
   compareTokenInventory,
   compareTokenSequences,
   missingInvariants,
   sourcePlainText,
 } from '../lib/strict.js';
-import { requestStrictLayoutPlan } from '../lib/layoutPlan.js';
+import { requestStrictDifferenceReview, requestStrictLayoutPlan } from '../lib/layoutPlan.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import {
   saveSession,
@@ -209,11 +210,37 @@ export function usePipeline(settings) {
     // un ordine visivo diverso. Un'omissione è confermata solo se manca anche
     // dall'inventario complessivo delle occorrenze.
     const contentOk = inventory.missing.length === 0 && invariants.length === 0;
+    const issues = buildDifferenceContexts(expected, actual, inventory.missing);
+    let aiReview = [];
+    let reviewError = '';
+    if (issues.length) {
+      const reviewKey = JSON.stringify(issues.map((i) => [i.missing, i.source, i.rendered]));
+      if (s.strictReviewKey === reviewKey && Array.isArray(s.strictReview)) {
+        aiReview = s.strictReview;
+      } else {
+        try {
+          setDetail('Il modello controlla le frasi discordanti…');
+          aiReview = await withRetry(
+            () => requestStrictDifferenceReview({ settings, issues, signal: abortRef.current?.signal }),
+            abortRef.current?.signal,
+            (secs) => setDetail(`Revisione differenze · nuovo tentativo tra ${secs}s…`),
+            { max: 2, start: 5000, cap: 20000 },
+          );
+          s.strictReviewKey = reviewKey;
+          s.strictReview = aiReview;
+        } catch (e) {
+          if (e?.name === 'AbortError') throw e;
+          reviewError = e.message || 'Revisione AI non disponibile.';
+        }
+      }
+    }
     setStrictReport({
       workflow: 'strict',
       corrections: s.corrections || [],
       ocrComparisons: s.ocrComparisons || [],
       layoutPlan: s.layoutPlan || null,
+      strictReview: s.strictReview || [],
+      strictReviewKey: s.strictReviewKey || null,
       pdf: {
         ...sequence,
         exactOrder: sequence.ok,
@@ -221,11 +248,14 @@ export function usePipeline(settings) {
         missing: inventory.missing,
         added: inventory.added,
         missingInvariants: invariants,
+        issues,
+        aiReview,
+        reviewError,
       },
     });
     s.verified = contentOk;
     return pdfBytes;
-  }, []);
+  }, [settings]);
 
   // Chiude la revisione figure revocando gli object URL delle miniature.
   const clearReview = useCallback(() => {
@@ -946,6 +976,8 @@ export function usePipeline(settings) {
         corrections: meta.corrections || [],
         ocrComparisons: meta.ocrComparisons || [],
         layoutPlan: meta.layoutPlan || null,
+        strictReview: meta.strictReview || [],
+        strictReviewKey: meta.strictReviewKey || null,
         verified: meta.verified === true,
       };
       setRawText(meta.rawText || '');

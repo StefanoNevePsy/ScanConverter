@@ -67,6 +67,47 @@ export default function StrictReportPanel({ report }) {
                   Il PDF non viene bloccato: confronta i termini indicati con il pannello OCR prima dell’uso definitivo.
                 </p>
               )}
+              {!!report.pdf.issues?.length && (
+                <div className="mt-4 space-y-3">
+                  <div className="font-medium text-ink">Confronto automatico per frase</div>
+                  {report.pdf.issues.map((issue) => {
+                    const review = report.pdf.aiReview?.find((r) => r.id === issue.id);
+                    return (
+                      <div key={issue.id} className="overflow-hidden rounded-lg border border-border bg-surface/70">
+                        <div className="grid gap-px bg-border sm:grid-cols-2">
+                          <div className="bg-surface p-3">
+                            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-faint">Fonte OCR canonica</div>
+                            <p className="leading-relaxed text-ink">{highlightWords(issue.source, issue.missing)}</p>
+                          </div>
+                          <div className="bg-surface p-3">
+                            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-faint">Passaggio PDF/Typst più simile</div>
+                            <p className="leading-relaxed text-ink">{issue.rendered || 'Nessun passaggio simile trovato.'}</p>
+                          </div>
+                        </div>
+                        <div className="border-t border-border px-3 py-2 text-xs text-muted">
+                          Parole segnalate: <span className="font-medium text-warning">{issue.missing.join(', ')}</span>
+                          {' · '}somiglianza {Math.round(issue.similarity * 100)}%
+                          {review && (
+                            <span className="ml-2">
+                              · <span className={`font-semibold ${review.classification === 'real_omission' ? 'text-danger' : review.classification === 'extraction_artifact' ? 'text-success' : 'text-warning'}`}>
+                                {review.classification === 'real_omission'
+                                  ? 'omissione probabile'
+                                  : review.classification === 'extraction_artifact'
+                                    ? 'probabile artefatto di estrazione'
+                                    : 'caso incerto'}
+                              </span>
+                              {review.explanation ? ` — ${review.explanation}` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {report.pdf.reviewError && (
+                    <p className="text-xs text-warning">Revisione AI non disponibile: {report.pdf.reviewError}</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
           {!!corrections.length && (
@@ -104,5 +145,19 @@ export default function StrictReportPanel({ report }) {
         </div>
       )}
     </section>
+  );
+}
+
+function highlightWords(text, words) {
+  if (!text || !words?.length) return text;
+  const escaped = [...new Set(words)]
+    .sort((a, b) => b.length - a.length)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp(`(${escaped.join('|')})`, 'giu');
+  const matchRe = new RegExp(`^(?:${escaped.join('|')})$`, 'iu');
+  return text.split(re).map((part, i) =>
+    matchRe.test(part)
+      ? <mark key={i} className="rounded bg-warning/30 px-0.5 text-ink">{part}</mark>
+      : part,
   );
 }

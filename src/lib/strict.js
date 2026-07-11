@@ -42,6 +42,61 @@ export function compareTokenInventory(source, output, maxDetails = 20) {
   return { ok: !missing.length && !added.length, missing, added };
 }
 
+function comparisonUnits(text) {
+  return String(text || '')
+    .split(/(?<=[.!?…])\s+|\n{2,}/)
+    .map((s) => s.replace(/\s+/g, ' ').trim())
+    .filter((s) => canonicalTokens(s).length);
+}
+
+/**
+ * Raggruppa i token mancanti nella frase sorgente e trova automaticamente il
+ * passaggio PDF/Typst con la maggiore sovrapposizione lessicale.
+ */
+export function buildDifferenceContexts(source, output, missingTokens, maxIssues = 12) {
+  const missingCounts = new Map();
+  for (const token of missingTokens || []) {
+    missingCounts.set(token, (missingCounts.get(token) || 0) + 1);
+  }
+  const sourceUnits = comparisonUnits(source);
+  const outputUnits = comparisonUnits(output);
+  const issues = [];
+  for (const sentence of sourceUnits) {
+    const sourceSet = new Set(canonicalTokens(sentence));
+    let best = '';
+    let bestScore = -1;
+    for (const candidate of outputUnits) {
+      const candidateSet = new Set(canonicalTokens(candidate));
+      let common = 0;
+      for (const token of sourceSet) if (candidateSet.has(token)) common++;
+      const score = common / Math.max(sourceSet.size, candidateSet.size, 1);
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    }
+    // Attribuisce un token comune («a», «e», «nel»…) alla frase corretta:
+    // deve mancare sia globalmente sia dal miglior passaggio corrispondente.
+    const candidateMissing = compareTokenInventory(sentence, best, 100).missing;
+    const local = [];
+    for (const token of candidateMissing) {
+      if ((missingCounts.get(token) || 0) <= 0) continue;
+      local.push(token);
+      missingCounts.set(token, (missingCounts.get(token) || 0) - 1);
+    }
+    if (!local.length) continue;
+    issues.push({
+      id: `diff-${issues.length + 1}`,
+      missing: local,
+      source: sentence.slice(0, 600),
+      rendered: best.slice(0, 600),
+      similarity: Math.max(0, bestScore),
+    });
+    if (issues.length >= maxIssues) break;
+  }
+  return issues;
+}
+
 /**
  * Allineamento monotono LCS: localizza parole eliminate, aggiunte e ordine
  * alterato. È più severo del controllo a trigrammi e mantiene le occorrenze

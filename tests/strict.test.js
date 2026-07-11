@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildStrictDocument,
+  buildDifferenceContexts,
   compareTokenInventory,
   compareTokenSequences,
   inlineMarkdownToTypst,
@@ -28,6 +29,19 @@ test('sillabazione PDF e ordine tabellare non simulano omissioni', () => {
   const reordered = compareTokenInventory('nome valore alfa 42', 'nome alfa valore 42');
   assert.equal(reordered.ok, true);
   assert.equal(compareTokenSequences('nome valore alfa 42', 'nome alfa valore 42').ok, false);
+});
+
+test('le omissioni sono affiancate alla frase PDF più simile', () => {
+  const issues = buildDifferenceContexts(
+    'Prima frase completa. Il convegno si tenne a Bologna nel febbraio 1985.',
+    'Prima frase completa. Il convegno si tenne nel febbraio.',
+    ['a', 'bologna', '1985'],
+  );
+  assert.equal(issues.length, 1);
+  assert.deepEqual(issues[0].missing, ['a', 'bologna', '1985']);
+  assert.match(issues[0].source, /Bologna/);
+  assert.match(issues[0].rendered, /convegno/);
+  assert.ok(issues[0].similarity > 0.5);
 });
 
 test('numeri, percentuali e DOI restano invarianti', () => {
