@@ -23,6 +23,7 @@ import {
   IconFile,
   IconCheck,
   IconX,
+  IconArrowLeft,
 } from './components/Icons.jsx';
 
 export default function App() {
@@ -183,6 +184,7 @@ export default function App() {
       <TopBar
         keysReady={keysReady}
         onOpenSettings={() => setSettingsOpen(true)}
+        onDashboard={hasWorkspace ? startOver : null}
         status={pipe.status}
         running={pipe.phase === 'running'}
       />
@@ -225,14 +227,24 @@ export default function App() {
 
 /* ---------------------------------------------------------------- Top bar */
 
-function TopBar({ keysReady, onOpenSettings, status, running }) {
+function TopBar({ keysReady, onOpenSettings, onDashboard, status, running }) {
   return (
     <header
       className="safe-top sticky top-0 border-b border-border bg-bg/80 backdrop-blur-md"
       style={{ zIndex: 'var(--z-sticky)' }}
     >
       <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          {onDashboard && (
+            <button
+              onClick={onDashboard}
+              aria-label="Torna alla dashboard"
+              title="Torna alla dashboard"
+              className="grid size-9 shrink-0 place-items-center rounded-lg border border-border bg-surface text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <IconArrowLeft width={18} height={18} />
+            </button>
+          )}
           <span className="grid size-9 place-items-center rounded-xl bg-primary-soft text-lg">
             📜
           </span>

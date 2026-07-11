@@ -131,7 +131,7 @@ async function requestOnce({ settings, code, error, hint, signal }) {
   if (engine === 'gemini') {
     text = await geminiGenerate({
       apiKey: settings.googleApiKey,
-      model: settings.fixModel || settings.geminiModel,
+      model: settings.fixModel || settings.geminiTypstModel,
       system: FIX_SYSTEM,
       user,
       temperature: 0.1,

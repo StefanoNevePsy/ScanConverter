@@ -11,6 +11,8 @@ const KEYS = {
   nvidiaEndpoint: 'sc.nvidiaEndpoint',
   nvidiaModel: 'sc.nvidiaModel',
   geminiModel: 'sc.geminiModel',
+  geminiOcrModel: 'sc.geminiOcrModel',
+  geminiTypstModel: 'sc.geminiTypstModel',
   ocrEngine: 'sc.ocrEngine',
   typstEngine: 'sc.typstEngine',
   nvidiaTypstModel: 'sc.nvidiaTypstModel',
@@ -28,7 +30,8 @@ export const DEFAULTS = {
   // OpenAI chat/completions). Il vecchio ai.api.nvidia.com/gr/... dava 404.
   nvidiaEndpoint: 'https://integrate.api.nvidia.com/v1/chat/completions',
   nvidiaModel: 'nvidia/nemotron-parse',
-  geminiModel: 'gemini-flash-latest',
+  geminiOcrModel: 'gemini-flash-latest',
+  geminiTypstModel: 'gemini-flash-latest',
   // Motore OCR (fase 1, immagine → testo): 'nvidia' (Nemotron-Parse, estrae
   // anche figure/bbox) oppure 'gemini' (multimodale: più robusto su scansioni
   // pessime e usabile da web, ma senza figure).
@@ -103,12 +106,16 @@ export function loadSettings() {
   if (LEGACY_NVIDIA_ENDPOINTS.includes(nvidiaEndpoint)) {
     nvidiaEndpoint = DEFAULTS.nvidiaEndpoint;
   }
+  // Migrazione trasparente: le installazioni precedenti avevano un solo
+  // modello Gemini condiviso dalle due fasi.
+  const legacyGeminiModel = read(KEYS.geminiModel, DEFAULTS.geminiTypstModel);
   return {
     nvidiaApiKey: read(KEYS.nvidia),
     googleApiKey: read(KEYS.google),
     nvidiaEndpoint,
     nvidiaModel: read(KEYS.nvidiaModel, DEFAULTS.nvidiaModel),
-    geminiModel: read(KEYS.geminiModel, DEFAULTS.geminiModel),
+    geminiOcrModel: read(KEYS.geminiOcrModel, legacyGeminiModel),
+    geminiTypstModel: read(KEYS.geminiTypstModel, legacyGeminiModel),
     ocrEngine: ENGINES.includes(read(KEYS.ocrEngine, DEFAULTS.ocrEngine))
       ? read(KEYS.ocrEngine, DEFAULTS.ocrEngine)
       : DEFAULTS.ocrEngine,
@@ -175,7 +182,8 @@ export function saveSettings(s) {
   write(KEYS.google, s.googleApiKey?.trim());
   write(KEYS.nvidiaEndpoint, s.nvidiaEndpoint?.trim() || DEFAULTS.nvidiaEndpoint);
   write(KEYS.nvidiaModel, s.nvidiaModel?.trim() || DEFAULTS.nvidiaModel);
-  write(KEYS.geminiModel, s.geminiModel?.trim() || DEFAULTS.geminiModel);
+  write(KEYS.geminiOcrModel, s.geminiOcrModel?.trim() || DEFAULTS.geminiOcrModel);
+  write(KEYS.geminiTypstModel, s.geminiTypstModel?.trim() || DEFAULTS.geminiTypstModel);
   write(KEYS.ocrEngine, ENGINES.includes(s.ocrEngine) ? s.ocrEngine : DEFAULTS.ocrEngine);
   write(KEYS.typstEngine, ENGINES.includes(s.typstEngine) ? s.typstEngine : DEFAULTS.typstEngine);
   write(KEYS.nvidiaTypstModel, s.nvidiaTypstModel?.trim() || DEFAULTS.nvidiaTypstModel);

@@ -173,7 +173,7 @@ export async function requestSpellFixes({ settings, entries, signal }) {
   } else {
     text = await geminiGenerate({
       apiKey: settings.googleApiKey,
-      model: settings.geminiModel,
+      model: settings.geminiTypstModel,
       system,
       user,
       temperature: 0.1,

@@ -299,7 +299,7 @@ export function usePipeline(settings) {
             })
           : toTypst({
               apiKey: settings.googleApiKey,
-              model: settings.geminiModel,
+              model: settings.geminiTypstModel,
               rawText: args.rawText,
               styleHint: args.styleHint,
               continuation: args.continuation,
@@ -519,7 +519,7 @@ export function usePipeline(settings) {
                       () =>
                         ocrImageGemini({
                           apiKey: settings.googleApiKey,
-                          model: settings.geminiModel,
+                          model: settings.geminiOcrModel,
                           imageDataUrl: dataUrl,
                           signal,
                         }),

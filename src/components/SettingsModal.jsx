@@ -183,12 +183,20 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
               />
             </div>
             {form.ocrEngine === 'gemini' && (
-              <span className="mt-2 block text-xs text-faint">
-                Gemini legge l’immagine intera: più tollerante con scansioni di
-                bassa qualità e usabile da web, ma non separa figure/tabelle
-                (nessuna revisione delle figure). Usa il «Modello Gemini» qui
-                sotto.
-              </span>
+              <div className="mt-3">
+                <ModelSelect
+                  label="Modello Gemini per OCR"
+                  hint="Legge l’immagine intera; non separa le figure per la revisione."
+                  value={form.geminiOcrModel}
+                  onChange={update('geminiOcrModel')}
+                  options={gemini.list}
+                  loading={gemini.loading}
+                  error={gemini.error}
+                  onRefresh={() => fetchGemini(form.googleApiKey)}
+                  placeholder={DEFAULTS.geminiOcrModel}
+                  listId="dl-gemini-ocr"
+                />
+              </div>
             )}
           </div>
 
@@ -232,16 +240,16 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             />
           ) : (
             <ModelSelect
-              label="Modello Gemini"
+              label="Modello Gemini per il Typst"
               hint="L'elenco si aggiorna dalla tua chiave Google."
-              value={form.geminiModel}
-              onChange={update('geminiModel')}
+              value={form.geminiTypstModel}
+              onChange={update('geminiTypstModel')}
               options={gemini.list}
               loading={gemini.loading}
               error={gemini.error}
               onRefresh={() => fetchGemini(form.googleApiKey)}
-              placeholder={DEFAULTS.geminiModel}
-              listId="dl-gemini"
+              placeholder={DEFAULTS.geminiTypstModel}
+              listId="dl-gemini-typst"
             />
           )}
 
@@ -301,13 +309,13 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
               {engineNvidia ? (
                 <ModelSelect
                   label="Modello Gemini (riserva)"
-                  value={form.geminiModel}
-                  onChange={update('geminiModel')}
+                  value={form.geminiTypstModel}
+                  onChange={update('geminiTypstModel')}
                   options={gemini.list}
                   loading={gemini.loading}
                   error={gemini.error}
                   onRefresh={() => fetchGemini(form.googleApiKey)}
-                  placeholder={DEFAULTS.geminiModel}
+                  placeholder={DEFAULTS.geminiTypstModel}
                   listId="dl-gemini-adv"
                 />
               ) : (
