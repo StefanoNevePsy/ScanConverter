@@ -85,7 +85,7 @@ const GROUPS = [
   },
 ];
 
-export default function RestylePanel({ onRestyle, onApplyLocal, onHintChange, busy, disabled }) {
+export default function RestylePanel({ onRestyle, onApplyLocal, onHintChange, busy, disabled, strict = false }) {
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState({});
   const [extra, setExtra] = useState('');
@@ -133,7 +133,7 @@ export default function RestylePanel({ onRestyle, onApplyLocal, onHintChange, bu
       >
         <span className="flex items-center gap-2.5">
           <IconRefresh width={16} height={16} className="text-primary" />
-          <span className="text-sm font-medium text-ink">Rigenera layout con Gemini</span>
+          <span className="text-sm font-medium text-ink">{strict ? 'Personalizza layout' : 'Rigenera layout con Gemini'}</span>
           <span className="hidden text-xs text-faint sm:inline">
             font, margini, densità · senza rifare l’OCR
           </span>
@@ -194,15 +194,17 @@ export default function RestylePanel({ onRestyle, onApplyLocal, onHintChange, bu
                 <IconRefresh width={15} height={15} />
                 Applica (senza AI)
               </button>
-              <button
-                onClick={() => onRestyle(buildHint())}
-                disabled={busy}
-                title="Rigenera l'intero layout con l'AI dal testo OCR"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-medium text-ink transition-colors hover:bg-surface-3 disabled:opacity-60"
-              >
-                {busy ? <IconSpinner width={15} height={15} /> : <IconRefresh width={15} height={15} />}
-                {busy ? 'Rigenero…' : 'Rigenera con AI'}
-              </button>
+              {onRestyle && (
+                <button
+                  onClick={() => onRestyle(buildHint())}
+                  disabled={busy}
+                  title="Rigenera l'intero layout con l'AI dal testo OCR"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-medium text-ink transition-colors hover:bg-surface-3 disabled:opacity-60"
+                >
+                  {busy ? <IconSpinner width={15} height={15} /> : <IconRefresh width={15} height={15} />}
+                  {busy ? 'Rigenero…' : 'Rigenera con AI'}
+                </button>
+              )}
             </div>
           </div>
         </div>

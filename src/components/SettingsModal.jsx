@@ -147,6 +147,30 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             onToggle={() => setShowNvidia((v) => !v)}
             autoComplete="off"
           />
+
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-ink">
+              Workflow di formattazione
+            </span>
+            <span className="mb-2 block text-xs text-faint">
+              Il workflow ad alta fedeltà conserva il testo OCR come fonte
+              canonica e genera il layout senza farlo riscrivere al modello.
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <EngineButton
+                active={form.formatWorkflow !== 'strict'}
+                onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'legacy' }))}
+                title="Attuale"
+                sub="layout generato dal modello"
+              />
+              <EngineButton
+                active={form.formatWorkflow === 'strict'}
+                onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'strict' }))}
+                title="Fedeltà massima"
+                sub="testo immutabile e verificato"
+              />
+            </div>
+          </div>
           <Field
             label="GOOGLE_API_KEY"
             hint="Per la conversione del testo in codice Typst con Gemini."
@@ -198,10 +222,34 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 />
               </div>
             )}
+            {form.formatWorkflow === 'strict' && (
+              <div className="mt-3">
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={!!form.compareOcr}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, compareOcr: e.target.checked }))
+                    }
+                    className="mt-0.5 accent-primary"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-ink">
+                      Confronta con un secondo OCR
+                    </span>
+                    <span className="block text-xs text-faint">
+                      Esegue anche l’altro motore (Gemini/NVIDIA) sulla stessa
+                      pagina e segnala le divergenze. Richiede entrambe le chiavi
+                      e raddoppia il costo OCR.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
           </div>
 
           {/* Motore per la strutturazione Typst (fase 2). */}
-          <div>
+          <div className={form.formatWorkflow === 'strict' ? 'opacity-50' : ''}>
             <span className="mb-1.5 block text-sm font-medium text-ink">
               Motore per il Typst
             </span>
@@ -211,12 +259,14 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             <div className="grid grid-cols-2 gap-2">
               <EngineButton
                 active={!engineNvidia}
+                disabled={form.formatWorkflow === 'strict'}
                 onClick={() => setEngine('gemini')}
                 title="Google Gemini"
                 sub="veloce, ottimo layout"
               />
               <EngineButton
                 active={engineNvidia}
+                disabled={form.formatWorkflow === 'strict'}
                 onClick={() => setEngine('nvidia')}
                 title="Modello NVIDIA"
                 sub="alternativa se Gemini è limitato"
@@ -225,7 +275,13 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
           </div>
 
           {/* Modello del motore attivo, con elenco auto-aggiornante. */}
-          {engineNvidia ? (
+          {form.formatWorkflow === 'strict' ? (
+            <div className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-muted">
+              Nel workflow «Fedeltà massima» il corpo Typst è prodotto
+              localmente con regole deterministiche: il modello di
+              formattazione non viene chiamato.
+            </div>
+          ) : engineNvidia ? (
             <ModelSelect
               label="Modello NVIDIA per il Typst"
               hint="Consigliato un modello istruct generico (es. llama-3.3-70b-instruct)."
@@ -464,13 +520,14 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
   );
 }
 
-function EngineButton({ active, onClick, title, sub }) {
+function EngineButton({ active, onClick, title, sub, disabled = false }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-pressed={active}
-      className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+      className={`rounded-lg border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed ${
         active
           ? 'border-primary bg-primary-soft text-ink'
           : 'border-border bg-surface-2 text-muted hover:text-ink'

@@ -13,6 +13,7 @@ import RestylePanel from './components/RestylePanel.jsx';
 import FigureReviewPanel from './components/FigureReviewPanel.jsx';
 import PagesReviewPanel from './components/PagesReviewPanel.jsx';
 import FidelityPanel from './components/FidelityPanel.jsx';
+import StrictReportPanel from './components/StrictReportPanel.jsx';
 import SpellPanel from './components/SpellPanel.jsx';
 import OcrTextPanel from './components/OcrTextPanel.jsx';
 import SessionsList from './components/SessionsList.jsx';
@@ -39,8 +40,16 @@ export default function App() {
 
   // Chiave Google richiesta se Gemini è motore OCR o motore Typst; chiave
   // NVIDIA richiesta se NVIDIA è motore OCR o motore Typst.
-  const needsGoogle = settings.ocrEngine === 'gemini' || settings.typstEngine !== 'nvidia';
-  const needsNvidia = settings.ocrEngine !== 'gemini' || settings.typstEngine === 'nvidia';
+  const needsGoogle =
+    settings.ocrEngine === 'gemini' ||
+    (settings.formatWorkflow !== 'strict' && settings.typstEngine !== 'nvidia') ||
+    (settings.formatWorkflow === 'strict' && settings.compareOcr) ||
+    (settings.formatWorkflow === 'strict' && settings.fixTypos && settings.fixEngine === 'gemini');
+  const needsNvidia =
+    settings.ocrEngine !== 'gemini' ||
+    (settings.formatWorkflow !== 'strict' && settings.typstEngine === 'nvidia') ||
+    (settings.formatWorkflow === 'strict' && settings.compareOcr) ||
+    (settings.formatWorkflow === 'strict' && settings.fixTypos && settings.fixEngine !== 'gemini');
   const keysReady = Boolean(
     (!needsNvidia || settings.nvidiaApiKey) && (!needsGoogle || settings.googleApiKey),
   );
@@ -80,8 +89,16 @@ export default function App() {
       setSettings(next);
       // Se un file era in attesa delle chiavi, avvia ora la pipeline — ma solo
       // se le chiavi effettivamente richieste dalla nuova configurazione ci sono.
-      const nextNeedsGoogle = next.ocrEngine === 'gemini' || next.typstEngine !== 'nvidia';
-      const nextNeedsNvidia = next.ocrEngine !== 'gemini' || next.typstEngine === 'nvidia';
+      const nextNeedsGoogle =
+        next.ocrEngine === 'gemini' ||
+        (next.formatWorkflow !== 'strict' && next.typstEngine !== 'nvidia') ||
+        (next.formatWorkflow === 'strict' && next.compareOcr) ||
+        (next.formatWorkflow === 'strict' && next.fixTypos && next.fixEngine === 'gemini');
+      const nextNeedsNvidia =
+        next.ocrEngine !== 'gemini' ||
+        (next.formatWorkflow !== 'strict' && next.typstEngine === 'nvidia') ||
+        (next.formatWorkflow === 'strict' && next.compareOcr) ||
+        (next.formatWorkflow === 'strict' && next.fixTypos && next.fixEngine !== 'gemini');
       const nextReady =
         (!nextNeedsNvidia || next.nvidiaApiKey) && (!nextNeedsGoogle || next.googleApiKey);
       if (file && nextReady && pipe.phase === 'idle') {
@@ -496,6 +513,7 @@ function Workspace({
       )}
 
       <FidelityPanel warnings={pipe.fidelityWarnings} />
+      <StrictReportPanel report={pipe.strictReport} />
 
       {pipe.spellReport && (
         <SpellPanel
@@ -512,11 +530,12 @@ function Workspace({
 
       {pipe.rawText && !pipe.figureReview && (
         <RestylePanel
-          onRestyle={(hint) => pipe.restyle(hint)}
+          onRestyle={pipe.strictReport ? null : (hint) => pipe.restyle(hint)}
           onApplyLocal={(sel) => pipe.applyLocalStyle(sel)}
           onHintChange={setStyleHint}
           busy={pipe.phase === 'running'}
           disabled={pipe.phase === 'running'}
+          strict={!!pipe.strictReport}
         />
       )}
 

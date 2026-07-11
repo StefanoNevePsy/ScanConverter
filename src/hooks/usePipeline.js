@@ -29,6 +29,12 @@ import {
   fixSpacing,
 } from '../lib/spell.js';
 import { proofreadBody } from '../lib/proofread.js';
+import {
+  buildStrictDocument,
+  compareTokenSequences,
+  missingInvariants,
+  sourcePlainText,
+} from '../lib/strict.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import {
   saveSession,
@@ -132,6 +138,7 @@ export function usePipeline(settings) {
   const pendingPagesRef = useRef(null); // { pageImages, fileName }
   // Esito della verifica di fedeltà per chunk: [{chunk,total,coverage,missing}].
   const [fidelityWarnings, setFidelityWarnings] = useState([]);
+  const [strictReport, setStrictReport] = useState(null);
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
@@ -172,6 +179,36 @@ export function usePipeline(settings) {
     setFidelityWarnings(warns);
   }, []);
 
+  /** Compila e confronta il layer testuale del PDF con la fonte canonica. */
+  const verifyStrictPdf = useCallback(async (source, existingBytes = null) => {
+    const s = sessionRef.current;
+    if (s?.workflow !== 'strict') return existingBytes;
+    s.verified = false;
+    const pdfBytes = existingBytes || await compileToPdf(source, figuresRef.current);
+    const pdfText = await extractPdfText(pdfBytes, { maxPages: settings.maxPages });
+    if (!pdfText) throw new Error('Il PDF compilato non contiene un layer testuale verificabile.');
+    const expected = sourcePlainText(s.canonicalText || s.rawText);
+    const actual = sourcePlainText(pdfText);
+    const diff = compareTokenSequences(expected, actual);
+    const invariants = missingInvariants(expected, actual);
+    setStrictReport({
+      workflow: 'strict',
+      corrections: s.corrections || [],
+      ocrComparisons: s.ocrComparisons || [],
+      pdf: { ...diff, missingInvariants: invariants },
+    });
+    if (!diff.ok || invariants.length) {
+      const details = [
+        diff.missing.length ? `parole mancanti: ${diff.missing.slice(0, 8).join(', ')}` : '',
+        diff.added.length ? `parole aggiunte: ${diff.added.slice(0, 8).join(', ')}` : '',
+        invariants.length ? `numeri/riferimenti mancanti: ${invariants.slice(0, 8).join(', ')}` : '',
+      ].filter(Boolean).join(' · ');
+      throw new Error(`Verifica rigorosa del PDF fallita${details ? ` — ${details}` : ''}.`);
+    }
+    s.verified = true;
+    return pdfBytes;
+  }, [settings.maxPages]);
+
   // Chiude la revisione figure revocando gli object URL delle miniature.
   const clearReview = useCallback(() => {
     setFigureReview((items) => {
@@ -206,7 +243,9 @@ export function usePipeline(settings) {
   const persist = useCallback(async () => {
     const s = sessionRef.current;
     if (!s?.id) return;
-    const allDone = s.chunks.every((c) => c.status === 'done');
+    const allDone =
+      s.chunks.every((c) => c.status === 'done') &&
+      (s.workflow !== 'strict' || s.verified === true);
     await saveSession({
       id: s.id,
       fileName: s.fileName,
@@ -219,6 +258,11 @@ export function usePipeline(settings) {
         status: c.status,
         fidelity: c.fidelity || null,
       })),
+      workflow: s.workflow || 'legacy',
+      canonicalText: s.canonicalText || null,
+      corrections: s.corrections || [],
+      ocrComparisons: s.ocrComparisons || [],
+      verified: !!s.verified,
       status: allDone ? 'done' : 'paused',
     });
   }, []);
@@ -238,6 +282,7 @@ export function usePipeline(settings) {
         parts: s.ocr.parts,
         figCount: s.ocr.figCount,
         source: s.ocr.source || 'ocr',
+        comparisons: s.ocr.comparisons || [],
       },
       styleHint: s.styleHint || null,
     });
@@ -259,6 +304,7 @@ export function usePipeline(settings) {
     setOcrProgress(null);
     setCanResume(false);
     setFidelityWarnings([]);
+    setStrictReport(null);
     setSpellReport(null);
     figuresRef.current = [];
     sessionRef.current = null;
@@ -401,6 +447,11 @@ export function usePipeline(settings) {
       setDetail('');
       collectFidelity();
       try {
+        if (s.workflow === 'strict') {
+          setDetail('Verifica testuale del PDF compilato…');
+          await verifyStrictPdf(combined);
+          if (signal.aborted) return;
+        }
         const svg = await compileToSvg(combined, figuresRef.current);
         if (signal.aborted) return;
         setPreviewSvg(svg);
@@ -419,7 +470,7 @@ export function usePipeline(settings) {
         setPhase('done');
       }
     },
-    [persist, collectFidelity, describeCompileError],
+    [persist, collectFidelity, describeCompileError, verifyStrictPdf],
   );
 
   /** Esegue la fase 2+3 sulla sessione corrente (fresh o resume). */
@@ -453,6 +504,56 @@ export function usePipeline(settings) {
   const startFormat = useCallback(
     async (extracted, fileName, signal) => {
       const id = sessionRef.current?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      if (settings.formatWorkflow === 'strict') {
+        let canonicalText = extracted;
+        let corrections = [];
+        if (settings.fixTypos) {
+          setDetail('Correzione conservativa con registro delle modifiche…');
+          const proof = await proofreadBody({
+            settings,
+            code: extracted,
+            signal,
+            onProgress: (done, total) => setDetail(`Correzione ${done}/${total} paragrafi…`),
+          });
+          canonicalText = proof.code;
+          corrections = proof.changes;
+        }
+        const strict = buildStrictDocument(canonicalText);
+        const previousComparisons = sessionRef.current?.ocr?.comparisons || [];
+        sessionRef.current = {
+          id,
+          fileName,
+          rawText: extracted,
+          canonicalText,
+          corrections,
+          ocrComparisons: previousComparisons,
+          workflow: 'strict',
+          verified: false,
+          chunks: [{
+            text: extracted,
+            body: strict.body,
+            status: 'done',
+            fidelity: { coverage: 1, missing: [] },
+          }],
+          preamble: strict.preamble,
+          styleHint: undefined,
+          lastError: '',
+        };
+        setStrictReport({
+          workflow: 'strict',
+          corrections,
+          ocrComparisons: previousComparisons,
+          pdf: null,
+        });
+        setTypstCode(combineDocument(strict.preamble, [strict.body]));
+        await saveFigures(id, figuresRef.current);
+        await persist();
+        setPhase('running');
+        setActiveStep('compile');
+        setStatus((s) => ({ ...s, format: 'done', compile: 'active' }));
+        await finalizeCompile(signal);
+        return;
+      }
       sessionRef.current = {
         id,
         fileName,
@@ -465,6 +566,7 @@ export function usePipeline(settings) {
         preamble: '',
         styleHint: undefined,
         lastError: '',
+        workflow: 'legacy',
       };
       await saveFigures(id, figuresRef.current);
       await persist();
@@ -473,7 +575,7 @@ export function usePipeline(settings) {
       setStatus((s) => ({ ...s, format: 'active' }));
       await runFormat(signal);
     },
-    [settings, runFormat, persist],
+    [settings, runFormat, persist, finalizeCompile],
   );
 
   /**
@@ -542,6 +644,61 @@ export function usePipeline(settings) {
                 );
           if (signal.aborted) return 'aborted';
           const page = await assemblePage(blocks, dataUrl, figCounter);
+          if (settings.formatWorkflow === 'strict' && settings.compareOcr) {
+            if (!Array.isArray(s.ocr.comparisons)) s.ocr.comparisons = [];
+            setDetail(`${label} · confronto con il secondo motore…`);
+            try {
+              let alternateText;
+              if (settings.ocrEngine === 'gemini') {
+                const altBlocks = await withRetry(
+                  () => extractPageBlocks({
+                    apiKey: settings.nvidiaApiKey,
+                    endpoint: settings.nvidiaEndpoint,
+                    model: settings.nvidiaModel,
+                    imageDataUrl: dataUrl,
+                    signal,
+                  }),
+                  signal,
+                  onWait,
+                );
+                alternateText = (await assemblePage(altBlocks, dataUrl, makeFigureCounter(0))).markdown;
+              } else {
+                alternateText = await withRetry(
+                  () => ocrImageGemini({
+                    apiKey: settings.googleApiKey,
+                    model: settings.geminiOcrModel,
+                    imageDataUrl: dataUrl,
+                    signal,
+                  }),
+                  signal,
+                  onWait,
+                );
+              }
+              const cmp = compareTokenSequences(
+                sourcePlainText(page.markdown),
+                sourcePlainText(alternateText),
+                12,
+              );
+              s.ocr.comparisons[i] = {
+                page: i + 1,
+                primary: settings.ocrEngine,
+                alternate: settings.ocrEngine === 'gemini' ? 'nvidia' : 'gemini',
+                agreement: cmp.sourceCount
+                  ? cmp.matched / Math.max(cmp.sourceCount, cmp.outputCount, 1)
+                  : 1,
+                missing: cmp.missing,
+                added: cmp.added,
+              };
+            } catch (comparisonError) {
+              if (signal.aborted || comparisonError?.name === 'AbortError') return 'aborted';
+              s.ocr.comparisons[i] = {
+                page: i + 1,
+                primary: settings.ocrEngine,
+                alternate: settings.ocrEngine === 'gemini' ? 'nvidia' : 'gemini',
+                error: comparisonError.message || 'Confronto OCR non disponibile.',
+              };
+            }
+          }
           s.ocr.parts[i] = total > 1 ? `<!-- pagina ${i + 1} -->\n${page.markdown}` : page.markdown;
           s.ocr.figCount = figCounter.count();
           figuresRef.current.push(...page.figures);
@@ -638,6 +795,7 @@ export function usePipeline(settings) {
           parts: new Array(pageImages.length).fill(null),
           figCount: 0,
           source: 'ocr',
+          comparisons: new Array(pageImages.length).fill(null),
         },
         styleHint: undefined,
         lastError: '',
@@ -732,6 +890,7 @@ export function usePipeline(settings) {
             parts: meta.ocr.parts || new Array(meta.ocr.total).fill(null),
             figCount: meta.ocr.figCount || 0,
             source: meta.ocr.source || 'ocr',
+            comparisons: meta.ocr.comparisons || new Array(meta.ocr.total).fill(null),
           },
           styleHint: meta.styleHint || undefined,
           lastError: '',
@@ -755,9 +914,24 @@ export function usePipeline(settings) {
         preamble: meta.preamble || '',
         styleHint: meta.styleHint || undefined,
         lastError: '',
+        workflow: meta.workflow || 'legacy',
+        canonicalText: meta.canonicalText || meta.rawText,
+        corrections: meta.corrections || [],
+        ocrComparisons: meta.ocrComparisons || [],
+        verified: meta.verified === true,
       };
       setRawText(meta.rawText || '');
       setTypstCode(combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || '')));
+      setStrictReport(
+        meta.workflow === 'strict'
+          ? {
+              workflow: 'strict',
+              corrections: meta.corrections || [],
+              ocrComparisons: meta.ocrComparisons || [],
+              pdf: null,
+            }
+          : null,
+      );
       setStatus({ ocr: 'done', format: 'active', compile: 'pending' });
       setPhase('running');
       setActiveStep('format');
@@ -787,6 +961,7 @@ export function usePipeline(settings) {
       setCompiling(true);
       setCompileError(null);
       try {
+        if (sessionRef.current?.workflow === 'strict') await verifyStrictPdf(source);
         const svg = await compileToSvg(source, figuresRef.current);
         setPreviewSvg(svg);
         return true;
@@ -799,7 +974,7 @@ export function usePipeline(settings) {
         setCompiling(false);
       }
     },
-    [typstCode, describeCompileError],
+    [typstCode, describeCompileError, verifyStrictPdf],
   );
 
   /**
@@ -815,7 +990,8 @@ export function usePipeline(settings) {
       setDownloading(true);
       setCompileError(null);
       try {
-        const bytes = await compileToPdf(typstCode, figuresRef.current);
+        let bytes = await compileToPdf(typstCode, figuresRef.current);
+        bytes = await verifyStrictPdf(typstCode, bytes);
         if (mode === 'share') await sharePdf(bytes, fileName || 'documento');
         else await savePdf(bytes, fileName || 'documento');
       } catch (e) {
@@ -824,7 +1000,7 @@ export function usePipeline(settings) {
         setDownloading(false);
       }
     },
-    [typstCode],
+    [typstCode, verifyStrictPdf],
   );
 
   /**
@@ -1031,11 +1207,32 @@ export function usePipeline(settings) {
         }
         // Rete di sicurezza: se il documento compilava PRIMA ma non DOPO le
         // correzioni, si annulla tutto (mai peggiorare la compilazione).
+        const strictSession = sessionRef.current?.workflow === 'strict' ? sessionRef.current : null;
+        const previousCanonical = strictSession?.canonicalText;
+        const previousCorrections = strictSession?.corrections || [];
         try {
           const svg = await compileToSvg(code, figuresRef.current);
+          if (strictSession) {
+            const canonical = applySpellFixes(previousCanonical || strictSession.rawText, corrections);
+            strictSession.canonicalText = canonical.code;
+            strictSession.corrections = [
+              ...previousCorrections,
+              ...canonical.applied.map((a) => ({
+                before: a.word,
+                after: a.fix,
+                type: 'spelling',
+                count: a.count,
+              })),
+            ];
+            await verifyStrictPdf(code);
+          }
           setPreviewSvg(svg);
           setCompileError(null);
         } catch (eAfter) {
+          if (strictSession) {
+            strictSession.canonicalText = previousCanonical;
+            strictSession.corrections = previousCorrections;
+          }
           let beforeOk = false;
           try {
             await compileToSvg(before, figuresRef.current);
@@ -1071,7 +1268,7 @@ export function usePipeline(settings) {
         setSpellBusy(false);
       }
     },
-    [spellReport, typstCode, settings],
+    [spellReport, typstCode, settings, verifyStrictPdf],
   );
 
   /**
@@ -1090,7 +1287,7 @@ export function usePipeline(settings) {
     setProofreadBusy(true);
     setProofreadDetail('');
     try {
-      const { code, changed, skipped } = await proofreadBody({
+      const { code, changed, skipped, changes } = await proofreadBody({
         settings,
         code: before,
         signal: controller.signal,
@@ -1105,11 +1302,33 @@ export function usePipeline(settings) {
         };
       }
       // Rete di sicurezza: se compilava PRIMA ma non DOPO, si annulla tutto.
+      const strictSession = sessionRef.current?.workflow === 'strict' ? sessionRef.current : null;
+      const previousCanonical = strictSession?.canonicalText;
+      const previousCorrections = strictSession?.corrections || [];
       try {
         const svg = await compileToSvg(code, figuresRef.current);
+        if (strictSession) {
+          let nextCanonical = previousCanonical || strictSession.rawText;
+          for (const change of changes) {
+            if (!nextCanonical.includes(change.before)) {
+              throw new Error('Una correzione non è riconducibile in modo univoco al testo OCR canonico.');
+            }
+            nextCanonical = nextCanonical.replace(change.before, change.after);
+          }
+          strictSession.canonicalText = nextCanonical;
+          strictSession.corrections = [
+            ...previousCorrections,
+            ...changes.map((c) => ({ ...c, type: 'contextual' })),
+          ];
+          await verifyStrictPdf(code);
+        }
         setPreviewSvg(svg);
         setCompileError(null);
       } catch (eAfter) {
+        if (strictSession) {
+          strictSession.canonicalText = previousCanonical;
+          strictSession.corrections = previousCorrections;
+        }
         let beforeOk = false;
         try {
           await compileToSvg(before, figuresRef.current);
@@ -1141,7 +1360,7 @@ export function usePipeline(settings) {
       setProofreadBusy(false);
       setProofreadDetail('');
     }
-  }, [typstCode, settings]);
+  }, [typstCode, settings, verifyStrictPdf]);
 
   /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
@@ -1345,6 +1564,7 @@ export function usePipeline(settings) {
     pageReview,
     confirmPages,
     fidelityWarnings,
+    strictReport,
     sessions,
     openSession,
     deleteSavedSession,

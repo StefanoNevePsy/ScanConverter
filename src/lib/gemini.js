@@ -197,6 +197,10 @@ export async function toTypst({ apiKey, model, rawText, styleHint, continuation,
     ? parts.map((p) => p?.text || '').join('')
     : '';
 
+  if (finish === 'MAX_TOKENS') {
+    throw new Error('Gemini ha interrotto il codice per limite di token. Riduci la dimensione dei chunk e riprendi.');
+  }
+
   if (!text.trim()) {
     const block = data?.promptFeedback?.blockReason;
     throw new Error(
@@ -268,9 +272,12 @@ export async function geminiGenerate({ apiKey, model, system, user, temperature 
   const data = await res.json();
   const parts = data?.candidates?.[0]?.content?.parts;
   const text = Array.isArray(parts) ? parts.map((p) => p?.text || '').join('') : '';
+  const finish = data?.candidates?.[0]?.finishReason;
+  if (finish === 'MAX_TOKENS') {
+    throw new Error('Gemini ha interrotto la risposta per limite di token.');
+  }
   if (!text.trim()) {
     const block = data?.promptFeedback?.blockReason;
-    const finish = data?.candidates?.[0]?.finishReason;
     throw new Error(
       block
         ? `Richiesta bloccata da Gemini (${block}).`

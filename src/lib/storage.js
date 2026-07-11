@@ -23,6 +23,8 @@ const KEYS = {
   chunkSize: 'sc.chunkSize',
   fixTypos: 'sc.fixTypos',
   ocrLongSide: 'sc.ocrLongSide',
+  formatWorkflow: 'sc.formatWorkflow',
+  compareOcr: 'sc.compareOcr',
 };
 
 export const DEFAULTS = {
@@ -58,11 +60,16 @@ export const DEFAULTS = {
   // Lato lungo (px) di rasterizzazione dei PDF per l'OCR. Più alto = più
   // accurato su scansioni pessime, ma payload/tempi maggiori. 2600 ≈ 320 DPI.
   ocrLongSide: 2600,
+  // 'legacy': conversione completa tramite LLM; 'strict': testo immutabile,
+  // renderer Typst deterministico e verifiche bloccanti.
+  formatWorkflow: 'legacy',
+  compareOcr: false,
 };
 
 // Valori ammessi per il motore Typst.
 const ENGINES = ['gemini', 'nvidia'];
 const PDF_MODES = ['auto', 'ocr'];
+const FORMAT_WORKFLOWS = ['legacy', 'strict'];
 
 const LIMITS = {
   maxPages: { min: 1, max: 2000 },
@@ -134,6 +141,10 @@ export function loadSettings() {
     chunkSize: readInt(KEYS.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize),
     fixTypos: readBool(KEYS.fixTypos, DEFAULTS.fixTypos),
     ocrLongSide: readInt(KEYS.ocrLongSide, DEFAULTS.ocrLongSide, LIMITS.ocrLongSide),
+    formatWorkflow: FORMAT_WORKFLOWS.includes(read(KEYS.formatWorkflow, DEFAULTS.formatWorkflow))
+      ? read(KEYS.formatWorkflow, DEFAULTS.formatWorkflow)
+      : DEFAULTS.formatWorkflow,
+    compareOcr: readBool(KEYS.compareOcr, DEFAULTS.compareOcr),
   };
 }
 
@@ -194,4 +205,9 @@ export function saveSettings(s) {
   writeInt(KEYS.chunkSize, s.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize);
   write(KEYS.fixTypos, s.fixTypos ? '1' : '0');
   writeInt(KEYS.ocrLongSide, s.ocrLongSide, DEFAULTS.ocrLongSide, LIMITS.ocrLongSide);
+  write(
+    KEYS.formatWorkflow,
+    FORMAT_WORKFLOWS.includes(s.formatWorkflow) ? s.formatWorkflow : DEFAULTS.formatWorkflow,
+  );
+  write(KEYS.compareOcr, s.compareOcr ? '1' : '0');
 }
