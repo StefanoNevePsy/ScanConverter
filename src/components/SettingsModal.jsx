@@ -160,6 +160,38 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             autoComplete="off"
           />
 
+          {/* Motore OCR (fase 1: immagine → testo). */}
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-ink">
+              Motore OCR
+            </span>
+            <span className="mb-2 block text-xs text-faint">
+              Chi legge il testo dalle immagini scansionate.
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <EngineButton
+                active={form.ocrEngine !== 'gemini'}
+                onClick={() => setForm((f) => ({ ...f, ocrEngine: 'nvidia' }))}
+                title="NVIDIA Nemotron-Parse"
+                sub="estrae anche figure e tabelle"
+              />
+              <EngineButton
+                active={form.ocrEngine === 'gemini'}
+                onClick={() => setForm((f) => ({ ...f, ocrEngine: 'gemini' }))}
+                title="Google Gemini"
+                sub="più robusto su scansioni pessime"
+              />
+            </div>
+            {form.ocrEngine === 'gemini' && (
+              <span className="mt-2 block text-xs text-faint">
+                Gemini legge l’immagine intera: più tollerante con scansioni di
+                bassa qualità e usabile da web, ma non separa figure/tabelle
+                (nessuna revisione delle figure). Usa il «Modello Gemini» qui
+                sotto.
+              </span>
+            )}
+          </div>
+
           {/* Motore per la strutturazione Typst (fase 2). */}
           <div>
             <span className="mb-1.5 block text-sm font-medium text-ink">

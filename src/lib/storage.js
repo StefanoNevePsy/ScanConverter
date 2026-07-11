@@ -11,6 +11,7 @@ const KEYS = {
   nvidiaEndpoint: 'sc.nvidiaEndpoint',
   nvidiaModel: 'sc.nvidiaModel',
   geminiModel: 'sc.geminiModel',
+  ocrEngine: 'sc.ocrEngine',
   typstEngine: 'sc.typstEngine',
   nvidiaTypstModel: 'sc.nvidiaTypstModel',
   fixEngine: 'sc.fixEngine',
@@ -26,6 +27,10 @@ export const DEFAULTS = {
   nvidiaEndpoint: 'https://integrate.api.nvidia.com/v1/chat/completions',
   nvidiaModel: 'nvidia/nemotron-parse',
   geminiModel: 'gemini-flash-latest',
+  // Motore OCR (fase 1, immagine → testo): 'nvidia' (Nemotron-Parse, estrae
+  // anche figure/bbox) oppure 'gemini' (multimodale: più robusto su scansioni
+  // pessime e usabile da web, ma senza figure).
+  ocrEngine: 'nvidia',
   // Motore per la fase 2 (testo OCR → Typst): 'gemini' oppure 'nvidia'.
   typstEngine: 'gemini',
   // Modello NVIDIA usato quando typstEngine === 'nvidia' (istruct generico,
@@ -94,6 +99,9 @@ export function loadSettings() {
     nvidiaEndpoint,
     nvidiaModel: read(KEYS.nvidiaModel, DEFAULTS.nvidiaModel),
     geminiModel: read(KEYS.geminiModel, DEFAULTS.geminiModel),
+    ocrEngine: ENGINES.includes(read(KEYS.ocrEngine, DEFAULTS.ocrEngine))
+      ? read(KEYS.ocrEngine, DEFAULTS.ocrEngine)
+      : DEFAULTS.ocrEngine,
     typstEngine: ENGINES.includes(read(KEYS.typstEngine, DEFAULTS.typstEngine))
       ? read(KEYS.typstEngine, DEFAULTS.typstEngine)
       : DEFAULTS.typstEngine,
@@ -148,6 +156,7 @@ export function saveSettings(s) {
   write(KEYS.nvidiaEndpoint, s.nvidiaEndpoint?.trim() || DEFAULTS.nvidiaEndpoint);
   write(KEYS.nvidiaModel, s.nvidiaModel?.trim() || DEFAULTS.nvidiaModel);
   write(KEYS.geminiModel, s.geminiModel?.trim() || DEFAULTS.geminiModel);
+  write(KEYS.ocrEngine, ENGINES.includes(s.ocrEngine) ? s.ocrEngine : DEFAULTS.ocrEngine);
   write(KEYS.typstEngine, ENGINES.includes(s.typstEngine) ? s.typstEngine : DEFAULTS.typstEngine);
   write(KEYS.nvidiaTypstModel, s.nvidiaTypstModel?.trim() || DEFAULTS.nvidiaTypstModel);
   write(KEYS.fixEngine, ENGINES.includes(s.fixEngine) ? s.fixEngine : DEFAULTS.fixEngine);

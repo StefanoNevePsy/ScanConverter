@@ -36,10 +36,13 @@ export default function App() {
   const lastCompiledRef = useRef('');
   const previewUrlRef = useRef(null);
 
-  // L'OCR richiede sempre la chiave NVIDIA; la fase Typst richiede la chiave
-  // Google solo se il motore è Gemini (con motore NVIDIA riusa quella NVIDIA).
-  const needsGoogle = settings.typstEngine !== 'nvidia';
-  const keysReady = Boolean(settings.nvidiaApiKey && (!needsGoogle || settings.googleApiKey));
+  // Chiave Google richiesta se Gemini è motore OCR o motore Typst; chiave
+  // NVIDIA richiesta se NVIDIA è motore OCR o motore Typst.
+  const needsGoogle = settings.ocrEngine === 'gemini' || settings.typstEngine !== 'nvidia';
+  const needsNvidia = settings.ocrEngine !== 'gemini' || settings.typstEngine === 'nvidia';
+  const keysReady = Boolean(
+    (!needsNvidia || settings.nvidiaApiKey) && (!needsGoogle || settings.googleApiKey),
+  );
 
   // Anteprima locale (thumbnail) del file sorgente.
   useEffect(() => {
@@ -60,22 +63,27 @@ export default function App() {
   const handleFile = useCallback(
     (f) => {
       setFile(f);
-      if (!settings.nvidiaApiKey || (needsGoogle && !settings.googleApiKey)) {
+      if (!keysReady) {
         setSettingsOpen(true);
         return;
       }
       lastCompiledRef.current = '';
       pipe.runPipeline(f);
     },
-    [settings, pipe],
+    [keysReady, pipe],
   );
 
   const handleSaveSettings = useCallback(
     (next) => {
       saveSettings(next);
       setSettings(next);
-      // Se un file era in attesa delle chiavi, avvia ora la pipeline.
-      if (file && next.nvidiaApiKey && next.googleApiKey && pipe.phase === 'idle') {
+      // Se un file era in attesa delle chiavi, avvia ora la pipeline — ma solo
+      // se le chiavi effettivamente richieste dalla nuova configurazione ci sono.
+      const nextNeedsGoogle = next.ocrEngine === 'gemini' || next.typstEngine !== 'nvidia';
+      const nextNeedsNvidia = next.ocrEngine !== 'gemini' || next.typstEngine === 'nvidia';
+      const nextReady =
+        (!nextNeedsNvidia || next.nvidiaApiKey) && (!nextNeedsGoogle || next.googleApiKey);
+      if (file && nextReady && pipe.phase === 'idle') {
         lastCompiledRef.current = '';
         pipe.runPipeline(file);
       }

@@ -256,6 +256,85 @@ export async function geminiGenerate({ apiKey, model, system, user, temperature 
   return text;
 }
 
+// Istruzione OCR per Gemini (vision): trascrizione fedele, niente interpretazione.
+const OCR_PROMPT =
+  'Sei un sistema OCR di alta precisione. Trascrivi INTEGRALMENTE e alla ' +
+  'lettera tutto il testo presente in questa pagina (scansione o foto), ' +
+  'nell’ordine di lettura corretto (se ci sono due colonne, prima tutta la ' +
+  'colonna di sinistra, poi quella di destra). Usa Markdown: "#"/"##"/"###" ' +
+  'per i titoli secondo la gerarchia, una riga vuota tra i paragrafi, ' +
+  '_corsivo_ dove il testo è in corsivo, e le note a piè di pagina come testo ' +
+  'in fondo. NON tradurre, NON riassumere, NON correggere gli errori del ' +
+  'testo, NON aggiungere commenti o spiegazioni tue. Se una parola è ' +
+  'illeggibile trascrivila come meglio puoi. Ignora l’arredo di pagina ' +
+  '(numeri di pagina, testatine ripetute). Restituisci SOLO la trascrizione.';
+
+/**
+ * OCR di UNA pagina con Gemini (multimodale): invia l'immagine e riceve il
+ * testo trascritto in Markdown. Alternativa a Nemotron-Parse — più robusta su
+ * scansioni pessime e utilizzabile anche da web (Gemini invia gli header CORS)
+ * — ma NON estrae figure/bounding box.
+ * @param {object} p
+ * @param {string} p.apiKey
+ * @param {string} p.model         modello vision (es. "gemini-flash-latest")
+ * @param {string} p.imageDataUrl  data URL dell'immagine di pagina
+ * @param {AbortSignal} [p.signal]
+ * @returns {Promise<string>} testo trascritto (Markdown)
+ */
+export async function ocrImageGemini({ apiKey, model, imageDataUrl, signal }) {
+  if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
+  if (!imageDataUrl) throw new Error('Nessuna immagine da analizzare.');
+
+  const comma = imageDataUrl.indexOf(',');
+  const meta = imageDataUrl.slice(5, comma); // es. "image/png;base64"
+  const mimeType = meta.split(';')[0] || 'image/png';
+  const dataB64 = imageDataUrl.slice(comma + 1);
+
+  const endpoint = `${geminiBase()}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const body = {
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { inline_data: { mime_type: mimeType, data: dataB64 } },
+          { text: OCR_PROMPT },
+        ],
+      },
+    ],
+    generationConfig: { temperature: 0, maxOutputTokens: 8192 },
+  };
+
+  let res;
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === 'AbortError') throw e;
+    throw new Error(`Impossibile contattare Google Gemini (rete). ${e.message}`);
+  }
+  if (!res.ok) {
+    const detail = await safeErrorDetail(res);
+    throw new Error(`Google Gemini ha risposto ${res.status}. ${detail}`);
+  }
+  const data = await res.json();
+  const parts = data?.candidates?.[0]?.content?.parts;
+  const text = Array.isArray(parts) ? parts.map((p) => p?.text || '').join('') : '';
+  if (!text.trim()) {
+    const block = data?.promptFeedback?.blockReason;
+    const finish = data?.candidates?.[0]?.finishReason;
+    throw new Error(
+      block
+        ? `Richiesta bloccata da Gemini (${block}).`
+        : `Gemini non ha estratto testo (finishReason: ${finish || 'n/d'}).`,
+    );
+  }
+  return text.trim();
+}
+
 /**
  * Elenca i modelli Gemini disponibili per l'API key, filtrando quelli che
  * supportano `generateContent`. Ritorna gli id (senza il prefisso "models/").

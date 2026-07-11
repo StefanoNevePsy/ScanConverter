@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractPageBlocks, toTypstNvidia } from '../lib/nvidia.js';
-import { toTypst } from '../lib/gemini.js';
+import { toTypst, ocrImageGemini } from '../lib/gemini.js';
 import { compileToPdf, compileToSvg, initTypst, locateTypstError } from '../lib/typst.js';
 import { savePdf, sharePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
@@ -500,18 +500,41 @@ export function usePipeline(settings) {
           return 'error';
         }
         try {
-          const blocks = await withRetry(
-            () =>
-              extractPageBlocks({
-                apiKey: settings.nvidiaApiKey,
-                endpoint: settings.nvidiaEndpoint,
-                model: settings.nvidiaModel,
-                imageDataUrl: dataUrl,
-                signal,
-              }),
-            signal,
-            (secs) => setDetail(`${label} · servizio occupato: nuovo tentativo tra ${secs}s…`),
-          );
+          const onWait = (secs) =>
+            setDetail(`${label} · servizio occupato: nuovo tentativo tra ${secs}s…`);
+          // Gemini (vision): trascrizione Markdown, nessuna figura/bbox.
+          // NVIDIA (Nemotron-Parse): blocchi strutturati con bbox e figure.
+          const blocks =
+            settings.ocrEngine === 'gemini'
+              ? [
+                  {
+                    type: 'Text',
+                    bbox: null,
+                    text: await withRetry(
+                      () =>
+                        ocrImageGemini({
+                          apiKey: settings.googleApiKey,
+                          model: settings.geminiModel,
+                          imageDataUrl: dataUrl,
+                          signal,
+                        }),
+                      signal,
+                      onWait,
+                    ),
+                  },
+                ]
+              : await withRetry(
+                  () =>
+                    extractPageBlocks({
+                      apiKey: settings.nvidiaApiKey,
+                      endpoint: settings.nvidiaEndpoint,
+                      model: settings.nvidiaModel,
+                      imageDataUrl: dataUrl,
+                      signal,
+                    }),
+                  signal,
+                  onWait,
+                );
           if (signal.aborted) return 'aborted';
           const page = await assemblePage(blocks, dataUrl, figCounter);
           s.ocr.parts[i] = total > 1 ? `<!-- pagina ${i + 1} -->\n${page.markdown}` : page.markdown;
