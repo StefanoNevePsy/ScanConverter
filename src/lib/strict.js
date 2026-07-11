@@ -49,6 +49,86 @@ function comparisonUnits(text) {
     .filter((s) => canonicalTokens(s).length);
 }
 
+function wordSpans(text) {
+  return [...String(text || '').matchAll(/\p{L}[\p{L}\p{M}'’]*/gu)].map((m) => ({
+    raw: m[0],
+    normalized: canonicalTokens(m[0])[0] || '',
+    index: m.index || 0,
+  }));
+}
+
+function proseBoundaryBlock(raw) {
+  let content = String(raw || '').trim();
+  let marker = '';
+  const page = content.match(/^<!--\s*pagina\s+(\d+)\s*-->\s*/i);
+  if (page) {
+    marker = `<!-- pagina ${page[1]} -->`;
+    content = content.slice(page[0].length).trim();
+  }
+  const special =
+    !content ||
+    /^#{1,6}\s/.test(content) ||
+    /^!\[/.test(content) ||
+    /\\begin\{tabular\}|^\s*\|/m.test(content) ||
+    /^\s*(?:[-+*]|\d+[.)])\s+/m.test(content);
+  return { marker, content, prose: !special };
+}
+
+/**
+ * Ripara sovrapposizioni OCR tra blocchi/pagine, ad esempio
+ * «…cercando.\n\ncercando il punto nodale» → «…cercando il punto nodale».
+ * Interviene solo se la ripartenza è minuscola (forte segnale di continuazione)
+ * o se coincidono almeno tre parole consecutive.
+ */
+export function repairBoundaryOverlaps(markdown, maxOverlap = 10) {
+  const records = String(markdown || '').trim().split(/\n{2,}/).map(proseBoundaryBlock);
+  const changes = [];
+  for (let i = 0; i + 1 < records.length; i++) {
+    const left = records[i];
+    const right = records[i + 1];
+    if (!left.prose || !right.prose) continue;
+    const a = wordSpans(left.content);
+    const b = wordSpans(right.content);
+    if (!a.length || !b.length) continue;
+    let overlap = 0;
+    const limit = Math.min(maxOverlap, a.length, b.length);
+    for (let n = 1; n <= limit; n++) {
+      const suffix = a.slice(-n).map((w) => w.normalized).join(' ');
+      const prefix = b.slice(0, n).map((w) => w.normalized).join(' ');
+      if (suffix === prefix) overlap = n;
+    }
+    if (!overlap) continue;
+    const firstVisible = right.content.replace(/^[_*`"“‘«([{\s]+/u, '').charAt(0);
+    const lowerContinuation = !!firstVisible && firstVisible === firstVisible.toLocaleLowerCase('it') && firstVisible !== firstVisible.toLocaleUpperCase('it');
+    if (!lowerContinuation && overlap < 3) continue;
+
+    const cut = a[a.length - overlap].index;
+    const removed = left.content.slice(cut).trim();
+    const leftBase = left.content.slice(0, cut).replace(/[\s,;:—–-]+$/u, '').trimEnd();
+    const bridge = right.marker ? `\n${right.marker}\n` : ' ';
+    const merged = leftBase
+      ? `${leftBase}${bridge}${right.content}`.trim()
+      : [right.marker, right.content].filter(Boolean).join('\n');
+    changes.push({
+      type: 'boundary_overlap',
+      before: `${removed} ⟂ ${right.content.slice(0, 160)}`,
+      after: merged.slice(Math.max(0, leftBase.length - 80), leftBase.length + 240),
+      overlap: a.slice(-overlap).map((w) => w.raw).join(' '),
+    });
+    left.content = merged;
+    // Il marcatore della pagina destra è già stato inserito nel blocco unito.
+    // Rimuove il record assorbito e rivaluta lo stesso confine contro il
+    // successivo, così funzionano anche tre frammenti OCR sovrapposti.
+    records.splice(i + 1, 1);
+    i--;
+  }
+  const text = records
+    .filter((r) => r.marker || r.content)
+    .map((r) => [r.marker, r.content].filter(Boolean).join('\n'))
+    .join('\n\n');
+  return { text, changes };
+}
+
 /**
  * Raggruppa i token mancanti nella frase sorgente e trova automaticamente il
  * passaggio PDF/Typst con la maggiore sovrapposizione lessicale.
@@ -314,7 +394,10 @@ export function markdownToStrictTypst(markdown, plan = {}) {
       out.push(lines.map((l) => `+ ${inlineMarkdownToTypst(l.replace(/^\s*\d+[.)]\s+/, ''))}`).join('\n'));
       continue;
     }
-    emitProse(lines.map(inlineMarkdownToTypst).join('\n'));
+    emitProse(lines.map((line) => {
+      const pageLine = line.trim().match(/^<!--\s*pagina\s+(\d+)\s*-->$/i);
+      return pageLine ? `// pagina ${pageLine[1]}` : inlineMarkdownToTypst(line);
+    }).join('\n'));
   }
   return out.join('\n\n');
 }

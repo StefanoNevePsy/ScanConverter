@@ -35,6 +35,7 @@ import {
   compareTokenInventory,
   compareTokenSequences,
   missingInvariants,
+  repairBoundaryOverlaps,
   sourcePlainText,
 } from '../lib/strict.js';
 import { requestStrictDifferenceReview, requestStrictLayoutPlan } from '../lib/layoutPlan.js';
@@ -554,8 +555,9 @@ export function usePipeline(settings) {
     async (extracted, fileName, signal) => {
       const id = sessionRef.current?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       if (settings.formatWorkflow === 'strict') {
-        let canonicalText = extracted;
-        let corrections = [];
+        const boundaryRepair = repairBoundaryOverlaps(extracted);
+        let canonicalText = boundaryRepair.text;
+        let corrections = boundaryRepair.changes;
         if (settings.fixTypos) {
           setDetail('Correzione conservativa con registro delle modifiche…');
           const proof = await proofreadBody({
@@ -565,7 +567,7 @@ export function usePipeline(settings) {
             onProgress: (done, total) => setDetail(`Correzione ${done}/${total} paragrafi…`),
           });
           canonicalText = proof.code;
-          corrections = proof.changes;
+          corrections = [...corrections, ...proof.changes];
         }
         setDetail('Il modello progetta il layout senza riscrivere il testo…');
         const layoutPlan = await withRetry(

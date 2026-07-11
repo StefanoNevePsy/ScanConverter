@@ -226,6 +226,13 @@ Nelle impostazioni sono disponibili due percorsi indipendenti:
   sono verificati separatamente. Se il confronto fallisce, il PDF non viene
   considerato verificato.
 
+Prima del rendering, la modalità ad alta fedeltà ripara inoltre le
+**sovrapposizioni ai confini OCR**: se un blocco termina con le stesse parole
+con cui il successivo riparte in minuscolo (per esempio `…cercando.` /
+`cercando il punto…`), conserva una sola occorrenza, riunisce il paragrafo e
+registra l'intervento nel report delle correzioni. Le ripetizioni tra paragrafi
+autonomi restano invariate.
+
 La seconda modalità può eseguire, opzionalmente, anche l'altro motore OCR sulla
 stessa immagine. Il risultato alternativo non sostituisce il testo principale:
 serve soltanto a segnalare le pagine discordanti da controllare. Questa opzione

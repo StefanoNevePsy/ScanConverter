@@ -7,6 +7,7 @@ import {
   compareTokenSequences,
   inlineMarkdownToTypst,
   missingInvariants,
+  repairBoundaryOverlaps,
   sourcePlainText,
 } from '../src/lib/strict.js';
 
@@ -42,6 +43,30 @@ test('le omissioni sono affiancate alla frase PDF più simile', () => {
   assert.match(issues[0].source, /Bologna/);
   assert.match(issues[0].rendered, /convegno/);
   assert.ok(issues[0].similarity > 0.5);
+});
+
+test('ripara una parola sovrapposta e riunisce il paragrafo', () => {
+  const source = 'Noi discutevamo fra di noi cercando.\n\ncercando il punto nodale, potevamo intervenire.';
+  const repaired = repairBoundaryOverlaps(source);
+  assert.equal(repaired.text, 'Noi discutevamo fra di noi cercando il punto nodale, potevamo intervenire.');
+  assert.equal(repaired.changes.length, 1);
+  assert.equal(repaired.changes[0].overlap, 'cercando');
+});
+
+test('conserva i marcatori pagina dentro una frase riunita', () => {
+  const source = 'Stavamo cercando il punto.\n\n<!-- pagina 2 -->\ncercando il punto nodale corretto.';
+  const repaired = repairBoundaryOverlaps(source);
+  assert.match(repaired.text, /Stavamo\n<!-- pagina 2 -->\ncercando il punto nodale/);
+  const body = buildStrictDocument(repaired.text).body;
+  assert.match(body, /Stavamo\n\/\/ pagina 2\ncercando il punto nodale/);
+  assert.doesNotMatch(body, /<!--/);
+});
+
+test('non elimina ripetizioni intenzionali tra paragrafi autonomi', () => {
+  const source = 'La conclusione è Fine.\n\nFine della storia e nuovo capitolo.';
+  const repaired = repairBoundaryOverlaps(source);
+  assert.equal(repaired.text, source);
+  assert.equal(repaired.changes.length, 0);
 });
 
 test('numeri, percentuali e DOI restano invarianti', () => {
