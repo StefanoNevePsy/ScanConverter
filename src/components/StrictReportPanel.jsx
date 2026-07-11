@@ -33,6 +33,18 @@ export default function StrictReportPanel({ report }) {
       </button>
       {open && (
         <div className="space-y-4 border-t border-border/60 px-4 py-3 text-[13px]">
+          {report.layoutPlan?.document && (
+            <div>
+              <div className="font-medium text-ink">Piano editoriale applicato</div>
+              <p className="mt-1 text-muted">
+                Font {report.layoutPlan.document.font} · titoli {report.layoutPlan.document.headfont} ·
+                margini {report.layoutPlan.document.margin} · densità {report.layoutPlan.document.density} ·
+                {report.layoutPlan.document.align === 'ragged' ? ' allineamento a bandiera' : ' testo giustificato'}.
+                Il modello ha assegnato uno stile speciale a {report.layoutPlan.blocks?.length || 0} blocchi,
+                senza ricevere la possibilità di modificarne il contenuto.
+              </p>
+            </div>
+          )}
           {report.pdf && (
             <div>
               <div className="font-medium text-ink">Controllo del PDF compilato</div>

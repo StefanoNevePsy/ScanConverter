@@ -69,3 +69,17 @@ test('il testo OCR non può eseguire codice Typst', () => {
   assert.match(rendered, /\\#set/);
   assert.match(rendered, /\\\$formula\\\$/);
 });
+
+test('il piano editoriale cambia solo lo stile e conserva i blocchi', () => {
+  const source = '# Titolo\n\nUna citazione importante.\n\nParagrafo finale.';
+  const doc = buildStrictDocument(source, {
+    document: { font: 'ptserif', headfont: 'ptsans', margin: 'xwide', density: 'airy' },
+    blocks: [{ id: 'b-2', style: 'quote' }],
+  });
+  assert.match(doc.preamble, /PT Serif/);
+  assert.match(doc.preamble, /right: 6cm/);
+  assert.match(doc.body, /stroke: \(left:/);
+  for (const text of ['Titolo', 'Una citazione importante', 'Paragrafo finale']) {
+    assert.match(doc.body, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+});

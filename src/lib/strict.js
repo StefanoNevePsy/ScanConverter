@@ -172,10 +172,26 @@ function latexTable(block) {
 }
 
 /** Converte un documento Markdown OCR in corpo Typst deterministico. */
-export function markdownToStrictTypst(markdown) {
+export function markdownToStrictTypst(markdown, plan = {}) {
   const blocks = String(markdown || '').trim().split(/\n{2,}/);
+  const styleMap = new Map();
+  for (const item of plan.blocks || []) styleMap.set(item.id, item.style);
   const out = [];
-  for (const original of blocks) {
+  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
+    const original = blocks[blockIndex];
+    const blockId = `b-${blockIndex + 1}`;
+    const emitProse = (rendered) => {
+      const style = styleMap.get(blockId);
+      if (style === 'quote') {
+        out.push(`#block(inset: (left: 1em), stroke: (left: 0.5pt + luma(170)))[#text(style: "italic")[${rendered}]]`);
+      } else if (style === 'center') {
+        out.push(`#align(center)[${rendered}]`);
+      } else if (style === 'compact') {
+        out.push(`#block(spacing: 0.45em)[${rendered}]`);
+      } else {
+        out.push(rendered);
+      }
+    };
     let block = original.trim();
     if (!block) continue;
     const leadingPage = block.match(/^<!--\s*pagina\s+(\d+)\s*-->\s*/i);
@@ -218,9 +234,22 @@ export function markdownToStrictTypst(markdown) {
       out.push(lines.map((l) => `+ ${inlineMarkdownToTypst(l.replace(/^\s*\d+[.)]\s+/, ''))}`).join('\n'));
       continue;
     }
-    out.push(lines.map(inlineMarkdownToTypst).join('\n'));
+    emitProse(lines.map(inlineMarkdownToTypst).join('\n'));
   }
   return out.join('\n\n');
+}
+
+export function describeStrictBlocks(markdown) {
+  return String(markdown || '').trim().split(/\n{2,}/).map((original, i) => {
+    const text = sourcePlainText(original).replace(/\s+/g, ' ').trim();
+    let kind = 'prose';
+    if (/^<!--\s*pagina/i.test(original.trim())) kind = 'page-or-prose';
+    if (/^#{1,6}\s/m.test(original.trim())) kind = 'heading';
+    else if (/^!\[/m.test(original.trim())) kind = 'figure';
+    else if (/\\begin\{tabular\}|^\s*\|/m.test(original)) kind = 'table';
+    else if (/^\s*(?:[-+*]|\d+[.)])\s+/m.test(original)) kind = 'list';
+    return { id: `b-${i + 1}`, kind, text: text.slice(0, 320) };
+  });
 }
 
 /** Estrae il testo canonico dal Markdown, escludendo solo metadati e path. */
@@ -242,9 +271,9 @@ export function sourcePlainText(markdown) {
 }
 
 /** Crea un documento completo usando il preambolo locale predefinito. */
-export function buildStrictDocument(markdown) {
-  const body = markdownToStrictTypst(markdown);
-  const preamble = buildPreamble({}, { title: extractTitle(body) });
+export function buildStrictDocument(markdown, layoutPlan = {}) {
+  const body = markdownToStrictTypst(markdown, layoutPlan);
+  const preamble = buildPreamble(layoutPlan.document || {}, { title: extractTitle(body) });
   return { preamble, body, sourceText: sourcePlainText(markdown) };
 }
 

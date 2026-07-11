@@ -249,7 +249,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
           </div>
 
           {/* Motore per la strutturazione Typst (fase 2). */}
-          <div className={form.formatWorkflow === 'strict' ? 'opacity-50' : ''}>
+          <div>
             <span className="mb-1.5 block text-sm font-medium text-ink">
               Motore per il Typst
             </span>
@@ -259,14 +259,12 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             <div className="grid grid-cols-2 gap-2">
               <EngineButton
                 active={!engineNvidia}
-                disabled={form.formatWorkflow === 'strict'}
                 onClick={() => setEngine('gemini')}
                 title="Google Gemini"
                 sub="veloce, ottimo layout"
               />
               <EngineButton
                 active={engineNvidia}
-                disabled={form.formatWorkflow === 'strict'}
                 onClick={() => setEngine('nvidia')}
                 title="Modello NVIDIA"
                 sub="alternativa se Gemini è limitato"
@@ -275,15 +273,17 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
           </div>
 
           {/* Modello del motore attivo, con elenco auto-aggiornante. */}
-          {form.formatWorkflow === 'strict' ? (
+          {form.formatWorkflow === 'strict' && (
             <div className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-muted">
-              Nel workflow «Fedeltà massima» il corpo Typst è prodotto
-              localmente con regole deterministiche: il modello di
-              formattazione non viene chiamato.
+              Nel workflow «Fedeltà massima» questo modello sceglie soltanto
+              il piano editoriale (font, margini, densità e stili dei blocchi).
+              Il testo e il codice Typst sono prodotti localmente e non possono
+              essere riscritti dal modello.
             </div>
-          ) : engineNvidia ? (
+          )}
+          {engineNvidia ? (
             <ModelSelect
-              label="Modello NVIDIA per il Typst"
+              label={form.formatWorkflow === 'strict' ? 'Modello NVIDIA per il piano editoriale' : 'Modello NVIDIA per il Typst'}
               hint="Consigliato un modello istruct generico (es. llama-3.3-70b-instruct)."
               value={form.nvidiaTypstModel}
               onChange={update('nvidiaTypstModel')}
@@ -296,7 +296,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             />
           ) : (
             <ModelSelect
-              label="Modello Gemini per il Typst"
+              label={form.formatWorkflow === 'strict' ? 'Modello Gemini per il piano editoriale' : 'Modello Gemini per il Typst'}
               hint="L'elenco si aggiorna dalla tua chiave Google."
               value={form.geminiTypstModel}
               onChange={update('geminiTypstModel')}

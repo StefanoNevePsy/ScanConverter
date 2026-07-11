@@ -35,6 +35,7 @@ import {
   missingInvariants,
   sourcePlainText,
 } from '../lib/strict.js';
+import { requestStrictLayoutPlan } from '../lib/layoutPlan.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import {
   saveSession,
@@ -195,6 +196,7 @@ export function usePipeline(settings) {
       workflow: 'strict',
       corrections: s.corrections || [],
       ocrComparisons: s.ocrComparisons || [],
+      layoutPlan: s.layoutPlan || null,
       pdf: { ...diff, missingInvariants: invariants },
     });
     if (!diff.ok || invariants.length) {
@@ -263,6 +265,7 @@ export function usePipeline(settings) {
       corrections: s.corrections || [],
       ocrComparisons: s.ocrComparisons || [],
       verified: !!s.verified,
+      layoutPlan: s.layoutPlan || null,
       status: allDone ? 'done' : 'paused',
     });
   }, []);
@@ -518,7 +521,13 @@ export function usePipeline(settings) {
           canonicalText = proof.code;
           corrections = proof.changes;
         }
-        const strict = buildStrictDocument(canonicalText);
+        setDetail('Il modello progetta il layout senza riscrivere il testo…');
+        const layoutPlan = await withRetry(
+          () => requestStrictLayoutPlan({ settings, markdown: canonicalText, signal }),
+          signal,
+          (secs) => setDetail(`Pianificazione layout · nuovo tentativo tra ${secs}s…`),
+        );
+        const strict = buildStrictDocument(canonicalText, layoutPlan);
         const previousComparisons = sessionRef.current?.ocr?.comparisons || [];
         sessionRef.current = {
           id,
@@ -527,6 +536,7 @@ export function usePipeline(settings) {
           canonicalText,
           corrections,
           ocrComparisons: previousComparisons,
+          layoutPlan,
           workflow: 'strict',
           verified: false,
           chunks: [{
@@ -543,6 +553,7 @@ export function usePipeline(settings) {
           workflow: 'strict',
           corrections,
           ocrComparisons: previousComparisons,
+          layoutPlan,
           pdf: null,
         });
         setTypstCode(combineDocument(strict.preamble, [strict.body]));
@@ -918,6 +929,7 @@ export function usePipeline(settings) {
         canonicalText: meta.canonicalText || meta.rawText,
         corrections: meta.corrections || [],
         ocrComparisons: meta.ocrComparisons || [],
+        layoutPlan: meta.layoutPlan || null,
         verified: meta.verified === true,
       };
       setRawText(meta.rawText || '');
@@ -928,6 +940,7 @@ export function usePipeline(settings) {
               workflow: 'strict',
               corrections: meta.corrections || [],
               ocrComparisons: meta.ocrComparisons || [],
+              layoutPlan: meta.layoutPlan || null,
               pdf: null,
             }
           : null,

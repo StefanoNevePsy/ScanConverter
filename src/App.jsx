@@ -42,12 +42,12 @@ export default function App() {
   // NVIDIA richiesta se NVIDIA è motore OCR o motore Typst.
   const needsGoogle =
     settings.ocrEngine === 'gemini' ||
-    (settings.formatWorkflow !== 'strict' && settings.typstEngine !== 'nvidia') ||
+    settings.typstEngine !== 'nvidia' ||
     (settings.formatWorkflow === 'strict' && settings.compareOcr) ||
     (settings.formatWorkflow === 'strict' && settings.fixTypos && settings.fixEngine === 'gemini');
   const needsNvidia =
     settings.ocrEngine !== 'gemini' ||
-    (settings.formatWorkflow !== 'strict' && settings.typstEngine === 'nvidia') ||
+    settings.typstEngine === 'nvidia' ||
     (settings.formatWorkflow === 'strict' && settings.compareOcr) ||
     (settings.formatWorkflow === 'strict' && settings.fixTypos && settings.fixEngine !== 'gemini');
   const keysReady = Boolean(
@@ -91,12 +91,12 @@ export default function App() {
       // se le chiavi effettivamente richieste dalla nuova configurazione ci sono.
       const nextNeedsGoogle =
         next.ocrEngine === 'gemini' ||
-        (next.formatWorkflow !== 'strict' && next.typstEngine !== 'nvidia') ||
+        next.typstEngine !== 'nvidia' ||
         (next.formatWorkflow === 'strict' && next.compareOcr) ||
         (next.formatWorkflow === 'strict' && next.fixTypos && next.fixEngine === 'gemini');
       const nextNeedsNvidia =
         next.ocrEngine !== 'gemini' ||
-        (next.formatWorkflow !== 'strict' && next.typstEngine === 'nvidia') ||
+        next.typstEngine === 'nvidia' ||
         (next.formatWorkflow === 'strict' && next.compareOcr) ||
         (next.formatWorkflow === 'strict' && next.fixTypos && next.fixEngine !== 'gemini');
       const nextReady =
