@@ -84,11 +84,18 @@ export default function TypstEditor({
     const ta = taRef.current;
     if (!ta) return;
     const pos = matches[n];
-    ta.focus();
-    ta.setSelectionRange(pos, pos + query.length);
     const line = value.slice(0, pos).split('\n').length;
-    ta.scrollTop = Math.max(0, (line - 1) * LINE_H - ta.clientHeight / 2);
-    syncScroll();
+    // Applica la selezione dopo il render causato da setCurrent: sui WebView
+    // React può altrimenti ripristinare il cursore e rendere invisibile il
+    // risultato appena trovato.
+    requestAnimationFrame(() => {
+      const editor = taRef.current;
+      if (!editor) return;
+      editor.focus({ preventScroll: true });
+      editor.setSelectionRange(pos, pos + query.length, 'forward');
+      editor.scrollTop = Math.max(0, (line - 1) * LINE_H - editor.clientHeight / 2);
+      syncScroll();
+    });
   };
 
   // Salto al primo risultato di una ricerca esterna (dopo il ricalcolo).
@@ -294,7 +301,7 @@ export default function TypstEditor({
           spellCheck={false}
           disabled={disabled}
           placeholder={disabled ? '' : 'Il codice Typst apparirà qui dopo l’elaborazione…'}
-          className="min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-[13px] leading-6 text-ink caret-primary placeholder:text-faint focus:outline-none"
+          className="typst-editor min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-[13px] leading-6 text-ink caret-primary placeholder:text-faint focus:outline-none"
         />
       </div>
 
