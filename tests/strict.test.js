@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildStrictDocument,
+  compareTokenInventory,
   compareTokenSequences,
   inlineMarkdownToTypst,
   missingInvariants,
@@ -20,6 +21,13 @@ test('il confronto rileva omissioni, aggiunte e duplicati', () => {
 
 test('accenti e punteggiatura non producono falsi positivi', () => {
   assert.equal(compareTokenSequences('Perché è così.', 'Perche e cosi').ok, true);
+});
+
+test('sillabazione PDF e ordine tabellare non simulano omissioni', () => {
+  assert.equal(compareTokenInventory('testo necessario completo', 'testo neces- sario completo').ok, true);
+  const reordered = compareTokenInventory('nome valore alfa 42', 'nome alfa valore 42');
+  assert.equal(reordered.ok, true);
+  assert.equal(compareTokenSequences('nome valore alfa 42', 'nome alfa valore 42').ok, false);
 });
 
 test('numeri, percentuali e DOI restano invarianti', () => {

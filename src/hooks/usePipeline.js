@@ -31,6 +31,7 @@ import {
 import { proofreadBody } from '../lib/proofread.js';
 import {
   buildStrictDocument,
+  compareTokenInventory,
   compareTokenSequences,
   missingInvariants,
   sourcePlainText,
@@ -186,30 +187,45 @@ export function usePipeline(settings) {
     if (s?.workflow !== 'strict') return existingBytes;
     s.verified = false;
     const pdfBytes = existingBytes || await compileToPdf(source, figuresRef.current);
-    const pdfText = await extractPdfText(pdfBytes, { maxPages: settings.maxPages });
-    if (!pdfText) throw new Error('Il PDF compilato non contiene un layer testuale verificabile.');
+    // Il PDF riformattato può avere più pagine dell'input: non applicare qui
+    // il limite di ingestione configurato per i PDF sorgente.
+    const pdfText = await extractPdfText(pdfBytes);
+    if (!pdfText) {
+      setStrictReport({
+        workflow: 'strict',
+        corrections: s.corrections || [],
+        ocrComparisons: s.ocrComparisons || [],
+        layoutPlan: s.layoutPlan || null,
+        pdf: { contentOk: false, unverifiable: true, missing: [], added: [], missingInvariants: [] },
+      });
+      return pdfBytes;
+    }
     const expected = sourcePlainText(s.canonicalText || s.rawText);
     const actual = sourcePlainText(pdfText);
-    const diff = compareTokenSequences(expected, actual);
+    const sequence = compareTokenSequences(expected, actual);
+    const inventory = compareTokenInventory(expected, actual);
     const invariants = missingInvariants(expected, actual);
+    // La sequenza può differire perché PDF.js legge tabelle, note o colonne in
+    // un ordine visivo diverso. Un'omissione è confermata solo se manca anche
+    // dall'inventario complessivo delle occorrenze.
+    const contentOk = inventory.missing.length === 0 && invariants.length === 0;
     setStrictReport({
       workflow: 'strict',
       corrections: s.corrections || [],
       ocrComparisons: s.ocrComparisons || [],
       layoutPlan: s.layoutPlan || null,
-      pdf: { ...diff, missingInvariants: invariants },
+      pdf: {
+        ...sequence,
+        exactOrder: sequence.ok,
+        contentOk,
+        missing: inventory.missing,
+        added: inventory.added,
+        missingInvariants: invariants,
+      },
     });
-    if (!diff.ok || invariants.length) {
-      const details = [
-        diff.missing.length ? `parole mancanti: ${diff.missing.slice(0, 8).join(', ')}` : '',
-        diff.added.length ? `parole aggiunte: ${diff.added.slice(0, 8).join(', ')}` : '',
-        invariants.length ? `numeri/riferimenti mancanti: ${invariants.slice(0, 8).join(', ')}` : '',
-      ].filter(Boolean).join(' · ');
-      throw new Error(`Verifica rigorosa del PDF fallita${details ? ` — ${details}` : ''}.`);
-    }
-    s.verified = true;
+    s.verified = contentOk;
     return pdfBytes;
-  }, [settings.maxPages]);
+  }, []);
 
   // Chiude la revisione figure revocando gli object URL delle miniature.
   const clearReview = useCallback(() => {

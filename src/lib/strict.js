@@ -11,10 +11,35 @@ import { buildPreamble, extractTitle } from './preamble.js';
 /** Testo confrontabile, Unicode-aware, con numeri e ordine preservati. */
 export function canonicalTokens(text) {
   return (text || '')
+    // Ricompone la sillabazione tipografica introdotta a fine riga nel PDF
+    // («neces- sario»), che non è una modifica del contenuto.
+    .replace(/(\p{L})-\s+(\p{L})/gu, '$1$2')
     .normalize('NFKD')
     .replace(/\p{M}/gu, '')
     .toLocaleLowerCase('it')
     .match(/[\p{L}\p{N}]+/gu) || [];
+}
+
+/** Confronto a multinsieme: robusto all'ordine di estrazione di tabelle/note. */
+export function compareTokenInventory(source, output, maxDetails = 20) {
+  const count = (tokens) => {
+    const map = new Map();
+    for (const token of tokens) map.set(token, (map.get(token) || 0) + 1);
+    return map;
+  };
+  const a = count(canonicalTokens(source));
+  const b = count(canonicalTokens(output));
+  const missing = [];
+  const added = [];
+  for (const [token, n] of a) {
+    const delta = n - (b.get(token) || 0);
+    for (let i = 0; i < delta && missing.length < maxDetails; i++) missing.push(token);
+  }
+  for (const [token, n] of b) {
+    const delta = n - (a.get(token) || 0);
+    for (let i = 0; i < delta && added.length < maxDetails; i++) added.push(token);
+  }
+  return { ok: !missing.length && !added.length, missing, added };
 }
 
 /**

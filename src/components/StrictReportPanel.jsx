@@ -4,7 +4,7 @@ import { IconAlert, IconCheck } from './Icons.jsx';
 export default function StrictReportPanel({ report }) {
   const [open, setOpen] = useState(false);
   if (!report || report.workflow !== 'strict') return null;
-  const pdfOk = report.pdf?.ok && !(report.pdf?.missingInvariants?.length);
+  const pdfOk = report.pdf?.contentOk === true;
   const comparisons = (report.ocrComparisons || []).filter(Boolean);
   const uncertain = comparisons.filter((c) => c.error || c.agreement < 0.97);
   const corrections = report.corrections || [];
@@ -24,7 +24,9 @@ export default function StrictReportPanel({ report }) {
             : <IconCheck width={16} height={16} className="text-success" />}
           <span>
             <span className="font-medium">Workflow fedeltà massima</span>
-            {' · '}{report.pdf ? (pdfOk ? 'PDF verificato parola per parola' : 'verifica PDF fallita') : 'verifica in corso'}
+            {' · '}{report.pdf
+              ? (pdfOk ? 'contenuto del PDF verificato' : 'PDF generato con avviso di verifica')
+              : 'verifica in corso'}
             {corrections.length ? ` · ${corrections.length} correzioni registrate` : ''}
             {uncertain.length ? ` · ${uncertain.length} pagine OCR discordanti` : ''}
           </span>
@@ -49,12 +51,21 @@ export default function StrictReportPanel({ report }) {
             <div>
               <div className="font-medium text-ink">Controllo del PDF compilato</div>
               <p className="mt-1 text-muted">
-                {report.pdf.matched}/{report.pdf.sourceCount} parole canoniche allineate; output {report.pdf.outputCount} parole.
+                {report.pdf.unverifiable
+                  ? 'Il PDF non espone un layer testuale verificabile; il file resta comunque disponibile.'
+                  : `${report.pdf.matched}/${report.pdf.sourceCount} parole in ordine; output ${report.pdf.outputCount} parole.${
+                      report.pdf.exactOrder ? '' : ' Tabelle, note o impaginazione possono cambiare l’ordine di estrazione.'
+                    }`}
               </p>
               {!!report.pdf.missing?.length && <p className="mt-1 text-danger">Mancanti: {report.pdf.missing.join(', ')}</p>}
               {!!report.pdf.added?.length && <p className="mt-1 text-danger">Aggiunte: {report.pdf.added.join(', ')}</p>}
               {!!report.pdf.missingInvariants?.length && (
                 <p className="mt-1 text-danger">Numeri/riferimenti mancanti: {report.pdf.missingInvariants.join(', ')}</p>
+              )}
+              {!pdfOk && (
+                <p className="mt-2 text-xs text-muted">
+                  Il PDF non viene bloccato: confronta i termini indicati con il pannello OCR prima dell’uso definitivo.
+                </p>
               )}
             </div>
           )}
