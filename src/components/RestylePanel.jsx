@@ -121,7 +121,7 @@ const GROUPS = [
       { id: 'numbered', label: 'Titoli numerati', hint: 'Numera i titoli delle sezioni (heading numbering "1.1").' },
       { id: 'runninghead', label: 'Testatina', hint: 'Aggiungi una testatina con il titolo del documento.' },
       { id: 'noindent', label: 'Senza rientro', hint: 'Paragrafi senza rientro di prima riga.' },
-      { id: 'hyphenate', label: 'Sillabazione', hint: 'Abilita la sillabazione automatica italiana.' },
+      { id: 'hyphenate', label: 'Sillabazione (opzionale)', hint: 'Abilita esplicitamente la sillabazione automatica italiana; normalmente resta disattivata.' },
     ],
   },
 ];

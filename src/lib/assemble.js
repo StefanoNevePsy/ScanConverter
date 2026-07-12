@@ -10,6 +10,7 @@ import { loadImage, cropToPng } from './figures.js';
 const PICTURE_TYPES = new Set(['Picture', 'Figure', 'Image']);
 const CAPTION_TYPES = new Set(['Caption']);
 const FOOTNOTE_TYPES = new Set(['Footnote', 'Footnote-text', 'FootnoteText']);
+const NOTE_PREFIX_RE = /^(?:[*†‡]|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|\d{1,2}[.)]?)\s+(?=\p{L})/u;
 // Arredo di pagina della scansione (testatine, numeri di pagina): non è
 // contenuto e sporca sia il prompt sia la verifica di fedeltà. Le vere note
 // a piè di pagina (Footnote) invece SONO contenuto e restano.
@@ -31,7 +32,7 @@ function isFootnoteBlock(b) {
   if (FOOTNOTE_TYPES.has(b?.type)) return true;
   if (b?.type !== 'Text' || !b?.bbox || (b.bbox.ymin ?? 0) < 0.7) return false;
   const text = String(b.text || '').trim();
-  return /^(?:[*†‡]\s+|[—–-]\s*(?:trad\.|traduzione\b))/iu.test(text);
+  return NOTE_PREFIX_RE.test(text) || /^(?:[—–-]\s*(?:trad\.|traduzione\b))/iu.test(text);
 }
 
 const cy = (b) => ((b.bbox?.ymin ?? 0) + (b.bbox?.ymax ?? 0)) / 2;
@@ -143,7 +144,7 @@ export function footnoteMarkdown(text) {
   const note = String(text || '')
     .trim()
     // L'asterisco è normalmente il richiamo grafico, non parte della nota.
-    .replace(/^\s*[*†‡]\s*/, '')
+    .replace(NOTE_PREFIX_RE, '')
     .replace(/\s*\n\s*/g, ' ');
   return note ? `<footnote>${note}</footnote>` : '';
 }
@@ -364,7 +365,15 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
   // testo a piè pagina senza interrompere il capitolo successivo.
   if (pendingFootnotes.length) {
     const notes = pendingFootnotes.join(' ');
-    if (lastProseIndex >= 0) lines[lastProseIndex] += ` ${notes}`;
+    if (lastProseIndex >= 0) {
+      // Se l'OCR ha conservato il richiamo grafico in apice/asterisco, Typst
+      // ne genererà già uno per #footnote: rimuovilo per evitare duplicati.
+      lines[lastProseIndex] = lines[lastProseIndex].replace(
+        /\s*(?:<sup>\s*\d{1,2}\s*<\/sup>|[⁰¹²³⁴⁵⁶⁷⁸⁹]+|[*†‡])\s*$/u,
+        '',
+      );
+      lines[lastProseIndex] += ` ${notes}`;
+    }
     else lines.push(notes);
   }
 

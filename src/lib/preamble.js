@@ -89,8 +89,15 @@ export function buildPreamble(sel = {}, opts = {}) {
         : '1.2em';
   const sizeKey = TEXT_SIZE[sel.textsize] ? sel.textsize : 'normal';
   const headingSizes = HEADING_SIZE[sizeKey];
-  const textOptions = [`font: "${esc(f.body)}"`, `size: ${TEXT_SIZE[sizeKey]}`, 'lang: "it"'];
-  if (extras.has('hyphenate')) textOptions.push('hyphenate: true');
+  const textOptions = [
+    `font: "${esc(f.body)}"`,
+    `size: ${TEXT_SIZE[sizeKey]}`,
+    'lang: "it"',
+    // Typst può sillabare automaticamente in base alla lingua. La scelta
+    // predefinita dell'app è esplicitamente NO: si abilita solo dall'opzione
+    // «Sillabazione» nel pannello di impaginazione.
+    `hyphenate: ${extras.has('hyphenate') ? 'true' : 'false'}`,
+  ];
 
   const lines = [
     `#set page(${pageParts.join(', ')})`,
@@ -111,4 +118,15 @@ export function buildPreamble(sel = {}, opts = {}) {
     `#show par: set block(spacing: ${spacing})`,
   );
   return lines.join('\n');
+}
+
+/** Migra i vecchi documenti: se manca la scelta, disattiva la sillabazione. */
+export function ensureExplicitHyphenation(code) {
+  const source = String(code || '');
+  if (/\bhyphenate\s*:/u.test(source)) return source;
+  const textSet = /#set\s+text\(([^\n)]*)\)/u;
+  if (textSet.test(source)) {
+    return source.replace(textSet, (_, options) => `#set text(${options.trim()}, hyphenate: false)`);
+  }
+  return `#set text(hyphenate: false)\n${source}`;
 }

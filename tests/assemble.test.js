@@ -97,6 +97,23 @@ test('non scarta una footnote OCR classificata genericamente come Text', async (
   assert.match(page.markdown, /Famiglia\. — Trad\. inglese/);
 });
 
+test('riconosce richiami di nota numerici e rimuove l’apice duplicato', async () => {
+  const page = await assemblePage([
+    {
+      type: 'Text',
+      text: 'Testo con richiamo <sup>1</sup>',
+      bbox: { xmin: 0.1, xmax: 0.8, ymin: 0.4, ymax: 0.5 },
+    },
+    {
+      type: 'Text',
+      text: '1 Nota bibliografica completa.',
+      bbox: { xmin: 0.08, xmax: 0.8, ymin: 0.84, ymax: 0.9 },
+    },
+  ], '', { next: () => 1 });
+  assert.equal(page.markdown, 'Testo con richiamo <footnote>Nota bibliografica completa.</footnote>');
+  assert.equal(footnoteMarkdown('¹ Nota in apice.'), '<footnote>Nota in apice.</footnote>');
+});
+
 test('non scarta numeri che fanno parte del contenuto', () => {
   assert.equal(isPageFurniture({
     type: 'Text',

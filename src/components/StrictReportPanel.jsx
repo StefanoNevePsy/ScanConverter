@@ -88,6 +88,10 @@ export default function StrictReportPanel({
               {!!report.pdf.issues?.length && (
                 <div className="mt-4 space-y-3">
                   <div className="font-medium text-ink">Confronto automatico per frase</div>
+                  <p className="text-xs text-muted">
+                    Il riquadro destro è il testo estratto tecnicamente dal PDF, non sempre ciò che si vede sulla pagina.
+                    Se la parola è visivamente intera, conferma l’artefatto; se è davvero spezzata nel PDF, ripristina il blocco OCR.
+                  </p>
                   <div className="max-h-[min(65vh,36rem)] space-y-3 overflow-y-auto overscroll-contain pr-1">
                   {report.pdf.issues.map((issue, issueIndex) => {
                     const review = report.pdf.aiReview?.find((r) => r.id === issue.id);
@@ -132,7 +136,7 @@ export default function StrictReportPanel({
                               disabled={busy}
                               onClick={() => runIssueAction(issueIndex, 'mark-artifact')}
                               className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-ink hover:bg-surface-2 disabled:opacity-50"
-                            >È un artefatto</button>
+                            >Conferma artefatto</button>
                             <button
                               type="button"
                               disabled={busy}
@@ -155,7 +159,7 @@ export default function StrictReportPanel({
                             <div className="mt-2 rounded-md border border-accent/20 bg-accent/5 p-2">
                               <div className="font-medium text-ink">
                                 Esito IA: {passageReview.choice === 'artifact'
-                                  ? 'differenza di estrazione, testo presente'
+                                  ? 'nessuna correzione testuale necessaria'
                                   : passageReview.choice === 'canonical'
                                     ? 'ripristinare integralmente la fonte OCR'
                                     : 'proposta di ricostruzione completa'}
@@ -171,7 +175,9 @@ export default function StrictReportPanel({
                                 disabled={busy || passageReview.safe !== true}
                                 onClick={() => runIssueAction(issueIndex, 'apply-ai')}
                                 className="mt-2 rounded-md bg-accent px-2.5 py-1.5 font-medium text-white disabled:opacity-40"
-                              >Applica esito IA</button>
+                              >{passageReview.choice === 'artifact'
+                                ? 'Conferma e chiudi la segnalazione'
+                                : 'Applica esito IA'}</button>
                               {!passageReview.safe && (
                                 <span className="ml-2 text-warning">Bloccato: possibile perdita di testo o numeri.</span>
                               )}

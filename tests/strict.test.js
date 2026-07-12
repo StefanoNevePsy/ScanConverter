@@ -253,6 +253,10 @@ test('il testo OCR non può eseguire codice Typst', () => {
   assert.match(rendered, /\\\$formula\\\$/);
 });
 
+test('converte le cifre in apice in richiami Typst reali', () => {
+  assert.equal(inlineMarkdownToTypst('Citazione¹ e volume².'), 'Citazione#super[1] e volume#super[2].');
+});
+
 test('il piano editoriale cambia solo lo stile e conserva i blocchi', () => {
   const source = '# Titolo\n\nUna citazione importante.\n\nParagrafo finale.';
   const doc = buildStrictDocument(source, {

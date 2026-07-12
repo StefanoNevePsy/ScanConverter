@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPreamble } from '../src/lib/preamble.js';
+import { buildPreamble, ensureExplicitHyphenation } from '../src/lib/preamble.js';
 import { normalizeHeadingLevels } from '../src/lib/session.js';
 
 test('genera le nuove opzioni di impaginazione localmente', () => {
@@ -20,6 +20,18 @@ test('genera le nuove opzioni di impaginazione localmente', () => {
   assert.match(preamble, /hyphenate: true/);
   assert.match(preamble, /align\(center, it\)/);
   assert.match(preamble, /first-line-indent: 0.7em/);
+});
+
+test('disattiva la sillabazione salvo scelta esplicita e migra i vecchi documenti', () => {
+  assert.match(buildPreamble({}), /hyphenate: false/);
+  assert.match(
+    ensureExplicitHyphenation('#set text(font: "Libertinus Serif", lang: "it")\nTesto'),
+    /lang: "it", hyphenate: false/,
+  );
+  assert.match(
+    ensureExplicitHyphenation('#set text(hyphenate: true)\nTesto'),
+    /hyphenate: true/,
+  );
 });
 
 test('usa la numerazione per ricostruire la gerarchia dei titoli OCR', () => {

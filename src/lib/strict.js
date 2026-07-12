@@ -511,6 +511,11 @@ function escapePlain(s) {
     .replace(/>/g, '\\>');
 }
 
+const SUPERSCRIPT_DIGITS = new Map([
+  ['⁰', '0'], ['¹', '1'], ['²', '2'], ['³', '3'], ['⁴', '4'],
+  ['⁵', '5'], ['⁶', '6'], ['⁷', '7'], ['⁸', '8'], ['⁹', '9'],
+]);
+
 /** Converte enfasi/codice Markdown senza consentire l'esecuzione di Typst. */
 export function inlineMarkdownToTypst(text) {
   const slots = [];
@@ -520,6 +525,8 @@ export function inlineMarkdownToTypst(text) {
     return key;
   };
   let s = String(text || '');
+  s = s.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]+/gu, (digits) =>
+    hold(`#super[${[...digits].map((digit) => SUPERSCRIPT_DIGITS.get(digit)).join('')}]`));
   s = s.replace(/<footnote>([\s\S]*?)<\/footnote>/gi, (_, x) =>
     hold(`#footnote[${inlineMarkdownToTypst(x)}]`));
   s = s.replace(/<sup>([\s\S]*?)<\/sup>/gi, (_, x) => hold(`#super[${escapePlain(x)}]`));
@@ -764,9 +771,6 @@ export function restoreCanonicalPassage(editorCode, canonical, source, layoutPla
   const expected = ranked(expectedBlocks)[0];
   const current = ranked(currentBlocks)[0];
   if (!expected || !current || expected.score < 0.45 || current.score < 0.25) return null;
-  // Evita scelte arbitrarie fra due blocchi quasi equivalenti.
-  const second = ranked(currentBlocks)[1];
-  if (second && current.score - second.score < 0.04) return null;
   currentBlocks[current.index] = expected.block;
   return currentBlocks.join('\n\n');
 }

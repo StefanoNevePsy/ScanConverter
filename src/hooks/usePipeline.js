@@ -16,7 +16,7 @@ import {
   normalizeHeadingLevels,
   enforceHeadingLevels,
 } from '../lib/session.js';
-import { buildPreamble, extractTitle } from '../lib/preamble.js';
+import { buildPreamble, ensureExplicitHyphenation, extractTitle } from '../lib/preamble.js';
 import { autofixTypst, delimiterRepairCandidates } from '../lib/typstfix.js';
 import { checkFidelity, fidelityNoteFrom } from '../lib/fidelity.js';
 import { requestTypstFix, applyFixes, describeFix } from '../lib/aifix.js';
@@ -539,7 +539,9 @@ export function usePipeline(settings) {
   const finalizeCompile = useCallback(
     async (signal) => {
       const s = sessionRef.current;
-      const combined = combineDocument(s.preamble, s.chunks.map((c) => c.body || ''));
+      const combined = ensureExplicitHyphenation(
+        combineDocument(s.preamble, s.chunks.map((c) => c.body || '')),
+      );
       setTypstCode(combined);
       setStatus((x) => ({ ...x, format: 'done', compile: 'active' }));
       setActiveStep('compile');
@@ -1058,8 +1060,9 @@ export function usePipeline(settings) {
         verified: meta.verified === true,
       };
       setRawText(meta.rawText || '');
-      const restoredCode = meta.editorCode ||
-        combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || ''));
+      const restoredCode = ensureExplicitHyphenation(
+        meta.editorCode || combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || '')),
+      );
       sessionRef.current.editorCode = restoredCode;
       if (meta.editorCode) {
         // Evita che runFormat ricostruisca subito il vecchio contenuto dai
@@ -1736,7 +1739,7 @@ export function usePipeline(settings) {
           message: 'Il passaggio non è localizzabile in modo univoco: nessuna modifica è stata applicata.',
         };
       }
-      const nextCode = rebaseCanonicalRevision(
+      let nextCode = rebaseCanonicalRevision(
         typstCode,
         currentCanonical,
         nextCanonical,
@@ -1748,6 +1751,7 @@ export function usePipeline(settings) {
           message: 'Il frammento Typst è stato modificato altrove e non può essere sostituito con sicurezza.',
         };
       }
+      nextCode = ensureExplicitHyphenation(nextCode);
 
       const previous = {
         canonicalText: s.canonicalText,
@@ -1873,6 +1877,7 @@ export function usePipeline(settings) {
       if (nextCode == null) {
         return { ok: false, message: 'Non è stato possibile localizzare un solo blocco Typst corrispondente.' };
       }
+      nextCode = ensureExplicitHyphenation(nextCode);
 
       const previous = {
         canonicalText: s.canonicalText,
