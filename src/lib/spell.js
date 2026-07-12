@@ -51,7 +51,18 @@ export function createSpeller({ itWords, enWords }) {
             known(p),
         );
       }
-      return known(word);
+      if (known(word)) return true;
+      // Forme verbali con pronome enclitico spesso assenti dalle liste di
+      // frequenza («indicandoli», «suggeritagli», «propostoci»), pur avendo
+      // una base perfettamente valida.
+      const lower = word.toLowerCase();
+      for (const suffix of ['glielo', 'gliela', 'glieli', 'gliele', 'gli', 'mi', 'ti', 'ci', 'vi', 'si', 'lo', 'la', 'li', 'le', 'ne']) {
+        if (lower.length > suffix.length + 3 && lower.endsWith(suffix)) {
+          const base = lower.slice(0, -suffix.length);
+          if (known(base)) return true;
+        }
+      }
+      return false;
     },
   };
 }
@@ -93,11 +104,14 @@ export function extractProse(typst) {
     .replace(/"[^"\n]*"/g, ' ') // stringhe (font, percorsi immagine)
     .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/#[a-zA-Z][\w.-]*/g, ' ') // token funzione (#figure, #block…)
+    // Enfasi Typst finita in mezzo a una parola («*M*entre»): per il
+    // dizionario è comunque «Mentre», non il falso frammento «entre».
+    .replace(/(?<=\p{L})[*_]+(?=\p{L})/gu, '')
     .replace(/<\/?[a-zA-Z][^>]*>/g, ' '); // eventuale HTML residuo
 }
 
 const WORD_RE = /\p{L}[\p{L}'’]{2,}/gu;
-const HYPHENATED_OCR_RE = /(\p{L}{2,})([ \t]*-[ \t]*)(\p{Ll}{2,})/gu;
+const HYPHENATED_OCR_RE = /(\p{L}{2,})([ \t]*-[ \t]*(?:\n[ \t]*)?)(\p{Ll}{2,})/gu;
 const SPACED_FRAGMENT_RE = /(?<!\p{L})(?=(\p{L}{3,6})([ \t]+)(\p{Ll}{3,8})(?!\p{L}))/gu;
 const SEMANTIC_SHORT_COMPOUNDS = new Set([
   'nord-est', 'nord-ovest', 'sud-est', 'sud-ovest',

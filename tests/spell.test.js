@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applySpellFixes,
+  createSpeller,
   findSuspects,
   fixOcrHyphenation,
   fixSpacing,
@@ -121,4 +122,23 @@ test('una parola già corretta non lascia frammenti obsoleti nel nuovo report', 
   );
   assert.ok(!suspects.some((item) => item.word === 'canze'));
   assert.ok(!suspects.some((item) => ['are che', 'cada una', 'orti che', 'pre stato'].includes(item.word)));
+});
+
+test('riconosce le forme verbali con pronome enclitico mancanti dalla lista', () => {
+  const speller = createSpeller({ itWords: 'indicando\nsuggerita\nproposto', enWords: '' });
+  assert.equal(speller.correct('indicandoli'), true);
+  assert.equal(speller.correct('suggeritagli'), true);
+  assert.equal(speller.correct('propostoci'), true);
+});
+
+test('non segnala metà parola quando l’enfasi Typst divide le lettere', () => {
+  const speller = createSpeller({ itWords: 'mentre', enWords: '' });
+  const suspects = findSuspects('*M*entre il testo continua.', speller);
+  assert.ok(!suspects.some((item) => item.word.toLowerCase() === 'entre'));
+});
+
+test('ricompone una sillabazione che attraversa un newline nel Typst esistente', () => {
+  const speller = createSpeller({ itWords: 'indicando', enWords: '' });
+  const repaired = fixOcrHyphenation('principi, indi -\ncandoli con attenzione', speller);
+  assert.equal(repaired.fixed, 'principi, indicandoli con attenzione');
 });

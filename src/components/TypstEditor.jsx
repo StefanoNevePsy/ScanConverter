@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand, IconSpell, IconText } from './Icons.jsx';
 import CopyButton from './CopyButton.jsx';
-
-// Altezza riga dell'editor (leading-6): serve per centrare i risultati.
-const LINE_H = 24;
+import { scrollTextareaOffsetIntoView } from '../lib/editorScroll.js';
 
 /**
  * Editor a colonna sinistra: codice Typst generato e modificabile dall'utente,
@@ -87,7 +85,6 @@ export default function TypstEditor({
     const ta = taRef.current;
     if (!ta) return;
     const pos = matches[n];
-    const line = value.slice(0, pos).split('\n').length;
     // Applica la selezione dopo il render causato da setCurrent: sui WebView
     // React può altrimenti ripristinare il cursore e rendere invisibile il
     // risultato appena trovato.
@@ -96,7 +93,7 @@ export default function TypstEditor({
       if (!editor) return;
       editor.focus({ preventScroll: true });
       editor.setSelectionRange(pos, pos + query.length, 'forward');
-      editor.scrollTop = Math.max(0, (line - 1) * LINE_H - editor.clientHeight / 2);
+      scrollTextareaOffsetIntoView(editor, value, pos);
       syncScroll();
     });
     onSearchMatch?.({
