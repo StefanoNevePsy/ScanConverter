@@ -80,7 +80,7 @@ function proseBoundaryBlock(raw) {
  * Interviene solo se la ripartenza è minuscola (forte segnale di continuazione)
  * o se coincidono almeno tre parole consecutive.
  */
-export function repairBoundaryOverlaps(markdown, maxOverlap = 10) {
+export function repairBoundaryOverlaps(markdown, maxOverlap = 10, isKnownWord = null) {
   const records = String(markdown || '').trim().split(/\n{2,}/).map(proseBoundaryBlock);
   const changes = [];
   for (let i = 0; i + 1 < records.length; i++) {
@@ -90,6 +90,69 @@ export function repairBoundaryOverlaps(markdown, maxOverlap = 10) {
     const a = wordSpans(left.content);
     const b = wordSpans(right.content);
     if (!a.length || !b.length) continue;
+    const leftWord = a[a.length - 1];
+    const rightWord = b[0];
+    const pageBoundary = !!right.marker;
+    const firstVisible = right.content.replace(/^[_*`"“‘«([{\s]+/u, '').charAt(0);
+    const lowerContinuation = !!firstVisible && firstVisible === firstVisible.toLocaleLowerCase('it') && firstVisible !== firstVisible.toLocaleUpperCase('it');
+
+    // Una parola tagliata dalla scansione può essere ricostruita dall'OCR in
+    // tre modi diversi al cambio pagina:
+    //   cercando | cando  → il frammento destro è ripetuto
+    //   cer      | cercando → il frammento sinistro è ripetuto
+    //   cer      | cando  → i due frammenti vanno concatenati
+    // I primi due casi sono strutturali; il terzo viene accettato solo quando
+    // il dizionario riconosce la parola unita e non entrambi i frammenti.
+    if (pageBoundary && lowerContinuation) {
+      const leftNorm = leftWord.normalized;
+      const rightNorm = rightWord.normalized;
+      const minFragment = 3;
+      let mergedWord = '';
+      let leftCut = leftWord.index;
+      let rightCut = rightWord.index + rightWord.raw.length;
+
+      if (
+        rightNorm.length >= minFragment &&
+        leftNorm.length > rightNorm.length &&
+        leftNorm.endsWith(rightNorm)
+      ) {
+        mergedWord = leftWord.raw;
+        leftCut += leftWord.raw.length;
+      } else if (
+        leftNorm.length >= minFragment &&
+        rightNorm.length > leftNorm.length &&
+        rightNorm.startsWith(leftNorm)
+      ) {
+        mergedWord = rightWord.raw;
+      } else if (typeof isKnownWord === 'function') {
+        const joined = `${leftWord.raw}${rightWord.raw}`;
+        const joinedKnown = isKnownWord(joined);
+        const fragmentsKnown = isKnownWord(leftWord.raw) && isKnownWord(rightWord.raw);
+        if (joinedKnown && !fragmentsKnown) mergedWord = joined;
+      }
+
+      if (mergedWord) {
+        const leftBase = left.content.slice(0, leftCut).replace(/[\s,;:.!?…—–-]+$/u, '').trimEnd();
+        const rightRest = right.content.slice(rightCut).trimStart();
+        // Se conserviamo la parola sinistra, il marcatore viene dopo di essa;
+        // se la ricostruiamo, spostiamo l'intera parola nella pagina destra.
+        const keptLeftWord = leftCut > leftWord.index;
+        const prefix = keptLeftWord ? leftBase : left.content.slice(0, leftWord.index).trimEnd();
+        const afterMarker = [keptLeftWord ? '' : mergedWord, rightRest].filter(Boolean).join(' ');
+        const merged = [prefix, right.marker, afterMarker].filter(Boolean).join('\n').trim();
+        changes.push({
+          type: 'boundary_word_split',
+          before: `${leftWord.raw} ⟂ ${rightWord.raw}`,
+          after: mergedWord,
+          overlap: rightWord.raw,
+        });
+        left.content = merged;
+        records.splice(i + 1, 1);
+        i--;
+        continue;
+      }
+    }
+
     let overlap = 0;
     const limit = Math.min(maxOverlap, a.length, b.length);
     for (let n = 1; n <= limit; n++) {
@@ -98,8 +161,6 @@ export function repairBoundaryOverlaps(markdown, maxOverlap = 10) {
       if (suffix === prefix) overlap = n;
     }
     if (!overlap) continue;
-    const firstVisible = right.content.replace(/^[_*`"“‘«([{\s]+/u, '').charAt(0);
-    const lowerContinuation = !!firstVisible && firstVisible === firstVisible.toLocaleLowerCase('it') && firstVisible !== firstVisible.toLocaleUpperCase('it');
     if (!lowerContinuation && overlap < 3) continue;
 
     const cut = a[a.length - overlap].index;
@@ -119,6 +180,30 @@ export function repairBoundaryOverlaps(markdown, maxOverlap = 10) {
     // Il marcatore della pagina destra è già stato inserito nel blocco unito.
     // Rimuove il record assorbito e rivaluta lo stesso confine contro il
     // successivo, così funzionano anche tre frammenti OCR sovrapposti.
+    records.splice(i + 1, 1);
+    i--;
+    continue;
+  }
+
+  // Anche quando nessuna parola è spezzata, un paragrafo può proseguire
+  // oltre il cambio pagina. Mantiene il marcatore ma elimina il paragrafo
+  // artificiale se a sinistra non c'è una chiusura di frase e la pagina
+  // successiva riparte in minuscolo.
+  for (let i = 0; i + 1 < records.length; i++) {
+    const left = records[i];
+    const right = records[i + 1];
+    if (!left.prose || !right.prose || !right.marker) continue;
+    const firstVisible = right.content.replace(/^[_*`"“‘«([{\s]+/u, '').charAt(0);
+    const lowerContinuation = !!firstVisible && firstVisible === firstVisible.toLocaleLowerCase('it') && firstVisible !== firstVisible.toLocaleUpperCase('it');
+    if (!lowerContinuation || /[.!?…»”\])}]\s*$/u.test(left.content)) continue;
+    const merged = `${left.content.trimEnd()}\n${right.marker}\n${right.content.trimStart()}`;
+    changes.push({
+      type: 'boundary_paragraph_continuation',
+      before: `${left.content.slice(-80)} ⟂ ${right.content.slice(0, 120)}`,
+      after: merged.slice(-240),
+      overlap: '',
+    });
+    left.content = merged;
     records.splice(i + 1, 1);
     i--;
   }

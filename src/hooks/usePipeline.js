@@ -39,6 +39,7 @@ import {
   sourcePlainText,
 } from '../lib/strict.js';
 import { requestStrictDifferenceReview, requestStrictLayoutPlan } from '../lib/layoutPlan.js';
+import { markTypstSearchMatch } from '../lib/searchPreview.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import {
   saveSession,
@@ -146,6 +147,7 @@ export function usePipeline(settings) {
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
+  const searchPreviewRef = useRef(0); // scarta compilazioni di ricerca ormai superate
 
   const abortRef = useRef(null);
 
@@ -555,14 +557,27 @@ export function usePipeline(settings) {
     async (extracted, fileName, signal) => {
       const id = sessionRef.current?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       if (settings.formatWorkflow === 'strict') {
-        const boundaryRepair = repairBoundaryOverlaps(extracted);
+        let speller = null;
+        try {
+          speller = await loadSpeller();
+        } catch {
+          // Il dizionario migliora i tagli dentro una parola, ma la pipeline
+          // resta operativa anche se le risorse locali non sono disponibili.
+        }
+        const boundaryRepair = repairBoundaryOverlaps(
+          extracted,
+          10,
+          speller ? (word) => speller.correct(word) : null,
+        );
         let canonicalText = boundaryRepair.text;
         let corrections = boundaryRepair.changes;
         if (settings.fixTypos) {
           setDetail('Correzione conservativa con registro delle modifiche…');
           const proof = await proofreadBody({
             settings,
-            code: extracted,
+            // Non ripartire dal testo originale: altrimenti la rilettura
+            // annulla silenziosamente le riparazioni tra pagine appena fatte.
+            code: canonicalText,
             signal,
             onProgress: (done, total) => setDetail(`Correzione ${done}/${total} paragrafi…`),
           });
@@ -1038,6 +1053,32 @@ export function usePipeline(settings) {
       }
     },
     [typstCode, describeCompileError, verifyStrictPdf],
+  );
+
+  /**
+   * Ricompila soltanto l'anteprima con una singola occorrenza evidenziata.
+   * Il sorgente salvato e il PDF scaricato non vengono mai modificati.
+   */
+  const previewSearchMatch = useCallback(
+    async (match) => {
+      const requestId = ++searchPreviewRef.current;
+      if (!typstCode.trim()) return false;
+      const source = match
+        ? markTypstSearchMatch(typstCode, match.start, match.end)
+        : typstCode;
+      if (match && source === typstCode) return false;
+      try {
+        const svg = await compileToSvg(source, figuresRef.current);
+        if (requestId !== searchPreviewRef.current) return false;
+        setPreviewSvg(svg);
+        return true;
+      } catch {
+        // Una ricerca dentro codice/preambolo resta selezionata nell'editor,
+        // ma non deve sostituire un'anteprima PDF valida con un errore.
+        return false;
+      }
+    },
+    [typstCode],
   );
 
   /**
@@ -1634,6 +1675,7 @@ export function usePipeline(settings) {
     refreshSessions,
     runPipeline,
     recompile,
+    previewSearchMatch,
     restyle,
     applyLocalStyle,
     autofix,

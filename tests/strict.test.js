@@ -62,6 +62,31 @@ test('conserva i marcatori pagina dentro una frase riunita', () => {
   assert.doesNotMatch(body, /<!--/);
 });
 
+test('ripara un suffisso ripetuto al cambio pagina', () => {
+  const source = 'Discutevamo fra di noi cercando.\n\n<!-- pagina 19 -->\ncando il punto nodale.';
+  const repaired = repairBoundaryOverlaps(source);
+  assert.match(repaired.text, /noi cercando\n<!-- pagina 19 -->\nil punto nodale/);
+  assert.equal(repaired.changes[0].type, 'boundary_word_split');
+  assert.doesNotMatch(repaired.text, /cercando\.\s+.*cando/u);
+});
+
+test('ricompone due frammenti di parola validati dal dizionario', () => {
+  const source = 'Discutevamo fra di noi cer\n\n<!-- pagina 19 -->\ncando il punto nodale.';
+  const known = (word) => word.toLowerCase() === 'cercando';
+  const repaired = repairBoundaryOverlaps(source, 10, known);
+  assert.match(repaired.text, /noi\n<!-- pagina 19 -->\ncercando il punto nodale/);
+  assert.equal(repaired.changes[0].after, 'cercando');
+});
+
+test('riunisce un paragrafo che continua nella pagina successiva', () => {
+  const source = 'Il sistema era organizzato intorno a punti importanti,\n\n<!-- pagina 19 -->\nche erano nodali per tutti.';
+  const repaired = repairBoundaryOverlaps(source);
+  assert.match(repaired.text, /importanti,\n<!-- pagina 19 -->\nche erano nodali/);
+  assert.equal(repaired.changes[0].type, 'boundary_paragraph_continuation');
+  const body = buildStrictDocument(repaired.text).body;
+  assert.match(body, /importanti,\n\/\/ pagina 19\nche erano nodali/);
+});
+
 test('non elimina ripetizioni intenzionali tra paragrafi autonomi', () => {
   const source = 'La conclusione è Fine.\n\nFine della storia e nuovo capitolo.';
   const repaired = repairBoundaryOverlaps(source);

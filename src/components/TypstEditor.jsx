@@ -23,6 +23,7 @@ export default function TypstEditor({
   proofreadBusy,
   proofreadDetail,
   searchRequest,
+  onSearchMatch,
   compiling,
   error,
   disabled,
@@ -31,6 +32,7 @@ export default function TypstEditor({
   const gutterRef = useRef(null);
   const searchRef = useRef(null);
   const pendingJumpRef = useRef(false);
+  const activeMatchRef = useRef(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -80,6 +82,7 @@ export default function TypstEditor({
   const goto = (k) => {
     if (!matches.length) return;
     const n = ((k % matches.length) + matches.length) % matches.length;
+    activeMatchRef.current = true;
     setCurrent(n);
     const ta = taRef.current;
     if (!ta) return;
@@ -96,6 +99,13 @@ export default function TypstEditor({
       editor.scrollTop = Math.max(0, (line - 1) * LINE_H - editor.clientHeight / 2);
       syncScroll();
     });
+    onSearchMatch?.({
+      query,
+      start: pos,
+      end: pos + query.length,
+      occurrence: n,
+      id: `${Date.now()}-${n}`,
+    });
   };
 
   // Salto al primo risultato di una ricerca esterna (dopo il ricalcolo).
@@ -103,6 +113,9 @@ export default function TypstEditor({
     if (pendingJumpRef.current && matches.length) {
       pendingJumpRef.current = false;
       goto(0);
+    } else if (pendingJumpRef.current && query && !matches.length) {
+      pendingJumpRef.current = false;
+      onSearchMatch?.(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches]);
@@ -110,12 +123,14 @@ export default function TypstEditor({
   const replaceCurrent = () => {
     if (!matches.length) return;
     const pos = matches[current];
+    pendingJumpRef.current = true;
     onChange(value.slice(0, pos) + replaceStr + value.slice(pos + query.length));
   };
 
   const replaceAll = () => {
     if (!query || !matches.length) return;
     const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    pendingJumpRef.current = true;
     onChange(value.replace(re, () => replaceStr));
   };
 
@@ -125,6 +140,8 @@ export default function TypstEditor({
   };
   const closeSearch = () => {
     setSearchOpen(false);
+    activeMatchRef.current = false;
+    onSearchMatch?.(null);
     taRef.current?.focus();
   };
 
@@ -138,7 +155,7 @@ export default function TypstEditor({
   const onSearchKeyDown = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      goto(current + (e.shiftKey ? -1 : 1));
+      goto(activeMatchRef.current ? current + (e.shiftKey ? -1 : 1) : e.shiftKey ? -1 : 0);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       closeSearch();
@@ -217,7 +234,15 @@ export default function TypstEditor({
             <input
               ref={searchRef}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                // Lascia il focus nel campo mentre si digita. Il salto parte
+                // con Invio (o con le frecce), come nei normali strumenti di
+                // ricerca; se c'era un risultato attivo ripristina il PDF.
+                if (activeMatchRef.current) onSearchMatch?.(null);
+                activeMatchRef.current = false;
+                setCurrent(0);
+                setQuery(e.target.value);
+              }}
               onKeyDown={onSearchKeyDown}
               placeholder="Cerca…"
               className="w-full min-w-24 flex-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-ink placeholder:text-faint focus:border-primary focus:outline-none"
@@ -226,7 +251,7 @@ export default function TypstEditor({
               {matches.length ? `${current + 1}/${matches.length}` : query ? '0' : ''}
             </span>
             <button
-              onClick={() => goto(current - 1)}
+              onClick={() => goto(activeMatchRef.current ? current - 1 : -1)}
               disabled={!matches.length}
               aria-label="Occorrenza precedente"
               className="rounded-md bg-surface-2 px-2 py-1 text-xs text-ink hover:bg-surface-3 disabled:opacity-40"
@@ -234,7 +259,7 @@ export default function TypstEditor({
               ↑
             </button>
             <button
-              onClick={() => goto(current + 1)}
+              onClick={() => goto(activeMatchRef.current ? current + 1 : 0)}
               disabled={!matches.length}
               aria-label="Occorrenza successiva"
               className="rounded-md bg-surface-2 px-2 py-1 text-xs text-ink hover:bg-surface-3 disabled:opacity-40"
