@@ -200,3 +200,56 @@ export async function requestStrictDifferenceReview({ settings, issues, signal }
       explanation: String(i.explanation || '').slice(0, 240),
     }));
 }
+
+/** Rivede e, se necessario, ricostruisce una singola frase OCR/PDF. */
+export async function requestStrictPassageRepair({ settings, issue, context, signal }) {
+  const system =
+    'Sei un revisore di trascrizioni OCR italiane. Devi preservare integralmente ' +
+    'il significato e recuperare ogni parola disponibile. Rispondi solo con JSON.';
+  const user =
+    'Confronta la fonte OCR canonica con il passaggio estratto dal PDF. Scegli:\n' +
+    '- artifact: il contenuto è presente e la differenza è solo spezzatura/ordine di estrazione;\n' +
+    '- canonical: la fonte OCR è già il passaggio completo da ripristinare;\n' +
+    '- proposal: la fonte OCR contiene refusi reali e proponi una versione completa corretta.\n' +
+    'Non riassumere, non parafrasare, non abbreviare. Una proposal deve contenere ' +
+    'l’intero passaggio, inclusi note, nomi, numeri e parole che nel PDF risultano omessi.\n\n' +
+    `CONTESTO OCR:\n${String(context || '').slice(0, 2200)}\n\n` +
+    `FONTE OCR CANONICA:\n${issue.source}\n\nPASSAGGIO PDF/TYPST:\n${issue.rendered}\n\n` +
+    'Formato: {"choice":"artifact|canonical|proposal","text":"passaggio completo",' +
+    '"explanation":"spiegazione breve"}';
+  let text;
+  if (settings.fixEngine === 'gemini') {
+    text = await geminiGenerate({
+      apiKey: settings.googleApiKey,
+      model: settings.fixModel,
+      system,
+      user,
+      temperature: 0,
+      maxTokens: 4096,
+      json: true,
+      signal,
+    });
+  } else {
+    text = await nvidiaChat({
+      apiKey: settings.nvidiaApiKey,
+      endpoint: settings.nvidiaEndpoint,
+      model: settings.fixModel,
+      system,
+      user,
+      temperature: 0,
+      maxTokens: 4096,
+      signal,
+    });
+  }
+  const parsed = parseJson(text);
+  const choice = ['artifact', 'canonical', 'proposal'].includes(parsed?.choice)
+    ? parsed.choice
+    : 'canonical';
+  const selected = choice === 'proposal' ? String(parsed?.text || '') : issue.source;
+  if (choice !== 'artifact' && !selected.trim()) throw new Error('L’IA non ha restituito un passaggio completo.');
+  return {
+    choice,
+    text: selected,
+    explanation: String(parsed?.explanation || '').slice(0, 500),
+  };
+}

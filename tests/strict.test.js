@@ -10,6 +10,7 @@ import {
   rebaseCanonicalRevision,
   repairBoundaryOverlaps,
   replaceUniqueText,
+  restoreCanonicalPassage,
   sourcePlainText,
 } from '../src/lib/strict.js';
 
@@ -39,6 +40,16 @@ test('la revisione canonica preserva modifiche Typst lontane dal passaggio', () 
   const revised = rebaseCanonicalRevision(editor, before, after);
   assert.match(revised, /paragrafo corretto/);
   assert.match(revised, /\*Secondo\*/);
+});
+
+test('ripristina dalla fonte canonica soltanto il blocco Typst discordante', () => {
+  const canonical = 'Primo passaggio completo e corretto.\n\nSecondo passaggio invariato.';
+  const editor = buildStrictDocument(canonical).body
+    .replace('completo e corretto', 'tronco')
+    .replace('Secondo', '*Secondo*');
+  const restored = restoreCanonicalPassage(editor, canonical, 'Primo passaggio completo e corretto.');
+  assert.match(restored, /Primo passaggio completo e corretto/);
+  assert.match(restored, /\*Secondo\*/);
 });
 
 test('sillabazione PDF e ordine tabellare non simulano omissioni', () => {

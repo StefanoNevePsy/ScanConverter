@@ -1,9 +1,16 @@
 import { useState } from 'react';
 import { IconAlert, IconCheck, IconSpinner, IconWand } from './Icons.jsx';
 
-export default function StrictReportPanel({ report, onReviewCorrection, correctionBusy }) {
+export default function StrictReportPanel({
+  report,
+  onReviewCorrection,
+  correctionBusy,
+  onReviewIssue,
+  issueBusy,
+}) {
   const [open, setOpen] = useState(false);
   const [notices, setNotices] = useState({});
+  const [issueNotices, setIssueNotices] = useState({});
   if (!report || report.workflow !== 'strict') return null;
   const pdfOk = report.pdf?.contentOk === true;
   const comparisons = (report.ocrComparisons || []).filter(Boolean);
@@ -13,6 +20,11 @@ export default function StrictReportPanel({ report, onReviewCorrection, correcti
     if (!onReviewCorrection) return;
     const result = await onReviewCorrection(index, action);
     setNotices((current) => ({ ...current, [index]: result?.message || '' }));
+  };
+  const runIssueAction = async (index, action) => {
+    if (!onReviewIssue) return;
+    const result = await onReviewIssue(index, action);
+    setIssueNotices((current) => ({ ...current, [index]: result?.message || '' }));
   };
 
   return (
@@ -76,8 +88,12 @@ export default function StrictReportPanel({ report, onReviewCorrection, correcti
               {!!report.pdf.issues?.length && (
                 <div className="mt-4 space-y-3">
                   <div className="font-medium text-ink">Confronto automatico per frase</div>
-                  {report.pdf.issues.map((issue) => {
+                  <div className="max-h-[min(65vh,36rem)] space-y-3 overflow-y-auto overscroll-contain pr-1">
+                  {report.pdf.issues.map((issue, issueIndex) => {
                     const review = report.pdf.aiReview?.find((r) => r.id === issue.id);
+                    const resolution = report.issueResolutions?.[issue.key];
+                    const passageReview = resolution?.passageReview;
+                    const busy = issueBusy?.index === issueIndex;
                     return (
                       <div key={issue.id} className="overflow-hidden rounded-lg border border-border bg-surface/70">
                         <div className="grid gap-px bg-border sm:grid-cols-2">
@@ -105,10 +121,75 @@ export default function StrictReportPanel({ report, onReviewCorrection, correcti
                               {review.explanation ? ` — ${review.explanation}` : ''}
                             </span>
                           )}
+                          {resolution?.status === 'artifact' && (
+                            <span className="ml-2 rounded-full bg-success/10 px-2 py-0.5 font-medium text-success">
+                              · confermato come artefatto
+                            </span>
+                          )}
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => runIssueAction(issueIndex, 'mark-artifact')}
+                              className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-ink hover:bg-surface-2 disabled:opacity-50"
+                            >È un artefatto</button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => runIssueAction(issueIndex, 'restore-canonical')}
+                              className="rounded-md border border-success/30 bg-success/10 px-2.5 py-1.5 text-xs text-success hover:bg-success/15 disabled:opacity-50"
+                            >Ripristina dalla fonte OCR</button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => runIssueAction(issueIndex, 'review-ai')}
+                              className="inline-flex items-center gap-1.5 rounded-md border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs text-accent hover:bg-accent/15 disabled:opacity-50"
+                            >
+                              {busy && issueBusy?.action === 'review-ai'
+                                ? <IconSpinner width={13} height={13} />
+                                : <IconWand width={13} height={13} />}
+                              Ricostruisci con IA
+                            </button>
+                          </div>
+                          {passageReview && (
+                            <div className="mt-2 rounded-md border border-accent/20 bg-accent/5 p-2">
+                              <div className="font-medium text-ink">
+                                Esito IA: {passageReview.choice === 'artifact'
+                                  ? 'differenza di estrazione, testo presente'
+                                  : passageReview.choice === 'canonical'
+                                    ? 'ripristinare integralmente la fonte OCR'
+                                    : 'proposta di ricostruzione completa'}
+                              </div>
+                              {passageReview.explanation && <p className="mt-1">{passageReview.explanation}</p>}
+                              {passageReview.choice === 'proposal' && (
+                                <p className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap rounded bg-surface p-2 text-ink">
+                                  {passageReview.text}
+                                </p>
+                              )}
+                              <button
+                                type="button"
+                                disabled={busy || passageReview.safe !== true}
+                                onClick={() => runIssueAction(issueIndex, 'apply-ai')}
+                                className="mt-2 rounded-md bg-accent px-2.5 py-1.5 font-medium text-white disabled:opacity-40"
+                              >Applica esito IA</button>
+                              {!passageReview.safe && (
+                                <span className="ml-2 text-warning">Bloccato: possibile perdita di testo o numeri.</span>
+                              )}
+                            </div>
+                          )}
+                          {busy && issueBusy?.action !== 'review-ai' && (
+                            <p className="mt-2 inline-flex items-center gap-1.5">
+                              <IconSpinner width={13} height={13} /> Ricompilazione e nuovo confronto…
+                            </p>
+                          )}
+                          {issueNotices[issueIndex] && !busy && (
+                            <p className="mt-2 text-faint">{issueNotices[issueIndex]}</p>
+                          )}
                         </div>
                       </div>
                     );
                   })}
+                  </div>
                   {report.pdf.reviewError && (
                     <p className="text-xs text-warning">Revisione AI non disponibile: {report.pdf.reviewError}</p>
                   )}

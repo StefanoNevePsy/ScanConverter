@@ -533,6 +533,8 @@ function Workspace({
         report={pipe.strictReport}
         correctionBusy={pipe.strictCorrectionBusy}
         onReviewCorrection={pipe.reviewStrictCorrection}
+        issueBusy={pipe.strictIssueBusy}
+        onReviewIssue={pipe.reviewStrictIssue}
       />
 
       {pipe.spellReport && (

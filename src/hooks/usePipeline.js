@@ -37,15 +37,21 @@ import {
 import {
   buildStrictDocument,
   buildDifferenceContexts,
+  canonicalTokens,
   compareTokenInventory,
   compareTokenSequences,
   missingInvariants,
   repairBoundaryOverlaps,
   rebaseCanonicalRevision,
   replaceUniqueText,
+  restoreCanonicalPassage,
   sourcePlainText,
 } from '../lib/strict.js';
-import { requestStrictDifferenceReview, requestStrictLayoutPlan } from '../lib/layoutPlan.js';
+import {
+  requestStrictDifferenceReview,
+  requestStrictLayoutPlan,
+  requestStrictPassageRepair,
+} from '../lib/layoutPlan.js';
 import { markTypstSearchMatch } from '../lib/searchPreview.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import {
@@ -160,6 +166,7 @@ export function usePipeline(settings) {
   const [fidelityWarnings, setFidelityWarnings] = useState([]);
   const [strictReport, setStrictReport] = useState(null);
   const [strictCorrectionBusy, setStrictCorrectionBusy] = useState(null);
+  const [strictIssueBusy, setStrictIssueBusy] = useState(null);
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
@@ -228,8 +235,15 @@ export function usePipeline(settings) {
     // La sequenza può differire perché PDF.js legge tabelle, note o colonne in
     // un ordine visivo diverso. Un'omissione è confermata solo se manca anche
     // dall'inventario complessivo delle occorrenze.
-    const contentOk = inventory.missing.length === 0 && invariants.length === 0;
     const issues = buildDifferenceContexts(expected, actual, inventory.missing);
+    const issueResolutions = s.strictIssueResolutions || {};
+    const coveredMissing = issues.reduce((total, issue) => total + issue.missing.length, 0);
+    const allCoveredAsArtifacts =
+      inventory.missing.length > 0 &&
+      coveredMissing >= inventory.missing.length &&
+      issues.every((issue) => issueResolutions[issue.key]?.status === 'artifact');
+    const contentOk = invariants.length === 0 &&
+      (inventory.missing.length === 0 || allCoveredAsArtifacts);
     let aiReview = [];
     let reviewError = '';
     if (issues.length) {
@@ -257,9 +271,11 @@ export function usePipeline(settings) {
       workflow: 'strict',
       corrections: s.corrections || [],
       ocrComparisons: s.ocrComparisons || [],
+      strictIssueResolutions: s.strictIssueResolutions || {},
       layoutPlan: s.layoutPlan || null,
       strictReview: s.strictReview || [],
       strictReviewKey: s.strictReviewKey || null,
+      issueResolutions,
       pdf: {
         ...sequence,
         exactOrder: sequence.ok,
@@ -332,6 +348,7 @@ export function usePipeline(settings) {
       canonicalText: s.canonicalText || null,
       corrections: s.corrections || [],
       ocrComparisons: s.ocrComparisons || [],
+      strictIssueResolutions: s.strictIssueResolutions || {},
       verified: !!s.verified,
       layoutPlan: s.layoutPlan || null,
       status: allDone ? 'done' : 'paused',
@@ -640,6 +657,7 @@ export function usePipeline(settings) {
           canonicalText,
           corrections,
           ocrComparisons: previousComparisons,
+          strictIssueResolutions: {},
           layoutPlan,
           workflow: 'strict',
           verified: false,
@@ -1036,6 +1054,7 @@ export function usePipeline(settings) {
         layoutPlan: meta.layoutPlan || null,
         strictReview: meta.strictReview || [],
         strictReviewKey: meta.strictReviewKey || null,
+        strictIssueResolutions: meta.strictIssueResolutions || {},
         verified: meta.verified === true,
       };
       setRawText(meta.rawText || '');
@@ -1062,6 +1081,7 @@ export function usePipeline(settings) {
               corrections: meta.corrections || [],
               ocrComparisons: meta.ocrComparisons || [],
               layoutPlan: meta.layoutPlan || null,
+              issueResolutions: meta.strictIssueResolutions || {},
               pdf: null,
             }
           : null,
@@ -1771,6 +1791,143 @@ export function usePipeline(settings) {
     }
   }, [persist, settings, typstCode, verifyStrictPdf]);
 
+  /** Azioni sui passaggi discordanti fra fonte canonica e PDF compilato. */
+  const reviewStrictIssue = useCallback(async (index, action) => {
+    const s = sessionRef.current;
+    const issue = strictReport?.pdf?.issues?.[index];
+    if (s?.workflow !== 'strict' || !issue) return { ok: false, message: 'Passaggio non più disponibile.' };
+    setStrictIssueBusy({ index, action });
+    const saveResolution = async (value) => {
+      const next = { ...(s.strictIssueResolutions || {}), [issue.key]: value };
+      s.strictIssueResolutions = next;
+      setStrictReport((report) => {
+        if (!report) return report;
+        const covered = report.pdf?.issues?.reduce((total, item) => total + item.missing.length, 0) || 0;
+        const allArtifacts =
+          covered >= (report.pdf?.missing?.length || 0) &&
+          report.pdf?.issues?.every((item) => next[item.key]?.status === 'artifact');
+        return {
+          ...report,
+          issueResolutions: next,
+          pdf: report.pdf ? {
+            ...report.pdf,
+            contentOk: report.pdf.missingInvariants?.length === 0 && allArtifacts,
+          } : report.pdf,
+        };
+      });
+      await persist();
+    };
+    try {
+      if (action === 'mark-artifact') {
+        await saveResolution({ status: 'artifact', explanation: 'Confermato manualmente come artefatto di estrazione.' });
+        return { ok: true, message: 'Segnalazione archiviata come artefatto di estrazione.' };
+      }
+      const previousResolution = s.strictIssueResolutions?.[issue.key] || {};
+      if (action === 'review-ai') {
+        const review = await requestStrictPassageRepair({
+          settings,
+          issue,
+          context: correctionContext(s.rawText, issue.source, issue.rendered, 900),
+          signal: abortRef.current?.signal,
+        });
+        const sourceCount = canonicalTokens(issue.source).length;
+        const proposalCount = canonicalTokens(review.text).length;
+        const safe = review.choice !== 'proposal' || (
+          proposalCount >= Math.floor(sourceCount * 0.8) &&
+          proposalCount <= Math.ceil(sourceCount * 1.35) &&
+          missingInvariants(issue.source, review.text).length === 0
+        );
+        await saveResolution({ ...previousResolution, passageReview: { ...review, safe } });
+        return {
+          ok: true,
+          message: safe
+            ? 'Analisi puntuale completata: controlla e applica l’esito se concordi.'
+            : 'La proposta è stata mostrata ma bloccata perché perde testo o invarianti.',
+        };
+      }
+
+      const review = previousResolution.passageReview;
+      if (action === 'apply-ai' && !review) return { ok: false, message: 'Esegui prima il ricontrollo con IA.' };
+      if (action === 'apply-ai' && review.choice === 'artifact') {
+        await saveResolution({ ...previousResolution, status: 'artifact' });
+        return { ok: true, message: 'Esito IA confermato come artefatto di estrazione.' };
+      }
+      if (action === 'apply-ai' && review.safe !== true) {
+        return { ok: false, message: 'La proposta IA non supera i controlli di completezza.' };
+      }
+
+      const currentCanonical = s.canonicalText || s.rawText;
+      let nextCanonical = currentCanonical;
+      let nextCode;
+      if (action === 'apply-ai' && review.choice === 'proposal') {
+        nextCanonical = replaceUniqueText(currentCanonical, issue.source, review.text);
+        if (nextCanonical == null) {
+          return { ok: false, message: 'La frase canonica non è localizzabile in modo univoco; nessuna modifica applicata.' };
+        }
+        nextCode = rebaseCanonicalRevision(typstCode, currentCanonical, nextCanonical, s.layoutPlan || {});
+      } else {
+        // Sia il comando manuale sia l'esito "canonical" rigenerano il blocco
+        // dal testo OCR canonico, eliminando troncamenti o caratteri invisibili.
+        nextCode = restoreCanonicalPassage(typstCode, currentCanonical, issue.source, s.layoutPlan || {});
+      }
+      if (nextCode == null) {
+        return { ok: false, message: 'Non è stato possibile localizzare un solo blocco Typst corrispondente.' };
+      }
+
+      const previous = {
+        canonicalText: s.canonicalText,
+        editorCode: s.editorCode,
+        preamble: s.preamble,
+        chunks: s.chunks,
+        corrections: s.corrections,
+        resolutions: s.strictIssueResolutions,
+      };
+      const svg = await compileToSvg(nextCode, figuresRef.current);
+      s.canonicalText = nextCanonical;
+      s.editorCode = nextCode;
+      s.strictIssueResolutions = {
+        ...(s.strictIssueResolutions || {}),
+        [issue.key]: { ...previousResolution, status: action === 'apply-ai' ? 'ai-applied' : 'canonical-restored' },
+      };
+      if (action === 'apply-ai' && review.choice === 'proposal') {
+        s.corrections = [
+          ...(s.corrections || []),
+          {
+            type: 'strict_issue_ai',
+            before: issue.source,
+            after: review.text,
+            decision: 'ai',
+            appliedText: review.text,
+          },
+        ];
+      }
+      const parts = splitPreamble(nextCode);
+      s.preamble = parts.preamble;
+      s.chunks = [{ text: s.rawText, body: parts.body, status: 'done', fidelity: { coverage: 1, missing: [] } }];
+      try {
+        await verifyStrictPdf(nextCode);
+      } catch (e) {
+        s.canonicalText = previous.canonicalText;
+        s.editorCode = previous.editorCode;
+        s.preamble = previous.preamble;
+        s.chunks = previous.chunks;
+        s.corrections = previous.corrections;
+        s.strictIssueResolutions = previous.resolutions;
+        throw e;
+      }
+      setTypstCode(nextCode);
+      setPreviewSvg(svg);
+      setCompileError(null);
+      await persist();
+      return { ok: true, message: 'Passaggio rigenerato, compilato e confrontato nuovamente.' };
+    } catch (e) {
+      if (e?.name === 'AbortError') return { ok: false, message: 'Revisione annullata.' };
+      return { ok: false, message: e.message || 'Impossibile revisionare il passaggio.' };
+    } finally {
+      setStrictIssueBusy(null);
+    }
+  }, [persist, settings, strictReport, typstCode, verifyStrictPdf]);
+
   /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
    * fase 2 (Gemini con indicazioni di stile) + fase 3 (compilazione). Non
@@ -1976,6 +2133,8 @@ export function usePipeline(settings) {
     strictReport,
     strictCorrectionBusy,
     reviewStrictCorrection,
+    strictIssueBusy,
+    reviewStrictIssue,
     sessions,
     openSession,
     deleteSavedSession,

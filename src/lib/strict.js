@@ -421,6 +421,7 @@ export function buildDifferenceContexts(source, output, missingTokens, maxIssues
     if (!local.length) continue;
     issues.push({
       id: `diff-${issues.length + 1}`,
+      key: JSON.stringify([sentence, local]),
       missing: local,
       source: sentence.slice(0, 600),
       rendered: best.slice(0, 600),
@@ -740,6 +741,34 @@ export function rebaseCanonicalRevision(editorCode, currentCanonical, nextCanoni
     if (rebased != null) return rebased;
   }
   return null;
+}
+
+function tokenSimilarity(a, b) {
+  const left = new Set(canonicalTokens(a));
+  const right = new Set(canonicalTokens(b));
+  let common = 0;
+  for (const token of left) if (right.has(token)) common++;
+  return common / Math.max(left.size, right.size, 1);
+}
+
+/**
+ * Rigenera dal testo canonico il solo blocco Typst più vicino a una frase
+ * discordante. Tutti gli altri blocchi (incluse modifiche manuali) restano.
+ */
+export function restoreCanonicalPassage(editorCode, canonical, source, layoutPlan = {}) {
+  const expectedBlocks = buildStrictDocument(canonical, layoutPlan).body.split(/\n{2,}/);
+  const currentBlocks = String(editorCode || '').split(/\n{2,}/);
+  const ranked = (blocks) => blocks
+    .map((block, index) => ({ block, index, score: tokenSimilarity(block, source) }))
+    .sort((a, b) => b.score - a.score);
+  const expected = ranked(expectedBlocks)[0];
+  const current = ranked(currentBlocks)[0];
+  if (!expected || !current || expected.score < 0.45 || current.score < 0.25) return null;
+  // Evita scelte arbitrarie fra due blocchi quasi equivalenti.
+  const second = ranked(currentBlocks)[1];
+  if (second && current.score - second.score < 0.04) return null;
+  currentBlocks[current.index] = expected.block;
+  return currentBlocks.join('\n\n');
 }
 
 /** Invarianti fragili che devono ricomparire esattamente. */
