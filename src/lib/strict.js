@@ -79,6 +79,83 @@ const ROMAN_PAGE_NUMBER_ONLY_RE = /^(?:PAGINA\s+)?[IVXLCDM]{1,10}$/;
 const isPageNumberOnly = (text) =>
   ARABIC_PAGE_NUMBER_ONLY_RE.test(text) || ROMAN_PAGE_NUMBER_ONLY_RE.test(text);
 
+function isRunningHeaderText(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  const words = t.match(/[\p{L}\p{N}]+/gu) || [];
+  return t.length >= 4 && t.length <= 110 && words.length >= 2 && words.length <= 12 && !/[,.!?;:]/u.test(t);
+}
+
+function refreshBoundaryRecord(record) {
+  const content = record.content.trim();
+  record.content = content;
+  record.prose = !!content &&
+    !/^#{1,6}\s/.test(content) &&
+    !/^!\[/.test(content) &&
+    !/\\begin\{tabular\}|^\s*\|/m.test(content) &&
+    !/^\s*(?:[-+*]|\d+[.)])\s+/m.test(content);
+}
+
+/**
+ * Rimuove coppie testatina+numero immediatamente dopo un marcatore pagina.
+ * È volutamente più severo del filtro bbox: senza coordinate interviene solo
+ * quando i due segnali compaiono insieme, anche sulla stessa riga/blocco.
+ */
+function discardLeadingPageFurniture(records, changes) {
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    if (!record.marker) continue;
+
+    const lines = record.content.split('\n').map((line) => line.trim()).filter(Boolean);
+    if (lines.length >= 2) {
+      const headerFirst = isRunningHeaderText(lines[0]) && isPageNumberOnly(lines[1]);
+      const numberFirst = isPageNumberOnly(lines[0]) && isRunningHeaderText(lines[1]);
+      if (headerFirst || numberFirst) {
+        const header = headerFirst ? lines[0] : lines[1];
+        const number = headerFirst ? lines[1] : lines[0];
+        changes.push({ type: 'running_header_furniture', before: header, after: '', overlap: '' });
+        changes.push({ type: 'page_number_furniture', before: number, after: '', overlap: '' });
+        record.content = lines.slice(2).join('\n');
+        refreshBoundaryRecord(record);
+      }
+    }
+
+    // Testatina e numero incollati: «Ipotizzazione … Neutralità 11».
+    const combined = record.content.match(/^(.{4,110}?)\s+(\d{1,3}|[IVXLCDM]{1,10})$/);
+    if (combined && isRunningHeaderText(combined[1]) && isPageNumberOnly(combined[2])) {
+      changes.push({ type: 'running_header_furniture', before: combined[1], after: '', overlap: '' });
+      changes.push({ type: 'page_number_furniture', before: combined[2], after: '', overlap: '' });
+      record.content = '';
+      refreshBoundaryRecord(record);
+    }
+
+    // Blocchi separati: marker+testatina, poi numero (o viceversa).
+    const next = records[i + 1];
+    if (next) {
+      const headerThenNumber = isRunningHeaderText(record.content) && isPageNumberOnly(next.content);
+      const numberThenHeader = isPageNumberOnly(record.content) && isRunningHeaderText(next.content);
+      if (headerThenNumber || numberThenHeader) {
+        const header = headerThenNumber ? record.content : next.content;
+        const number = headerThenNumber ? next.content : record.content;
+        changes.push({ type: 'running_header_furniture', before: header, after: '', overlap: '' });
+        changes.push({ type: 'page_number_furniture', before: number, after: '', overlap: '' });
+        record.content = '';
+        refreshBoundaryRecord(record);
+        records.splice(i + 1, 1);
+      }
+    }
+  }
+}
+
+function attachEmptyPageMarkers(records) {
+  for (let i = 0; i + 1 < records.length; i++) {
+    const record = records[i];
+    if (!record.marker || record.content) continue;
+    if (!records[i + 1].marker) records[i + 1].marker = record.marker;
+    records.splice(i, 1);
+    i--;
+  }
+}
+
 /** Elimina numeri di pagina OCR isolati esattamente attorno a un confine. */
 function discardBoundaryPageNumbers(records, changes) {
   for (let i = 0; i < records.length; i++) {
@@ -135,7 +212,9 @@ function discardBoundaryPageNumbers(records, changes) {
 export function repairBoundaryOverlaps(markdown, maxOverlap = 10, isKnownWord = null) {
   const records = String(markdown || '').trim().split(/\n{2,}/).map(proseBoundaryBlock);
   const changes = [];
+  discardLeadingPageFurniture(records, changes);
   discardBoundaryPageNumbers(records, changes);
+  attachEmptyPageMarkers(records);
   for (let i = 0; i + 1 < records.length; i++) {
     const left = records[i];
     const right = records[i + 1];
@@ -474,6 +553,10 @@ export function markdownToStrictTypst(markdown, plan = {}) {
   const blocks = String(markdown || '').trim().split(/\n{2,}/);
   const styleMap = new Map();
   for (const item of plan.blocks || []) styleMap.set(item.id, item.style);
+  const headingLevelMap = new Map();
+  for (const item of plan.headings || []) {
+    if (Number.isInteger(item?.level)) headingLevelMap.set(item.id, Math.max(1, Math.min(6, item.level)));
+  }
   const out = [];
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
     const original = blocks[blockIndex];
@@ -520,7 +603,8 @@ export function markdownToStrictTypst(markdown, plan = {}) {
     }
     const heading = block.match(/^(#{1,6})\s+([\s\S]+)$/);
     if (heading && !heading[2].includes('\n')) {
-      out.push(`${'='.repeat(heading[1].length)} ${inlineMarkdownToTypst(heading[2])}`);
+      const level = headingLevelMap.get(blockId) || heading[1].length;
+      out.push(`${'='.repeat(level)} ${inlineMarkdownToTypst(heading[2])}`);
       continue;
     }
     const lines = block.split('\n');
@@ -545,7 +629,7 @@ export function describeStrictBlocks(markdown) {
     const text = sourcePlainText(original).replace(/\s+/g, ' ').trim();
     let kind = 'prose';
     if (/^<!--\s*pagina/i.test(original.trim())) kind = 'page-or-prose';
-    if (/^#{1,6}\s/m.test(original.trim())) kind = 'heading';
+    if (/^(?:<!--\s*pagina\s+\d+\s*-->\s*)?#{1,6}\s/m.test(original.trim())) kind = 'heading';
     else if (/^!\[/m.test(original.trim())) kind = 'figure';
     else if (/\\begin\{tabular\}|^\s*\|/m.test(original)) kind = 'table';
     else if (/^\s*(?:[-+*]|\d+[.)])\s+/m.test(original)) kind = 'list';

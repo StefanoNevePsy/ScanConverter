@@ -100,6 +100,27 @@ test('scarta un numero pagina incollato alla continuazione', () => {
   assert.match(repaired.text, /<!-- pagina 2 -->\nperdevate tutte/);
 });
 
+test('scarta testatina e numero in alto prima di ricomporre la parola', () => {
+  const source = [
+    '<!-- pagina 1 -->\nQuesto esempio illustra il fatto che, cercando di definire con mag-',
+    '<!-- pagina 2 -->\nIpotizzazione Circolarità Neutralità 11',
+    'giore precisione il disordine, torniamo alla definizione.',
+  ].join('\n\n');
+  const known = (word) => word.toLowerCase() === 'maggiore';
+  const repaired = repairBoundaryOverlaps(source, 10, known);
+  assert.doesNotMatch(repaired.text, /Ipotizzazione|\b11\b/);
+  assert.match(repaired.text, /con\n<!-- pagina 2 -->\nmaggiore precisione/);
+  assert.ok(repaired.changes.some((change) => change.type === 'running_header_furniture'));
+  assert.ok(repaired.changes.some((change) => change.type === 'boundary_word_split'));
+});
+
+test('scarta testatina e numero su righe iniziali dello stesso blocco pagina', () => {
+  const source = 'Una frase aperta,\n\n<!-- pagina 2 -->\nIpotizzazione Circolarità Neutralità\n11\ncontinua qui.';
+  const repaired = repairBoundaryOverlaps(source);
+  assert.doesNotMatch(repaired.text, /Ipotizzazione|\b11\b/);
+  assert.match(repaired.text, /<!-- pagina 2 -->\ncontinua qui/);
+});
+
 test('riunisce un paragrafo che continua nella pagina successiva', () => {
   const source = 'Il sistema era organizzato intorno a punti importanti,\n\n<!-- pagina 19 -->\nche erano nodali per tutti.';
   const repaired = repairBoundaryOverlaps(source);
@@ -176,4 +197,19 @@ test('il piano editoriale cambia solo lo stile e conserva i blocchi', () => {
   for (const text of ['Titolo', 'Una citazione importante', 'Paragrafo finale']) {
     assert.match(doc.body, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
+});
+
+test('il piano editoriale può correggere solo il livello dei titoli esistenti', () => {
+  const source = '# Opera\n\n# Capitolo\n\n# Sezione\n\nTesto invariato.';
+  const doc = buildStrictDocument(source, {
+    headings: [
+      { id: 'b-1', level: 1 },
+      { id: 'b-2', level: 2 },
+      { id: 'b-3', level: 3 },
+    ],
+  });
+  assert.match(doc.body, /^= Opera$/m);
+  assert.match(doc.body, /^== Capitolo$/m);
+  assert.match(doc.body, /^=== Sezione$/m);
+  assert.match(doc.body, /Testo invariato\./);
 });

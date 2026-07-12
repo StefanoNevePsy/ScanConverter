@@ -20,6 +20,16 @@ const GROUPS = [
     ],
   },
   {
+    key: 'textsize',
+    label: 'Dimensione testo',
+    options: [
+      { id: 'small', label: 'Compatta (10pt)', hint: 'Corpo del testo a 10pt.' },
+      { id: 'normal', label: 'Normale (11pt)', hint: 'Corpo del testo a 11pt.' },
+      { id: 'large', label: 'Grande (12pt)', hint: 'Corpo del testo a 12pt.' },
+      { id: 'xlarge', label: 'Accessibile (13pt)', hint: 'Corpo del testo a 13pt, molto leggibile.' },
+    ],
+  },
+  {
     key: 'headfont',
     label: 'Font titoli',
     options: [
@@ -28,6 +38,15 @@ const GROUPS = [
       { id: 'ptsans', label: 'PT Sans', hint: 'Tutti i titoli (ogni livello) in "PT Sans".' },
       { id: 'newcm', label: 'New CM', hint: 'Tutti i titoli (ogni livello) in "New Computer Modern".' },
       { id: 'libertinus', label: 'Libertinus', hint: 'Tutti i titoli (ogni livello) in "Libertinus Serif".' },
+    ],
+  },
+  {
+    key: 'headingalign',
+    label: 'Allineamento titoli',
+    options: [
+      { id: 'left', label: 'Sinistra', hint: 'Titoli allineati a sinistra.' },
+      { id: 'center', label: 'Centrati', hint: 'Titoli centrati.' },
+      { id: 'right', label: 'Destra', hint: 'Titoli allineati a destra.' },
     ],
   },
   {
@@ -40,12 +59,21 @@ const GROUPS = [
     ],
   },
   {
+    key: 'orientation',
+    label: 'Orientamento',
+    options: [
+      { id: 'portrait', label: 'Verticale', hint: 'Pagina in orientamento verticale.' },
+      { id: 'landscape', label: 'Orizzontale', hint: 'Pagina in orientamento orizzontale.' },
+    ],
+  },
+  {
     key: 'margin',
     label: 'Margine annotazioni',
     options: [
       { id: 'wide', label: 'Ampio (4cm)', hint: 'Margine destro largo almeno 4cm per annotazioni.' },
       { id: 'xwide', label: 'Molto ampio (6cm)', hint: 'Margine destro molto largo (~6cm) per annotazioni estese.' },
       { id: 'sym', label: 'Simmetrico', hint: 'Margini simmetrici e classici, senza margine extra.' },
+      { id: 'narrow', label: 'Compatto (2cm)', hint: 'Margini compatti da 2cm per sfruttare meglio la pagina.' },
     ],
   },
   {
@@ -54,6 +82,7 @@ const GROUPS = [
     options: [
       { id: 'one', label: 'Una colonna', hint: 'Testo su una sola colonna.' },
       { id: 'two', label: 'Due colonne', hint: 'Imposta il corpo su due colonne (columns: 2).' },
+      { id: 'three', label: 'Tre colonne', hint: 'Imposta il corpo su tre colonne (columns: 3).' },
     ],
   },
   {
@@ -69,7 +98,18 @@ const GROUPS = [
     label: 'Densità',
     options: [
       { id: 'airy', label: 'Arioso', hint: 'Interlinea generosa e spaziatura ariosa.' },
+      { id: 'normal', label: 'Normale', hint: 'Interlinea e spaziatura equilibrate.' },
       { id: 'compact', label: 'Compatto', hint: 'Interlinea compatta e testo denso.' },
+    ],
+  },
+  {
+    key: 'indent',
+    label: 'Rientro paragrafi',
+    options: [
+      { id: 'none', label: 'Nessuno', hint: 'Nessun rientro di prima riga.' },
+      { id: 'small', label: 'Leggero', hint: 'Rientro leggero della prima riga.' },
+      { id: 'normal', label: 'Classico', hint: 'Rientro classico della prima riga.' },
+      { id: 'deep', label: 'Profondo', hint: 'Rientro marcato della prima riga.' },
     ],
   },
   {
@@ -81,6 +121,7 @@ const GROUPS = [
       { id: 'numbered', label: 'Titoli numerati', hint: 'Numera i titoli delle sezioni (heading numbering "1.1").' },
       { id: 'runninghead', label: 'Testatina', hint: 'Aggiungi una testatina con il titolo del documento.' },
       { id: 'noindent', label: 'Senza rientro', hint: 'Paragrafi senza rientro di prima riga.' },
+      { id: 'hyphenate', label: 'Sillabazione', hint: 'Abilita la sillabazione automatica italiana.' },
     ],
   },
 ];

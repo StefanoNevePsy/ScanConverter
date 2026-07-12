@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isPageFurniture } from '../src/lib/assemble.js';
+import { headingMarkdown, isPageFurniture, pageFurnitureBlocks } from '../src/lib/assemble.js';
 
 test('riconosce i numeri pagina anche dentro l’ampio margine inferiore', () => {
   assert.equal(isPageFurniture({
@@ -13,6 +13,39 @@ test('riconosce i numeri pagina anche dentro l’ampio margine inferiore', () =>
     text: 'XIX',
     bbox: { xmin: 0.48, xmax: 0.52, ymin: 0.84, ymax: 0.88 },
   }), true);
+});
+
+test('scarta una testatina alta soltanto quando è associata al numero pagina', () => {
+  const header = {
+    type: 'Text',
+    text: 'Ipotizzazione Circolarità Neutralità',
+    bbox: { xmin: 0.05, xmax: 0.38, ymin: 0.14, ymax: 0.18 },
+  };
+  const pageNumber = {
+    type: 'Text',
+    text: '11',
+    bbox: { xmin: 0.87, xmax: 0.91, ymin: 0.14, ymax: 0.18 },
+  };
+  const body = {
+    type: 'Text',
+    text: 'giore precisione il disordine, torniamo alla definizione.',
+    bbox: { xmin: 0.06, xmax: 0.9, ymin: 0.28, ymax: 0.38 },
+  };
+  const furniture = pageFurnitureBlocks([header, pageNumber, body]);
+  assert.equal(furniture.has(header), true);
+  assert.equal(furniture.has(pageNumber), true);
+  assert.equal(furniture.has(body), false);
+  assert.equal(pageFurnitureBlocks([header, body]).has(header), false);
+});
+
+test('conserva i veri titoli e produce livelli Markdown', () => {
+  const title = { type: 'Title', text: 'Titolo del libro' };
+  const section = { type: 'Section-header', text: '2.3 Metodo' };
+  assert.equal(headingMarkdown(title), '# Titolo del libro');
+  assert.equal(headingMarkdown(section), '## 2.3 Metodo');
+  const pageNumber = { type: 'Text', text: '11', bbox: { xmin: 0.9, xmax: 0.94, ymin: 0.1, ymax: 0.14 } };
+  const trueHeading = { ...section, bbox: { xmin: 0.1, xmax: 0.6, ymin: 0.1, ymax: 0.16 } };
+  assert.equal(pageFurnitureBlocks([pageNumber, trueHeading]).has(trueHeading), false);
 });
 
 test('non scarta numeri che fanno parte del contenuto', () => {

@@ -14,7 +14,12 @@ const ALLOWED = {
   font: new Set(['libertinus', 'newcm', 'ptserif', 'ptsans', 'dejavu']),
   headfont: new Set(['body', 'dejavu', 'ptsans', 'newcm', 'libertinus', 'ptserif']),
   paper: new Set(['a4', 'a5', 'letter']),
-  margin: new Set(['wide', 'xwide', 'sym']),
+  textsize: new Set(['small', 'normal', 'large', 'xlarge']),
+  orientation: new Set(['portrait', 'landscape']),
+  margin: new Set(['wide', 'xwide', 'sym', 'narrow']),
+  columns: new Set(['one', 'two', 'three']),
+  headingalign: new Set(['left', 'center', 'right']),
+  indent: new Set(['none', 'small', 'normal', 'deep']),
   align: new Set(['justify', 'ragged']),
   density: new Set(['airy', 'compact']),
   style: new Set(['quote', 'center', 'compact']),
@@ -32,6 +37,7 @@ function validatePlan(value, descriptors) {
   const document = value?.document || {};
   const pick = (key, fallback) => ALLOWED[key].has(document[key]) ? document[key] : fallback;
   const known = new Set(descriptors.filter((b) => b.kind === 'prose').map((b) => b.id));
+  const knownHeadings = new Set(descriptors.filter((b) => b.kind === 'heading').map((b) => b.id));
   const seen = new Set();
   const blocks = [];
   for (const item of Array.isArray(value?.blocks) ? value.blocks : []) {
@@ -39,19 +45,32 @@ function validatePlan(value, descriptors) {
     seen.add(item.id);
     blocks.push({ id: item.id, style: item.style });
   }
+  const headings = [];
+  const headingSeen = new Set();
+  for (const item of Array.isArray(value?.headings) ? value.headings : []) {
+    const level = Number(item?.level);
+    if (!knownHeadings.has(item?.id) || headingSeen.has(item.id) || !Number.isInteger(level)) continue;
+    headingSeen.add(item.id);
+    headings.push({ id: item.id, level: Math.max(1, Math.min(4, level)) });
+  }
   return {
     document: {
       font: pick('font', 'libertinus'),
       headfont: pick('headfont', 'dejavu'),
       paper: pick('paper', 'a4'),
+      textsize: pick('textsize', 'normal'),
+      orientation: pick('orientation', 'portrait'),
       margin: pick('margin', 'wide'),
+      headingalign: pick('headingalign', 'left'),
+      indent: pick('indent', document.noindent ? 'none' : 'normal'),
       align: pick('align', 'justify'),
       density: pick('density', 'airy'),
       // Una colonna preserva ordine di lettura ed ampio spazio annotazioni.
-      columns: 'one',
+      columns: pick('columns', 'one'),
       extras: document.noindent ? ['noindent'] : [],
     },
     blocks,
+    headings,
   };
 }
 
@@ -72,18 +91,29 @@ export async function requestStrictLayoutPlan({ settings, markdown, signal }) {
     '- font: libertinus|newcm|ptserif|ptsans|dejavu\n' +
     '- headfont: body|dejavu|ptsans|newcm|libertinus|ptserif\n' +
     '- paper: a4|a5|letter\n' +
-    '- margin: wide|xwide|sym (preferisci wide/xwide per annotazioni)\n' +
+    '- textsize: small|normal|large|xlarge\n' +
+    '- orientation: portrait|landscape\n' +
+    '- margin: wide|xwide|sym|narrow (preferisci wide/xwide per annotazioni)\n' +
+    '- columns: one|two|three (preferisci one per libri e annotazioni)\n' +
+    '- headingalign: left|center|right\n' +
+    '- indent: none|small|normal|deep\n' +
     '- align: justify|ragged\n' +
     '- density: airy|compact\n' +
     '- noindent: boolean\n' +
+    'Classifica inoltre TUTTI i blocchi heading disponibili con level 1..4: ' +
+    '1=titolo documento/parte, 2=capitolo, 3=sezione, 4=sottosezione. ' +
+    'Usa numerazione, posizione e formulazione per mantenere una gerarchia ' +
+    'coerente; le testatine ripetute non sono titoli e non dovrebbero essere presenti.\n' +
     'Puoi inoltre assegnare a pochi blocchi di prosa uno stile quote, center ' +
     'o compact usando soltanto il loro id. Non assegnare stili a titoli, ' +
     'tabelle, liste o figure. Non cambiare l’ordine e non inventare ID.\n\n' +
     'BLOCCHI (testo solo per capire la funzione editoriale):\n' +
     JSON.stringify(sample) +
     '\n\nFormato: {"document":{"font":"…","headfont":"…","paper":"…",' +
-    '"margin":"…","align":"…","density":"…","noindent":false},' +
-    '"blocks":[{"id":"b-1","style":"quote"}]}';
+    '"textsize":"…","orientation":"…","margin":"…","columns":"…",' +
+    '"headingalign":"…","indent":"…","align":"…","density":"…","noindent":false},' +
+    '"blocks":[{"id":"b-1","style":"quote"}],' +
+    '"headings":[{"id":"b-2","level":2}]}';
 
   let text;
   if (settings.typstEngine === 'nvidia') {

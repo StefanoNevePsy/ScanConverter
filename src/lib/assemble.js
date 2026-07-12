@@ -13,6 +13,14 @@ const CAPTION_TYPES = new Set(['Caption']);
 // contenuto e sporca sia il prompt sia la verifica di fedeltà. Le vere note
 // a piè di pagina (Footnote) invece SONO contenuto e restano.
 const FURNITURE_TYPES = new Set(['Page-header', 'Page-footer']);
+const HEADING_LEVELS = new Map([
+  ['Title', 1],
+  ['Document-title', 1],
+  ['Section-header', 2],
+  ['Heading', 2],
+  ['Subsection-header', 3],
+  ['Subheading', 3],
+]);
 const ARABIC_PAGE_NUMBER_RE = /^(?:pagina\s+)?\d{1,3}$/i;
 const ROMAN_PAGE_NUMBER_RE = /^(?:PAGINA\s+)?[IVXLCDM]{1,10}$/;
 const isPageNumberText = (text) =>
@@ -66,7 +74,7 @@ export function isPageFurniture(b) {
   // collocati ben sopra il bordo fisico (ampio margine bianco): per loro usa
   // una fascia più larga e non dipendere dal tipo restituito dal modello.
   if (isPageNumberText(text)) {
-    const nearNumberTop = (b.bbox.ymax ?? 1) < 0.15;
+    const nearNumberTop = (b.bbox.ymax ?? 1) < 0.22;
     const nearNumberBottom = (b.bbox.ymin ?? 0) > 0.80;
     if (nearNumberTop || nearNumberBottom) return true;
   }
@@ -75,6 +83,50 @@ export function isPageFurniture(b) {
   const nearTop = (b.bbox.ymax ?? 1) < 0.09;
   const nearBottom = (b.bbox.ymin ?? 0) > 0.93;
   return nearTop || nearBottom;
+}
+
+function looksLikeRunningHeader(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  const words = t.match(/[\p{L}\p{N}]+/gu) || [];
+  return t.length >= 4 && t.length <= 110 && words.length >= 2 && words.length <= 12 && !/[,.!?;:]/u.test(t);
+}
+
+/**
+ * Arredo contestuale: una breve riga Text nella fascia alta viene scartata
+ * solo se sulla stessa pagina c'è anche un numero di pagina in alto. I veri
+ * Title/Section-header restano contenuto, anche se occupano la stessa zona.
+ */
+export function pageFurnitureBlocks(blocks) {
+  const furniture = new Set((blocks || []).filter(isPageFurniture));
+  const topNumbers = (blocks || []).filter((b) =>
+    b?.bbox && isPageNumberText((b.text || '').trim()) && (b.bbox.ymax ?? 1) < 0.22);
+  if (!topNumbers.length) return furniture;
+  for (const b of blocks || []) {
+    if (
+      b?.type === 'Text' &&
+      b.bbox &&
+      (b.bbox.ymax ?? 1) < 0.22 &&
+      (b.bbox.ymax ?? 0) - (b.bbox.ymin ?? 0) < 0.07 &&
+      looksLikeRunningHeader(b.text)
+    ) {
+      furniture.add(b);
+    }
+  }
+  return furniture;
+}
+
+/** Converte i tipi strutturati dell'OCR in livelli Markdown espliciti. */
+export function headingMarkdown(b) {
+  const text = String(b?.text || '').trim();
+  if (!text || /^#{1,6}\s/.test(text)) return text;
+  let level = HEADING_LEVELS.get(b?.type);
+  if (!level) return text;
+  const numbered = text.match(/^\s*\d+(?:\.(\d+)){0,4}[.)]?\s+/);
+  if (numbered) {
+    const prefix = numbered[0].trim().replace(/[.)]$/, '');
+    level = Math.min(6, prefix.split('.').filter(Boolean).length);
+  }
+  return `${'#'.repeat(level)} ${text}`;
 }
 
 /**
@@ -232,7 +284,8 @@ function emitByPosition(items, out) {
 export async function assemblePage(blocks, pageDataUrl, figureCounter) {
   // L'arredo di pagina esce subito; il resto va in ordine di lettura XY-cut
   // (colonne e doppie pagine lette nel verso giusto).
-  const sorted = orderBlocks(blocks.filter((b) => !isPageFurniture(b)));
+  const furniture = pageFurnitureBlocks(blocks);
+  const sorted = orderBlocks(blocks.filter((b) => !furniture.has(b)));
   const captions = sorted.filter((b) => CAPTION_TYPES.has(b.type));
   const hasPictures = sorted.some((b) => PICTURE_TYPES.has(b.type) && b.bbox);
   const img = hasPictures ? await loadImage(pageDataUrl) : null;
@@ -241,7 +294,7 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
   const lines = [];
 
   for (const b of sorted) {
-    if (isPageFurniture(b)) continue; // testatine/numeri di pagina
+    if (furniture.has(b)) continue; // testatine/numeri di pagina
     if (PICTURE_TYPES.has(b.type) && b.bbox && img) {
       const n = figureCounter.next();
       const path = `/figures/fig-${n}.png`;
@@ -265,7 +318,7 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
     } else if (CAPTION_TYPES.has(b.type)) {
       if (!b._used && b.text) lines.push(b.text);
     } else if (b.text) {
-      lines.push(normalizeDialogue(b.text));
+      lines.push(normalizeDialogue(headingMarkdown(b)));
     }
   }
 

@@ -20,6 +20,13 @@ const HEAD_FAMILIES = {
   ptserif: 'PT Serif',
 };
 const PAPER = { a4: 'a4', a5: 'a5', letter: 'us-letter' };
+const TEXT_SIZE = { small: '10pt', normal: '11pt', large: '12pt', xlarge: '13pt' };
+const HEADING_SIZE = {
+  small: ['16pt', '13pt', '11.5pt', '10.5pt'],
+  normal: ['17pt', '14pt', '12pt', '11pt'],
+  large: ['19pt', '15.5pt', '13pt', '12pt'],
+  xlarge: ['21pt', '17pt', '14pt', '13pt'],
+};
 
 /** Estrae il titolo (primo titolo `= …`) dal corpo, per la testatina. */
 export function extractTitle(body) {
@@ -52,11 +59,14 @@ export function buildPreamble(sel = {}, opts = {}) {
 
   let margin;
   if (sel.margin === 'xwide') margin = '(right: 6cm, top: 2.5cm, bottom: 2.5cm, left: 2.5cm)';
+  else if (sel.margin === 'narrow') margin = '2cm';
   else if (sel.margin === 'sym') margin = '2.5cm';
   else margin = '(right: 4cm, top: 2.5cm, bottom: 2.5cm, left: 2.5cm)';
 
   const pageParts = [`paper: "${paper}"`, `margin: ${margin}`];
+  if (sel.orientation === 'landscape') pageParts.push('flipped: true');
   if (sel.columns === 'two') pageParts.push('columns: 2');
+  if (sel.columns === 'three') pageParts.push('columns: 3');
   if (extras.has('pagenums')) pageParts.push('numbering: "1"');
   if (extras.has('runninghead') && opts.title) {
     pageParts.push(
@@ -70,19 +80,31 @@ export function buildPreamble(sel = {}, opts = {}) {
   const justify = sel.align === 'ragged' ? 'false' : 'true';
   const leading = sel.density === 'airy' ? '0.85em' : sel.density === 'compact' ? '0.55em' : '0.65em';
   const spacing = sel.density === 'airy' ? '1.4em' : sel.density === 'compact' ? '0.8em' : '1.1em';
-  const indent = extras.has('noindent') ? '0em' : '1.2em';
+  const indent = extras.has('noindent') || sel.indent === 'none'
+    ? '0em'
+    : sel.indent === 'small'
+      ? '0.7em'
+      : sel.indent === 'deep'
+        ? '1.8em'
+        : '1.2em';
+  const sizeKey = TEXT_SIZE[sel.textsize] ? sel.textsize : 'normal';
+  const headingSizes = HEADING_SIZE[sizeKey];
+  const textOptions = [`font: "${esc(f.body)}"`, `size: ${TEXT_SIZE[sizeKey]}`, 'lang: "it"'];
+  if (extras.has('hyphenate')) textOptions.push('hyphenate: true');
 
   const lines = [
     `#set page(${pageParts.join(', ')})`,
-    `#set text(font: "${esc(f.body)}", size: 11pt, lang: "it")`,
+    `#set text(${textOptions.join(', ')})`,
     // Scala tipografica ESPLICITA per livello: gerarchia visiva coerente
     // qualunque sia il font scelto per i titoli.
     `#show heading: set text(font: "${esc(headFont)}")`,
-    '#show heading.where(level: 1): set text(size: 17pt)',
-    '#show heading.where(level: 2): set text(size: 14pt)',
-    '#show heading.where(level: 3): set text(size: 12pt)',
-    '#show heading.where(level: 4): set text(size: 11pt)',
+    `#show heading.where(level: 1): set text(size: ${headingSizes[0]})`,
+    `#show heading.where(level: 2): set text(size: ${headingSizes[1]})`,
+    `#show heading.where(level: 3): set text(size: ${headingSizes[2]})`,
+    `#show heading.where(level: 4): set text(size: ${headingSizes[3]})`,
   ];
+  if (sel.headingalign === 'center') lines.push('#show heading: it => align(center, it)');
+  if (sel.headingalign === 'right') lines.push('#show heading: it => align(right, it)');
   if (extras.has('numbered')) lines.push('#set heading(numbering: "1.1")');
   lines.push(
     `#set par(justify: ${justify}, leading: ${leading}, first-line-indent: ${indent})`,
