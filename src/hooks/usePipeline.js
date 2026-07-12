@@ -1222,7 +1222,8 @@ export function usePipeline(settings) {
         log.push(...det.changes);
       }
       let lastError = '';
-      for (let round = 0; round < 3; round++) {
+      // Quattro compilazioni consentono fino a tre vere richieste di patch.
+      for (let round = 0; round < 4; round++) {
         try {
           const svg = await compileToSvg(code, figuresRef.current);
           setTypstCode(code);
@@ -1236,13 +1237,13 @@ export function usePipeline(settings) {
           };
         } catch (e) {
           lastError = e.message || 'Errore di compilazione Typst.';
-          if (round === 2) break; // niente più tentativi AI
+          if (round === 3) break; // niente più tentativi AI
           // Localizza l'errore per bisezione: il modello riceve riga e blocco
           // indiziato (gli errori Typst non hanno posizione).
           const loc = await locateTypstError(code, figuresRef.current);
           const res = await requestTypstFix({ settings, code, error: lastError, hint: loc });
           const { code: next, applied } = applyFixes(code, res.fixes);
-          if (!applied.length) {
+          if (!applied.length || next === code) {
             setTypstCode(code);
             setCompileError(await describeCompileError(code, lastError));
             return {
@@ -1253,11 +1254,15 @@ export function usePipeline(settings) {
             };
           }
           code = next;
+          // Rende subito visibile la modifica: se un errore successivo resta,
+          // l'utente può comunque ispezionare la patch e il testo non sembra
+          // tornare silenziosamente alla versione precedente.
+          setTypstCode(code);
           if (res.explanation && !log.includes(res.explanation)) log.push(res.explanation);
           log.push(...applied.map(describeFix));
         }
       }
-      // Tre compilazioni fallite: mantieni comunque le modifiche applicate
+      // Quattro compilazioni fallite: mantieni comunque le modifiche applicate
       // (spesso avvicinano alla soluzione) e mostra l'errore residuo con la
       // posizione localizzata per bisezione.
       const described = await describeCompileError(code, lastError);

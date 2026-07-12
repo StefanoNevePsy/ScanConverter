@@ -117,7 +117,7 @@ export default function App() {
 
   // Live preview con debounce sulle modifiche manuali del codice.
   useEffect(() => {
-    if (!livePreview || !pipe.typstCode.trim()) return;
+    if (!livePreview || pipe.aiFixing || !pipe.typstCode.trim()) return;
     if (pipe.typstCode === lastCompiledRef.current) return;
     const t = setTimeout(async () => {
       const ok = await pipe.recompile(pipe.typstCode);
@@ -570,8 +570,9 @@ function Workspace({
       </div>
 
       {/* Doppia colonna: editor Typst | anteprima PDF.
-          Su mobile una scheda alla volta, a tutta altezza. */}
-      <div className="flex min-h-[60vh] flex-1 flex-col gap-4 lg:grid lg:min-h-[520px] lg:grid-cols-2">
+          Su mobile una scheda alla volta. L'altezza segue la viewport ma è
+          limitata: editor e PDF scorrono internamente invece di allungare la pagina. */}
+      <div className="flex h-[clamp(380px,70dvh,800px)] min-h-0 flex-none flex-col gap-4 lg:grid lg:grid-cols-2">
         <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'code' ? 'flex' : 'hidden'} lg:flex`}>
           {autofixMsg && (
             <div className="mb-2 rounded-lg border border-primary/40 bg-primary-soft px-3 py-2 text-xs text-ink">
