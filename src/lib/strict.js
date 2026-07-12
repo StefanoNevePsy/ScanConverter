@@ -702,6 +702,46 @@ export function buildStrictDocument(markdown, layoutPlan = {}) {
   return { preamble, body, sourceText: sourcePlainText(markdown) };
 }
 
+/** Sostituzione ammessa soltanto quando il frammento compare una sola volta. */
+export function replaceUniqueText(source, find, replacement) {
+  if (!find) return null;
+  const first = String(source || '').indexOf(find);
+  if (first < 0 || String(source || '').indexOf(find, first + find.length) >= 0) return null;
+  return source.slice(0, first) + replacement + source.slice(first + find.length);
+}
+
+/**
+ * Riporta una modifica del testo canonico nel Typst già aperto preservando le
+ * eventuali modifiche manuali lontane dal frammento. Il diff locale riceve
+ * contesto sufficiente e deve comparire una sola volta nell'editor.
+ */
+export function rebaseCanonicalRevision(editorCode, currentCanonical, nextCanonical, layoutPlan = {}) {
+  const before = buildStrictDocument(currentCanonical, layoutPlan).body;
+  const after = buildStrictDocument(nextCanonical, layoutPlan).body;
+  if (before === after) return editorCode;
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < before.length - prefix &&
+    suffix < after.length - prefix &&
+    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) suffix++;
+  const beforeEnd = before.length - suffix;
+  const afterEnd = after.length - suffix;
+  // Prova prima il diff minimo: preserva anche modifiche manuali molto vicine.
+  // Se è ambiguo, amplia gradualmente il contesto fino a renderlo univoco.
+  for (const context of [0, 20, 50, 100, 220]) {
+    const left = Math.max(0, prefix - context);
+    const rightContext = Math.min(context, suffix);
+    const find = before.slice(left, beforeEnd + rightContext);
+    const replacement = after.slice(left, afterEnd + rightContext);
+    const rebased = replaceUniqueText(editorCode, find, replacement);
+    if (rebased != null) return rebased;
+  }
+  return null;
+}
+
 /** Invarianti fragili che devono ricomparire esattamente. */
 export function extractInvariants(text) {
   const s = String(text || '');

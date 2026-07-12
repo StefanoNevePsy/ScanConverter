@@ -274,6 +274,61 @@ export async function requestProofread({ settings, paragraphs, signal }) {
   return map;
 }
 
+/** Rivede una singola correzione già localizzata, senza ricevere il documento. */
+export async function requestCorrectionReview({ settings, before, after, context, signal }) {
+  const user =
+    'Controlla una singola correzione OCR usando il breve contesto fornito. ' +
+    'Devi scegliere fra: original (il testo OCR era già corretto), corrected ' +
+    '(la correzione attuale è migliore), proposal (serve una terza versione ' +
+    'minima). Non parafrasare e non eliminare informazioni. Se proponi una ' +
+    'terza versione, conserva tutte le parole e il significato recuperabili ' +
+    'dall’originale OCR; correggi soltanto refusi, fusioni, separazioni, accenti ' +
+    'o una breve parola-funzione mancante.\n\n' +
+    `CONTESTO OCR:\n${String(context || '').slice(0, 1800)}\n\n` +
+    `ORIGINALE OCR:\n${before}\n\nCORREZIONE ATTUALE:\n${after}\n\n` +
+    'Rispondi SOLO con: {"choice":"original|corrected|proposal",' +
+    '"text":"testo esatto scelto o proposto","explanation":"spiegazione breve"}';
+  let text;
+  if (settings.fixEngine === 'gemini') {
+    text = await geminiGenerate({
+      apiKey: settings.googleApiKey,
+      model: settings.fixModel,
+      system: SYSTEM,
+      user,
+      temperature: 0,
+      maxTokens: 2048,
+      json: true,
+      signal,
+    });
+  } else {
+    text = await nvidiaChat({
+      apiKey: settings.nvidiaApiKey,
+      endpoint: settings.nvidiaEndpoint,
+      model: settings.fixModel,
+      system: SYSTEM,
+      user,
+      temperature: 0,
+      maxTokens: 2048,
+      signal,
+    });
+  }
+  const parsed = extractJson(text);
+  const choice = ['original', 'corrected', 'proposal'].includes(parsed?.choice)
+    ? parsed.choice
+    : 'corrected';
+  const selected = choice === 'original'
+    ? before
+    : choice === 'corrected'
+      ? after
+      : String(parsed?.text || '');
+  if (!selected.trim()) throw new Error('Il controllo AI non ha restituito una proposta utilizzabile.');
+  return {
+    choice,
+    text: selected,
+    explanation: String(parsed?.explanation || '').slice(0, 400),
+  };
+}
+
 /**
  * Rilegge tutto il corpo Typst: individua i paragrafi di prosa pura, li invia
  * a lotti al modello, applica SOLO le correzioni che superano il guard di

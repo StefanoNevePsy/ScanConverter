@@ -529,7 +529,11 @@ function Workspace({
       )}
 
       <FidelityPanel warnings={pipe.fidelityWarnings} />
-      <StrictReportPanel report={pipe.strictReport} />
+      <StrictReportPanel
+        report={pipe.strictReport}
+        correctionBusy={pipe.strictCorrectionBusy}
+        onReviewCorrection={pipe.reviewStrictCorrection}
+      />
 
       {pipe.spellReport && (
         <SpellPanel

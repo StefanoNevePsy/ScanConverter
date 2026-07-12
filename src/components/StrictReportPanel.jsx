@@ -1,13 +1,19 @@
 import { useState } from 'react';
-import { IconAlert, IconCheck } from './Icons.jsx';
+import { IconAlert, IconCheck, IconSpinner, IconWand } from './Icons.jsx';
 
-export default function StrictReportPanel({ report }) {
+export default function StrictReportPanel({ report, onReviewCorrection, correctionBusy }) {
   const [open, setOpen] = useState(false);
+  const [notices, setNotices] = useState({});
   if (!report || report.workflow !== 'strict') return null;
   const pdfOk = report.pdf?.contentOk === true;
   const comparisons = (report.ocrComparisons || []).filter(Boolean);
   const uncertain = comparisons.filter((c) => c.error || c.agreement < 0.97);
   const corrections = report.corrections || [];
+  const runCorrectionAction = async (index, action) => {
+    if (!onReviewCorrection) return;
+    const result = await onReviewCorrection(index, action);
+    setNotices((current) => ({ ...current, [index]: result?.message || '' }));
+  };
 
   return (
     <section className={`overflow-hidden rounded-xl border ${
@@ -112,14 +118,109 @@ export default function StrictReportPanel({ report }) {
           )}
           {!!corrections.length && (
             <div>
-              <div className="font-medium text-ink">Registro correzioni conservative</div>
-              <ul className="mt-1 space-y-2">
-                {corrections.map((c, i) => (
-                  <li key={i} className="rounded-lg bg-surface/60 p-2 text-muted">
-                    <div><span className="text-danger line-through">{c.before}</span></div>
-                    <div className="mt-1"><span className="text-success">{c.after}</span></div>
-                  </li>
-                ))}
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <div className="font-medium text-ink">Revisione delle correzioni</div>
+                  <p className="mt-0.5 text-xs text-muted">
+                    Scegli il testo OCR, la correzione applicata o chiedi un controllo puntuale all’IA.
+                  </p>
+                </div>
+                <span className="shrink-0 text-xs text-faint">{corrections.length} voci</span>
+              </div>
+              <ul className="mt-2 max-h-[min(55vh,28rem)] space-y-2 overflow-y-auto overscroll-contain pr-1">
+                {corrections.map((c, i) => {
+                  const busy = correctionBusy?.index === i;
+                  const reversible = !!c.before?.trim() && !!c.after?.trim() && !c.before.includes('⟂');
+                  const reviewable = reversible && !!onReviewCorrection;
+                  const decisionLabel = c.decision === 'original'
+                    ? 'OCR scelto'
+                    : c.decision === 'ai'
+                      ? 'esito IA scelto'
+                      : c.decision === 'corrected'
+                        ? 'correzione confermata'
+                        : '';
+                  return (
+                    <li key={i} className="rounded-lg border border-border/70 bg-surface/70 p-2.5 text-muted">
+                      <div className="mb-2 flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-semibold uppercase tracking-wide text-faint">Modifica {i + 1}</span>
+                        {decisionLabel && <span className="rounded-full bg-success/10 px-2 py-0.5 text-success">{decisionLabel}</span>}
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="rounded-md bg-danger/5 p-2">
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-danger">OCR originale</div>
+                          <div className="max-h-24 overflow-y-auto whitespace-pre-wrap leading-relaxed text-ink">{c.before || '—'}</div>
+                        </div>
+                        <div className="rounded-md bg-success/5 p-2">
+                          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-success">Versione corretta</div>
+                          <div className="max-h-24 overflow-y-auto whitespace-pre-wrap leading-relaxed text-ink">{c.after || 'Elemento rimosso'}</div>
+                        </div>
+                      </div>
+                      {reviewable ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => runCorrectionAction(i, 'use-original')}
+                            className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-ink hover:bg-surface-2 disabled:opacity-50"
+                          >Usa OCR</button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => runCorrectionAction(i, 'use-corrected')}
+                            className="rounded-md border border-success/30 bg-success/10 px-2.5 py-1.5 text-xs text-success hover:bg-success/15 disabled:opacity-50"
+                          >Mantieni correzione</button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => runCorrectionAction(i, 'review-ai')}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs text-accent hover:bg-accent/15 disabled:opacity-50"
+                          >
+                            {busy && correctionBusy?.action === 'review-ai'
+                              ? <IconSpinner width={13} height={13} />
+                              : <IconWand width={13} height={13} />}
+                            Ricontrolla con IA
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-xs text-faint">
+                          Modifica strutturale automatica: mostrata per trasparenza, ma non reinseribile senza una posizione univoca.
+                        </p>
+                      )}
+                      {c.aiReview && (
+                        <div className="mt-2 rounded-md border border-accent/20 bg-accent/5 p-2 text-xs">
+                          <div className="font-medium text-ink">
+                            Esito IA: {c.aiReview.choice === 'original'
+                              ? 'preferisce l’originale OCR'
+                              : c.aiReview.choice === 'corrected'
+                                ? 'conferma la correzione'
+                                : 'propone una terza versione'}
+                          </div>
+                          {c.aiReview.explanation && <p className="mt-1 text-muted">{c.aiReview.explanation}</p>}
+                          {c.aiReview.choice === 'proposal' && (
+                            <p className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap rounded bg-surface p-2 text-ink">
+                              {c.aiReview.text}
+                            </p>
+                          )}
+                          <button
+                            type="button"
+                            disabled={busy || !c.aiReview.applicable}
+                            onClick={() => runCorrectionAction(i, 'use-ai')}
+                            className="mt-2 rounded-md bg-accent px-2.5 py-1.5 font-medium text-white disabled:opacity-40"
+                          >Applica esito IA</button>
+                          {!c.aiReview.applicable && (
+                            <span className="ml-2 text-warning">Proposta bloccata dai controlli di sicurezza.</span>
+                          )}
+                        </div>
+                      )}
+                      {busy && correctionBusy?.action !== 'review-ai' && (
+                        <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted">
+                          <IconSpinner width={13} height={13} /> Ricompilazione e verifica del PDF…
+                        </p>
+                      )}
+                      {notices[i] && !busy && <p className="mt-2 text-xs text-muted">{notices[i]}</p>}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}

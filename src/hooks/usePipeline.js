@@ -29,7 +29,11 @@ import {
   fixOcrHyphenation,
   fixSpacing,
 } from '../lib/spell.js';
-import { proofreadBody } from '../lib/proofread.js';
+import {
+  isSafeContextualCorrection,
+  proofreadBody,
+  requestCorrectionReview,
+} from '../lib/proofread.js';
 import {
   buildStrictDocument,
   buildDifferenceContexts,
@@ -37,6 +41,8 @@ import {
   compareTokenSequences,
   missingInvariants,
   repairBoundaryOverlaps,
+  rebaseCanonicalRevision,
+  replaceUniqueText,
   sourcePlainText,
 } from '../lib/strict.js';
 import { requestStrictDifferenceReview, requestStrictLayoutPlan } from '../lib/layoutPlan.js';
@@ -107,6 +113,14 @@ export const STEPS = [
 
 const emptyStatus = { ocr: 'pending', format: 'pending', compile: 'pending' };
 
+function correctionContext(rawText, before, after, radius = 700) {
+  const source = String(rawText || '');
+  let index = before ? source.indexOf(before) : -1;
+  if (index < 0 && after) index = source.indexOf(after);
+  if (index < 0) return source.slice(0, radius * 2);
+  return source.slice(Math.max(0, index - radius), index + Math.max(before?.length || 0, 1) + radius);
+}
+
 /**
  * Stato e orchestrazione dell'intera pipeline: OCR → Typst → PDF.
  * L'editor Typst resta la fonte di verità modificabile; `recompile` ricompila
@@ -145,6 +159,7 @@ export function usePipeline(settings) {
   // Esito della verifica di fedeltà per chunk: [{chunk,total,coverage,missing}].
   const [fidelityWarnings, setFidelityWarnings] = useState([]);
   const [strictReport, setStrictReport] = useState(null);
+  const [strictCorrectionBusy, setStrictCorrectionBusy] = useState(null);
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
@@ -1628,6 +1643,134 @@ export function usePipeline(settings) {
     }
   }, [typstCode, settings, verifyStrictPdf]);
 
+  /** Revisione interattiva di una singola voce del registro conservativo. */
+  const reviewStrictCorrection = useCallback(async (index, action) => {
+    const s = sessionRef.current;
+    const correction = s?.corrections?.[index];
+    if (s?.workflow !== 'strict' || !correction) {
+      return { ok: false, message: 'Correzione non più disponibile.' };
+    }
+    setStrictCorrectionBusy({ index, action });
+    const updateCorrections = (next) => {
+      s.corrections = next;
+      setStrictReport((report) => report ? { ...report, corrections: next } : report);
+    };
+    try {
+      if (action === 'review-ai') {
+        const review = await requestCorrectionReview({
+          settings,
+          before: correction.before,
+          after: correction.after,
+          context: correctionContext(s.rawText, correction.before, correction.after),
+          signal: abortRef.current?.signal,
+        });
+        let applicable = review.choice !== 'proposal';
+        if (review.choice === 'proposal') {
+          try {
+            const speller = await loadSpeller();
+            applicable = isSafeContextualCorrection(correction.before, review.text, speller);
+          } catch {
+            applicable = false;
+          }
+        }
+        const next = s.corrections.map((item, i) => i === index
+          ? { ...item, aiReview: { ...review, applicable } }
+          : item);
+        updateCorrections(next);
+        await persist();
+        return {
+          ok: true,
+          message: applicable
+            ? 'Controllo AI completato: scegli se applicarne l’esito.'
+            : 'Controllo AI completato, ma la proposta non supera i controlli di sicurezza.',
+        };
+      }
+
+      const currentText = correction.appliedText ?? correction.after;
+      const target = action === 'use-original'
+        ? correction.before
+        : action === 'use-ai'
+          ? correction.aiReview?.text
+          : correction.after;
+      if (typeof target !== 'string' || !target.trim()) {
+        return { ok: false, message: 'Questa voce strutturale non può essere reinserita automaticamente.' };
+      }
+      if (action === 'use-ai' && correction.aiReview?.applicable !== true) {
+        return { ok: false, message: 'La proposta AI non ha superato i controlli di sicurezza.' };
+      }
+      const decision = action === 'use-original' ? 'original' : action === 'use-ai' ? 'ai' : 'corrected';
+      const nextCorrections = s.corrections.map((item, i) => i === index
+        ? { ...item, decision, appliedText: target }
+        : item);
+      if (target === currentText) {
+        updateCorrections(nextCorrections);
+        await persist();
+        return { ok: true, message: 'Scelta registrata; il testo era già quello selezionato.' };
+      }
+
+      const currentCanonical = s.canonicalText || s.rawText;
+      const nextCanonical = replaceUniqueText(currentCanonical, currentText, target);
+      if (nextCanonical == null) {
+        return {
+          ok: false,
+          message: 'Il passaggio non è localizzabile in modo univoco: nessuna modifica è stata applicata.',
+        };
+      }
+      const nextCode = rebaseCanonicalRevision(
+        typstCode,
+        currentCanonical,
+        nextCanonical,
+        s.layoutPlan || {},
+      );
+      if (nextCode == null) {
+        return {
+          ok: false,
+          message: 'Il frammento Typst è stato modificato altrove e non può essere sostituito con sicurezza.',
+        };
+      }
+
+      const previous = {
+        canonicalText: s.canonicalText,
+        corrections: s.corrections,
+        editorCode: s.editorCode,
+        preamble: s.preamble,
+        chunks: s.chunks,
+      };
+      const svg = await compileToSvg(nextCode, figuresRef.current);
+      s.canonicalText = nextCanonical;
+      s.corrections = nextCorrections;
+      s.editorCode = nextCode;
+      const parts = splitPreamble(nextCode);
+      s.preamble = parts.preamble;
+      s.chunks = [{
+        text: s.rawText,
+        body: parts.body,
+        status: 'done',
+        fidelity: { coverage: 1, missing: [] },
+      }];
+      try {
+        await verifyStrictPdf(nextCode);
+      } catch (e) {
+        s.canonicalText = previous.canonicalText;
+        s.corrections = previous.corrections;
+        s.editorCode = previous.editorCode;
+        s.preamble = previous.preamble;
+        s.chunks = previous.chunks;
+        throw e;
+      }
+      setTypstCode(nextCode);
+      setPreviewSvg(svg);
+      setCompileError(null);
+      await persist();
+      return { ok: true, message: 'Scelta applicata e PDF ricontrollato.' };
+    } catch (e) {
+      if (e?.name === 'AbortError') return { ok: false, message: 'Revisione annullata.' };
+      return { ok: false, message: e.message || 'Impossibile revisionare questa correzione.' };
+    } finally {
+      setStrictCorrectionBusy(null);
+    }
+  }, [persist, settings, typstCode, verifyStrictPdf]);
+
   /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
    * fase 2 (Gemini con indicazioni di stile) + fase 3 (compilazione). Non
@@ -1831,6 +1974,8 @@ export function usePipeline(settings) {
     confirmPages,
     fidelityWarnings,
     strictReport,
+    strictCorrectionBusy,
+    reviewStrictCorrection,
     sessions,
     openSession,
     deleteSavedSession,

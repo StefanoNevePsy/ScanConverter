@@ -7,7 +7,9 @@ import {
   compareTokenSequences,
   inlineMarkdownToTypst,
   missingInvariants,
+  rebaseCanonicalRevision,
   repairBoundaryOverlaps,
+  replaceUniqueText,
   sourcePlainText,
 } from '../src/lib/strict.js';
 
@@ -23,6 +25,20 @@ test('il confronto rileva omissioni, aggiunte e duplicati', () => {
 
 test('accenti e punteggiatura non producono falsi positivi', () => {
   assert.equal(compareTokenSequences('Perché è così.', 'Perche e cosi').ok, true);
+});
+
+test('la revisione sostituisce solo occorrenze canoniche univoche', () => {
+  assert.equal(replaceUniqueText('prima errata dopo', 'errata', 'corretta'), 'prima corretta dopo');
+  assert.equal(replaceUniqueText('errata e errata', 'errata', 'corretta'), null);
+});
+
+test('la revisione canonica preserva modifiche Typst lontane dal passaggio', () => {
+  const before = 'Primo paragrafo errata.\n\nSecondo paragrafo.';
+  const after = 'Primo paragrafo corretto.\n\nSecondo paragrafo.';
+  const editor = buildStrictDocument(before).body.replace('Secondo', '*Secondo*');
+  const revised = rebaseCanonicalRevision(editor, before, after);
+  assert.match(revised, /paragrafo corretto/);
+  assert.match(revised, /\*Secondo\*/);
 });
 
 test('sillabazione PDF e ordine tabellare non simulano omissioni', () => {
