@@ -97,6 +97,53 @@ export function extractProse(typst) {
 }
 
 const WORD_RE = /\p{L}[\p{L}'’]{2,}/gu;
+const HYPHENATED_OCR_RE = /(\p{L}{2,})([ \t]*-[ \t]*)(\p{Ll}{2,})/gu;
+const SPACED_FRAGMENT_RE = /(?=(\p{L}{3,6})([ \t]+)(\p{Ll}{3,8})(?!\p{L}))/gu;
+const SEMANTIC_SHORT_COMPOUNDS = new Set([
+  'nord-est', 'nord-ovest', 'sud-est', 'sud-ovest',
+]);
+
+function withInitialCase(word, model) {
+  if (!/^\p{Lu}/u.test(model) || !word) return word;
+  return word.charAt(0).toLocaleUpperCase('it') + word.slice(1);
+}
+
+/** Proposta deterministica per due frammenti OCR adiacenti. */
+export function suggestOcrWordRepair(left, separator, right, speller) {
+  if (!left || !right || !speller?.correct) return '';
+  const joined = left + right;
+  const leftKnown = speller.correct(left);
+  const rightKnown = speller.correct(right);
+  const hasHyphen = separator.includes('-');
+  const hasSpace = /\s/.test(separator);
+
+  if (speller.correct(joined)) {
+    // Con un trattino senza spazi conserva i composti plausibili quando le
+    // due metà sono entrambe parole («socio-politico»). Negli altri casi la
+    // parola unita, confermata dal dizionario, è la lettura più prudente.
+    const compound = `${left.toLocaleLowerCase('it')}-${right.toLocaleLowerCase('it')}`;
+    if (SEMANTIC_SHORT_COMPOUNDS.has(compound)) return '';
+    if (
+      !hasHyphen ||
+      hasSpace ||
+      !leftKnown ||
+      !rightKnown ||
+      left.length <= 3 ||
+      right.length <= 3
+    ) return joined;
+  }
+  if (hasHyphen) {
+    const l = left.toLocaleLowerCase('it');
+    const r = right.toLocaleLowerCase('it');
+    // Frammento duplicato dall'OCR: «mo-modificata» → «modificata».
+    if (l.length <= 4 && r.startsWith(l) && rightKnown) return withInitialCase(right, left);
+    if (r.length <= 4 && l.endsWith(r) && leftKnown) return left;
+  }
+  // Senza trattino interviene solo su DUE frammenti entrambi ignoti:
+  // «desi gnare» → «designare», evitando «in contro» → «incontro».
+  if (!hasHyphen && !leftKnown && !rightKnown && speller.correct(joined)) return joined;
+  return '';
+}
 
 /**
  * Trova le parole sospette (ignote a entrambi i dizionari) nel codice Typst.
@@ -107,27 +154,58 @@ const WORD_RE = /\p{L}[\p{L}'’]{2,}/gu;
  */
 export function findSuspects(typst, speller, ignore = new Set()) {
   const prose = extractProse(typst);
-  const seen = new Map(); // parola (forma originale) → {count, context}
-  for (const m of prose.matchAll(WORD_RE)) {
-    const word = m[0].replace(/['’]$/, '');
-    if (word.length < 4) continue;
-    if (/^\p{Lu}+$/u.test(word)) continue; // sigle/nomi parlanti in MAIUSCOLO
-    if (ignore.has(word.toLowerCase())) continue; // dizionario personale
+  const seen = new Map(); // parola/span → {count, context, suggestedFix?}
+  const covered = [];
+  const add = (word, at, suggestedFix = '') => {
+    if (ignore.has(word.toLowerCase())) return;
     const known = seen.get(word);
     if (known) {
       known.count++;
-      continue;
+      return;
     }
-    if (speller.correct(word)) continue;
-    const at = m.index ?? 0;
     const context = prose
       .slice(Math.max(0, at - 45), at + word.length + 45)
       .replace(/\s+/g, ' ')
       .trim();
-    seen.set(word, { count: 1, context });
+    seen.set(word, { count: 1, context, suggestedFix });
+  };
+
+  // Le sequenze spezzate sono una singola unità da correggere. In questo modo
+  // l'AI riceve «comparta-mento», non due richieste isolate e incompatibili.
+  for (const m of prose.matchAll(HYPHENATED_OCR_RE)) {
+    const at = m.index ?? 0;
+    const suggestion = suggestOcrWordRepair(m[1], m[2], m[3], speller);
+    const suspicious = suggestion || !speller.correct(m[1]) || !speller.correct(m[3]);
+    if (!suspicious) continue;
+    add(m[0], at, suggestion);
+    covered.push([at, at + m[0].length]);
+  }
+  for (const m of prose.matchAll(SPACED_FRAGMENT_RE)) {
+    const at = m.index ?? 0;
+    const whole = m[1] + m[2] + m[3];
+    const suggestion = suggestOcrWordRepair(m[1], m[2], m[3], speller);
+    if (!suggestion) continue;
+    add(whole, at, suggestion);
+    covered.push([at, at + whole.length]);
+  }
+
+  for (const m of prose.matchAll(WORD_RE)) {
+    const at = m.index ?? 0;
+    if (covered.some(([start, end]) => at >= start && at < end)) continue;
+    const word = m[0].replace(/['’]$/, '');
+    if (word.length < 4) continue;
+    if (/^\p{Lu}+$/u.test(word)) continue; // sigle/nomi parlanti in MAIUSCOLO
+    if (ignore.has(word.toLowerCase())) continue; // dizionario personale
+    if (speller.correct(word)) continue;
+    add(word, at);
   }
   return [...seen.entries()]
-    .map(([word, v]) => ({ word, count: v.count, context: v.context }))
+    .map(([word, v]) => ({
+      word,
+      count: v.count,
+      context: v.context,
+      ...(v.suggestedFix ? { suggestedFix: v.suggestedFix } : {}),
+    }))
     .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
 }
 
@@ -147,11 +225,13 @@ export async function requestSpellFixes({ settings, entries, signal }) {
     'documento accademico in italiano (con possibili citazioni inglesi). ' +
     'Rispondi SOLTANTO con JSON valido.';
   const user =
-    'Per ogni parola sospetta (con il suo contesto) indica la correzione del ' +
+    'Per ogni parola o SEQUENZA sospetta (con il suo contesto) indica la correzione del ' +
     'refuso OCR. Se la parola è in realtà corretta (nome proprio, termine ' +
     'tecnico o specialistico, parola straniera, neologismo d’autore), ' +
     'OMETTILA dalla risposta. Correggi solo refusi evidenti: lettere ' +
-    'scambiate/mancanti/spurie, accenti sbagliati. Non cambiare mai il ' +
+    'scambiate/mancanti/spurie, accenti sbagliati. Se la voce contiene due ' +
+    'frammenti separati da trattino o spazio, correggi l’INTERA sequenza in ' +
+    'una sola parola e riporta `word` IDENTICO alla voce ricevuta. Non cambiare mai il ' +
     'significato.\n\nVOCI:\n' +
     entries
       .map((e, i) => `${i + 1}. "${e.word}" — contesto: «${e.context}»`)
@@ -326,15 +406,30 @@ export function fixSpacing(source) {
 export function fixOcrHyphenation(source, speller) {
   const changes = [];
   if (!speller?.correct) return { fixed: source, changes };
-  const fixed = onProse(source, (s) =>
-    s.replace(
-      /(\p{L}{2,})[ \t]+-[ \t]+(\p{Ll}{2,})/gu,
-      (whole, left, right) => {
-        const joined = left + right;
-        if (!speller.correct(joined)) return whole;
-        changes.push(`${whole}→${joined}`);
-        return joined;
-      },
-    ));
+  const fixed = onProse(source, (s) => {
+    const replace = (whole, left, separator, right) => {
+      const repair = suggestOcrWordRepair(left, separator, right, speller);
+      if (!repair || repair === whole) return whole;
+      changes.push(`${whole}→${repair}`);
+      return repair;
+    };
+    let out = s.replace(HYPHENATED_OCR_RE, replace);
+    // Secondo passaggio per frammenti senza trattino («desi gnare»).
+    const edits = [];
+    for (const m of out.matchAll(SPACED_FRAGMENT_RE)) {
+      const repair = suggestOcrWordRepair(m[1], m[2], m[3], speller);
+      if (!repair) continue;
+      const before = m[1] + m[2] + m[3];
+      edits.push({ start: m.index ?? 0, end: (m.index ?? 0) + before.length, before, repair });
+    }
+    let occupiedStart = Infinity;
+    for (const edit of edits.sort((a, b) => b.start - a.start)) {
+      if (edit.end > occupiedStart) continue;
+      out = out.slice(0, edit.start) + edit.repair + out.slice(edit.end);
+      occupiedStart = edit.start;
+      changes.push(`${edit.before}→${edit.repair}`);
+    }
+    return out;
+  });
   return { fixed, changes };
 }

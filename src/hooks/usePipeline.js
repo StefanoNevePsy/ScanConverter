@@ -579,13 +579,23 @@ export function usePipeline(settings) {
           // Il dizionario migliora i tagli dentro una parola, ma la pipeline
           // resta operativa anche se le risorse locali non sono disponibili.
         }
+        let preparedExtracted = extracted;
+        const intraWordCorrections = [];
+        if (speller) {
+          const repairedWords = fixOcrHyphenation(preparedExtracted, speller);
+          preparedExtracted = repairedWords.fixed;
+          intraWordCorrections.push(...repairedWords.changes.map((description) => {
+            const [before, after] = description.split('→');
+            return { type: 'ocr_word_split', before, after, overlap: '' };
+          }));
+        }
         const boundaryRepair = repairBoundaryOverlaps(
-          extracted,
+          preparedExtracted,
           10,
           speller ? (word) => speller.correct(word) : null,
         );
         let canonicalText = boundaryRepair.text;
-        let corrections = boundaryRepair.changes;
+        let corrections = [...intraWordCorrections, ...boundaryRepair.changes];
         if (settings.fixTypos) {
           setDetail('Correzione conservativa con registro delle modifiche…');
           const proof = await proofreadBody({
@@ -1411,16 +1421,21 @@ export function usePipeline(settings) {
       if (!suspects.length) return { ok: true, message: 'Nessuna parola selezionata da correggere.' };
       setSpellBusy(true);
       try {
+        const speller = await loadSpeller();
         // A lotti, per non superare i limiti di output del modello.
-        const proposals = [];
-        for (let i = 0; i < suspects.length; i += 60) {
+        // Le unioni già confermate dal dizionario sono applicate localmente;
+        // soltanto le sequenze ambigue e i veri refusi vengono inviate all'AI.
+        const proposals = suspects
+          .filter((s) => s.suggestedFix)
+          .map((s) => ({ word: s.word, fix: s.suggestedFix }));
+        const aiSuspects = suspects.filter((s) => !s.suggestedFix);
+        for (let i = 0; i < aiSuspects.length; i += 60) {
           proposals.push(
-            ...(await requestSpellFixes({ settings, entries: suspects.slice(i, i + 60) })),
+            ...(await requestSpellFixes({ settings, entries: aiSuspects.slice(i, i + 60) })),
           );
         }
         // Guardrail deterministici: parola singola, nota ai dizionari, e
         // SOLO tra quelle inviate (mai «correzioni» a parole non richieste).
-        const speller = await loadSpeller();
         const allowed = new Set(suspects.map((s) => s.word));
         const { ok: corrections, rejected } = validateCorrections(proposals, speller, allowed);
         const before = typstCode;
