@@ -6,6 +6,7 @@ import {
   findSuspects,
   fixOcrHyphenation,
   fixSpacing,
+  normalizeSoftHyphens,
   suggestFusedWordRepair,
   suggestOcrWordRepair,
   validateCorrections,
@@ -141,4 +142,22 @@ test('ricompone una sillabazione che attraversa un newline nel Typst esistente',
   const speller = createSpeller({ itWords: 'indicando', enWords: '' });
   const repaired = fixOcrHyphenation('principi, indi -\ncandoli con attenzione', speller);
   assert.equal(repaired.fixed, 'principi, indicandoli con attenzione');
+});
+
+test('normalizza i soft-hyphen invisibili senza lasciare frammenti', () => {
+  const source =
+    'va\u00ADcanze Fran\u00ADcesca infor\u00ADmazione pro\u00ADvocati ' +
+    'rela\u00ADrelazione quantità\u00ADquantità speciale\u00ADle';
+  assert.equal(
+    normalizeSoftHyphens(source),
+    'vacanze Francesca informazione provocati relazione quantità speciale',
+  );
+  const speller = createSpeller({
+    itWords: 'vacanze\nfrancesca\ninformazione\nprovocati\nrelazione\nquantità\nspeciale',
+    enWords: '',
+  });
+  const repaired = fixOcrHyphenation(source, speller);
+  assert.equal(repaired.fixed, normalizeSoftHyphens(source));
+  assert.equal(repaired.changes.length, 7);
+  assert.equal(findSuspects(repaired.fixed, speller).length, 0);
 });

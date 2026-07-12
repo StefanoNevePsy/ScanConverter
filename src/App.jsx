@@ -437,9 +437,9 @@ function Workspace({
   }, [pipe]);
 
   // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
-  const locateWord = useCallback((word) => {
+  const locateWord = useCallback((suspect) => {
     setMobileTab('code');
-    setSearchReq({ query: word, id: Date.now() });
+    setSearchReq({ query: suspect.word, wholeWord: true, id: Date.now() });
   }, []);
 
   return (

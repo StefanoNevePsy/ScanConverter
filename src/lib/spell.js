@@ -99,7 +99,7 @@ export function loadSpeller() {
  * i nomi di funzione, le stringhe tra virgolette e i percorsi.
  */
 export function extractProse(typst) {
-  return typst
+  return normalizeSoftHyphens(typst)
     .replace(/^#(set|show|let|import)\b[^\n]*$/gm, ' ')
     .replace(/"[^"\n]*"/g, ' ') // stringhe (font, percorsi immagine)
     .replace(/<!--[\s\S]*?-->/g, ' ')
@@ -108,6 +108,27 @@ export function extractProse(typst) {
     // dizionario è comunque «Mentre», non il falso frammento «entre».
     .replace(/(?<=\p{L})[*_]+(?=\p{L})/gu, '')
     .replace(/<\/?[a-zA-Z][^>]*>/g, ' '); // eventuale HTML residuo
+}
+
+/**
+ * Scioglie i soft-hyphen OCR U+00AD. Gestisce anche i due artefatti osservati
+ * nelle scansioni: prefisso ripetuto («rela­relazione») e suffisso ripetuto
+ * («speciale­le»). Il carattere è tipografico e non rappresenta contenuto.
+ */
+export function normalizeSoftHyphens(source, onChange = null) {
+  return String(source || '').replace(
+    /(\p{L}+)\u00AD(\p{L}+)/gu,
+    (whole, left, right) => {
+      const l = left.toLocaleLowerCase('it');
+      const r = right.toLocaleLowerCase('it');
+      let repaired;
+      if (r.startsWith(l)) repaired = withInitialCase(right, left);
+      else if (l.endsWith(r)) repaired = left;
+      else repaired = left + right;
+      onChange?.(whole, repaired);
+      return repaired;
+    },
+  );
 }
 
 const WORD_RE = /\p{L}[\p{L}'’]{2,}/gu;
@@ -482,7 +503,12 @@ export function fixSpacing(source) {
  */
 export function fixOcrHyphenation(source, speller) {
   const changes = [];
-  if (!speller?.correct) return { fixed: source, changes };
+  if (!speller?.correct) {
+    return {
+      fixed: normalizeSoftHyphens(source, (before, after) => changes.push(`${before}→${after}`)),
+      changes,
+    };
+  }
   const fixed = onProse(source, (s) => {
     const replace = (whole, left, separator, right) => {
       const repair = suggestOcrWordRepair(left, separator, right, speller);
@@ -490,7 +516,8 @@ export function fixOcrHyphenation(source, speller) {
       changes.push(`${whole}→${repair}`);
       return repair;
     };
-    let out = s.replace(HYPHENATED_OCR_RE, replace);
+    let out = normalizeSoftHyphens(s, (before, after) => changes.push(`${before}→${after}`));
+    out = out.replace(HYPHENATED_OCR_RE, replace);
     // Secondo passaggio per frammenti senza trattino («desi gnare»).
     const edits = [];
     for (const m of out.matchAll(SPACED_FRAGMENT_RE)) {

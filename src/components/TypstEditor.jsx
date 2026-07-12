@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand, IconSpell, IconText } from './Icons.jsx';
 import CopyButton from './CopyButton.jsx';
-import { scrollTextareaOffsetIntoView } from '../lib/editorScroll.js';
+import { findEditorMatches, scrollTextareaOffsetIntoView } from '../lib/editorScroll.js';
 
 /**
  * Editor a colonna sinistra: codice Typst generato e modificabile dall'utente,
@@ -36,6 +36,7 @@ export default function TypstEditor({
   const [query, setQuery] = useState('');
   const [replaceStr, setReplaceStr] = useState('');
   const [current, setCurrent] = useState(0);
+  const [wholeWord, setWholeWord] = useState(false);
 
   const lineCount = useMemo(
     () => Math.max(value.split('\n').length, 1),
@@ -44,17 +45,8 @@ export default function TypstEditor({
 
   // Posizioni (indici) delle occorrenze, case-insensitive.
   const matches = useMemo(() => {
-    if (!query) return [];
-    const hay = value.toLowerCase();
-    const needle = query.toLowerCase();
-    const out = [];
-    let i = 0;
-    while ((i = hay.indexOf(needle, i)) !== -1 && out.length < 5000) {
-      out.push(i);
-      i += needle.length || 1;
-    }
-    return out;
-  }, [value, query]);
+    return findEditorMatches(value, query, wholeWord);
+  }, [value, query, wholeWord]);
 
   useEffect(() => {
     if (current >= matches.length) setCurrent(0);
@@ -66,6 +58,7 @@ export default function TypstEditor({
   useEffect(() => {
     if (!searchRequest?.query) return;
     setQuery(searchRequest.query);
+    setWholeWord(searchRequest.wholeWord === true);
     setSearchOpen(true);
     pendingJumpRef.current = true;
   }, [searchRequest]);
@@ -137,6 +130,7 @@ export default function TypstEditor({
   };
   const closeSearch = () => {
     setSearchOpen(false);
+    setWholeWord(false);
     activeMatchRef.current = false;
     onSearchMatch?.(null);
     taRef.current?.focus();
@@ -238,6 +232,7 @@ export default function TypstEditor({
                 if (activeMatchRef.current) onSearchMatch?.(null);
                 activeMatchRef.current = false;
                 setCurrent(0);
+                setWholeWord(false);
                 setQuery(e.target.value);
               }}
               onKeyDown={onSearchKeyDown}
