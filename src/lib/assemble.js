@@ -13,6 +13,10 @@ const CAPTION_TYPES = new Set(['Caption']);
 // contenuto e sporca sia il prompt sia la verifica di fedeltà. Le vere note
 // a piè di pagina (Footnote) invece SONO contenuto e restano.
 const FURNITURE_TYPES = new Set(['Page-header', 'Page-footer']);
+const ARABIC_PAGE_NUMBER_RE = /^(?:pagina\s+)?\d{1,3}$/i;
+const ROMAN_PAGE_NUMBER_RE = /^(?:PAGINA\s+)?[IVXLCDM]{1,10}$/;
+const isPageNumberText = (text) =>
+  ARABIC_PAGE_NUMBER_RE.test(text) || ROMAN_PAGE_NUMBER_RE.test(text);
 
 const cy = (b) => ((b.bbox?.ymin ?? 0) + (b.bbox?.ymax ?? 0)) / 2;
 
@@ -56,8 +60,17 @@ const SPEAKER_MIDLINE_RE = new RegExp(`([.!?…»”\\)\\]])[ \\t]+(?=${SPEAKER}
  */
 export function isPageFurniture(b) {
   if (FURNITURE_TYPES.has(b?.type)) return true;
-  if (b?.type !== 'Text' || !b.bbox) return false;
+  if (!b?.bbox) return false;
   const text = (b.text || '').trim();
+  // I numeri di pagina sono spesso classificati semplicemente come Text e
+  // collocati ben sopra il bordo fisico (ampio margine bianco): per loro usa
+  // una fascia più larga e non dipendere dal tipo restituito dal modello.
+  if (isPageNumberText(text)) {
+    const nearNumberTop = (b.bbox.ymax ?? 1) < 0.15;
+    const nearNumberBottom = (b.bbox.ymin ?? 0) > 0.80;
+    if (nearNumberTop || nearNumberBottom) return true;
+  }
+  if (b.type !== 'Text') return false;
   if (text.length > 90) return false;
   const nearTop = (b.bbox.ymax ?? 1) < 0.09;
   const nearBottom = (b.bbox.ymin ?? 0) > 0.93;

@@ -78,6 +78,28 @@ test('ricompone due frammenti di parola validati dal dizionario', () => {
   assert.equal(repaired.changes[0].after, 'cercando');
 });
 
+test('scarta il numero pagina e ricompone la parola che lo circonda', () => {
+  const source = [
+    '<!-- pagina 1 -->\nSiete stati convinti di ciò, che inconsciamente per-',
+    '19',
+    '<!-- pagina 2 -->\ndevate tutte le schede che venivano fatte.',
+  ].join('\n\n');
+  const known = (word) => word.toLowerCase() === 'perdevate';
+  const repaired = repairBoundaryOverlaps(source, 10, known);
+  assert.doesNotMatch(repaired.text, /\b19\b/);
+  assert.match(repaired.text, /inconsciamente\n<!-- pagina 2 -->\nperdevate tutte le schede/);
+  assert.ok(repaired.changes.some((change) => change.type === 'page_number_furniture'));
+  assert.ok(repaired.changes.some((change) => change.type === 'boundary_word_split'));
+});
+
+test('scarta un numero pagina incollato alla continuazione', () => {
+  const source = 'La frase continua per-\n\n<!-- pagina 2 -->\n19 devate tutte le schede.';
+  const known = (word) => word.toLowerCase() === 'perdevate';
+  const repaired = repairBoundaryOverlaps(source, 10, known);
+  assert.doesNotMatch(repaired.text, /\b19\b/);
+  assert.match(repaired.text, /<!-- pagina 2 -->\nperdevate tutte/);
+});
+
 test('riunisce un paragrafo che continua nella pagina successiva', () => {
   const source = 'Il sistema era organizzato intorno a punti importanti,\n\n<!-- pagina 19 -->\nche erano nodali per tutti.';
   const repaired = repairBoundaryOverlaps(source);

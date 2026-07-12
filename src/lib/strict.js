@@ -74,6 +74,58 @@ function proseBoundaryBlock(raw) {
   return { marker, content, prose: !special };
 }
 
+const ARABIC_PAGE_NUMBER_ONLY_RE = /^(?:pagina\s+)?\d{1,3}$/i;
+const ROMAN_PAGE_NUMBER_ONLY_RE = /^(?:PAGINA\s+)?[IVXLCDM]{1,10}$/;
+const isPageNumberOnly = (text) =>
+  ARABIC_PAGE_NUMBER_ONLY_RE.test(text) || ROMAN_PAGE_NUMBER_ONLY_RE.test(text);
+
+/** Elimina numeri di pagina OCR isolati esattamente attorno a un confine. */
+function discardBoundaryPageNumbers(records, changes) {
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    if (!isPageNumberOnly(record.content.trim())) continue;
+    const besideBoundary = !!record.marker || !!records[i + 1]?.marker || (!!records[i - 1]?.marker && !records[i - 1]?.content);
+    if (!besideBoundary) continue;
+    changes.push({
+      type: 'page_number_furniture',
+      before: record.content.trim(),
+      after: '',
+      overlap: '',
+    });
+    if (record.marker) {
+      record.content = '';
+      record.prose = false;
+    } else {
+      records.splice(i, 1);
+      i--;
+    }
+  }
+
+  for (let i = 0; i < records.length; i++) {
+    const right = records[i];
+    if (!right.marker) continue;
+    const left = records[i - 1];
+    if (left?.content) {
+      // Numero su una riga propria in coda alla pagina precedente.
+      const trailing = left.content.match(/\n\s*([^\n]+?)\s*$/);
+      if (trailing && isPageNumberOnly(trailing[1])) {
+        changes.push({ type: 'page_number_furniture', before: trailing[1], after: '', overlap: '' });
+        left.content = left.content.slice(0, trailing.index).trimEnd();
+      }
+    }
+
+    // Alcuni OCR incollano «19 devate…» nello stesso blocco. Lo scarto è
+    // sicuro solo se la frase precedente era chiaramente ancora aperta e il
+    // testo dopo il numero riparte in minuscolo.
+    const openLeft = !!left?.content && !/[.!?…»”\])}]\s*$/u.test(left.content);
+    const leading = right.content.match(/^\s*(\d{1,3})\s+(?=\p{Ll})/u);
+    if (openLeft && leading) {
+      changes.push({ type: 'page_number_furniture', before: leading[1], after: '', overlap: '' });
+      right.content = right.content.slice(leading[0].length).trimStart();
+    }
+  }
+}
+
 /**
  * Ripara sovrapposizioni OCR tra blocchi/pagine, ad esempio
  * «…cercando.\n\ncercando il punto nodale» → «…cercando il punto nodale».
@@ -83,6 +135,7 @@ function proseBoundaryBlock(raw) {
 export function repairBoundaryOverlaps(markdown, maxOverlap = 10, isKnownWord = null) {
   const records = String(markdown || '').trim().split(/\n{2,}/).map(proseBoundaryBlock);
   const changes = [];
+  discardBoundaryPageNumbers(records, changes);
   for (let i = 0; i + 1 < records.length; i++) {
     const left = records[i];
     const right = records[i + 1];
