@@ -89,7 +89,7 @@ export default function SpellPanel({
                   {s.count > 1 && <span className="ml-1 text-faint">×{s.count}</span>}
                 </button>
                 <button
-                  onClick={() => onLocate(s.word)}
+                  onClick={() => onLocate(s)}
                   title="Cerca nell'editor"
                   aria-label={`Cerca «${s.word}» nell'editor`}
                   className="border-l border-border/50 px-1.5 py-1 text-muted transition-colors hover:text-ink"

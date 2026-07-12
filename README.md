@@ -211,6 +211,33 @@ npm run electron   # avvia l'app desktop sulla build
 
 Le chiavi API e le sessioni restano locali all'app, come sul web.
 
+## Workflow di formattazione
+
+Nelle impostazioni sono disponibili due percorsi indipendenti:
+
+- **Attuale**: il modello converte il testo OCR in Typst e il controllo a
+  trigrammi individua eventuali passaggi omessi.
+- **Fedeltà massima**: il testo OCR resta la fonte canonica e viene convertito
+  in Typst da un renderer locale deterministico. Il modello scelto produce
+  soltanto un piano editoriale vincolato (font, margini, densità e stile degli
+  ID di blocco), senza restituire testo o codice. Le correzioni conservative
+  sono registrate; dopo la compilazione il layer testuale del PDF viene
+  riallineato parola per parola con la fonte e numeri, percentuali, DOI e URL
+  sono verificati separatamente. Se il confronto fallisce, il PDF non viene
+  considerato verificato.
+
+Prima del rendering, la modalità ad alta fedeltà ripara inoltre le
+**sovrapposizioni ai confini OCR**: se un blocco termina con le stesse parole
+con cui il successivo riparte in minuscolo (per esempio `…cercando.` /
+`cercando il punto…`), conserva una sola occorrenza, riunisce il paragrafo e
+registra l'intervento nel report delle correzioni. Le ripetizioni tra paragrafi
+autonomi restano invariate.
+
+La seconda modalità può eseguire, opzionalmente, anche l'altro motore OCR sulla
+stessa immagine. Il risultato alternativo non sostituisce il testo principale:
+serve soltanto a segnalare le pagine discordanti da controllare. Questa opzione
+richiede entrambe le chiavi API e raddoppia le chiamate della fase OCR.
+
 ## Sessione a chunk, libri interi & rate limiting
 
 Pensato per convertire **documenti lunghi o libri interi**, anche lentamente.

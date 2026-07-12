@@ -16,8 +16,8 @@ import {
   normalizeHeadingLevels,
   enforceHeadingLevels,
 } from '../lib/session.js';
-import { buildPreamble, extractTitle } from '../lib/preamble.js';
-import { autofixTypst } from '../lib/typstfix.js';
+import { buildPreamble, ensureExplicitHyphenation, extractTitle } from '../lib/preamble.js';
+import { autofixTypst, delimiterRepairCandidates } from '../lib/typstfix.js';
 import { checkFidelity, fidelityNoteFrom } from '../lib/fidelity.js';
 import { requestTypstFix, applyFixes, describeFix } from '../lib/aifix.js';
 import {
@@ -26,9 +26,33 @@ import {
   requestSpellFixes,
   validateCorrections,
   applySpellFixes,
+  fixOcrHyphenation,
   fixSpacing,
 } from '../lib/spell.js';
-import { proofreadBody } from '../lib/proofread.js';
+import {
+  isSafeContextualCorrection,
+  proofreadBody,
+  requestCorrectionReview,
+} from '../lib/proofread.js';
+import {
+  buildStrictDocument,
+  buildDifferenceContexts,
+  canonicalTokens,
+  compareTokenInventory,
+  compareTokenSequences,
+  missingInvariants,
+  repairBoundaryOverlaps,
+  rebaseCanonicalRevision,
+  replaceUniqueText,
+  restoreCanonicalPassage,
+  sourcePlainText,
+} from '../lib/strict.js';
+import {
+  requestStrictDifferenceReview,
+  requestStrictLayoutPlan,
+  requestStrictPassageRepair,
+} from '../lib/layoutPlan.js';
+import { markTypstSearchMatch } from '../lib/searchPreview.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import {
   saveSession,
@@ -95,6 +119,14 @@ export const STEPS = [
 
 const emptyStatus = { ocr: 'pending', format: 'pending', compile: 'pending' };
 
+function correctionContext(rawText, before, after, radius = 700) {
+  const source = String(rawText || '');
+  let index = before ? source.indexOf(before) : -1;
+  if (index < 0 && after) index = source.indexOf(after);
+  if (index < 0) return source.slice(0, radius * 2);
+  return source.slice(Math.max(0, index - radius), index + Math.max(before?.length || 0, 1) + radius);
+}
+
 /**
  * Stato e orchestrazione dell'intera pipeline: OCR → Typst → PDF.
  * L'editor Typst resta la fonte di verità modificabile; `recompile` ricompila
@@ -132,9 +164,13 @@ export function usePipeline(settings) {
   const pendingPagesRef = useRef(null); // { pageImages, fileName }
   // Esito della verifica di fedeltà per chunk: [{chunk,total,coverage,missing}].
   const [fidelityWarnings, setFidelityWarnings] = useState([]);
+  const [strictReport, setStrictReport] = useState(null);
+  const [strictCorrectionBusy, setStrictCorrectionBusy] = useState(null);
+  const [strictIssueBusy, setStrictIssueBusy] = useState(null);
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
+  const searchPreviewRef = useRef(0); // scarta compilazioni di ricerca ormai superate
 
   const abortRef = useRef(null);
 
@@ -172,6 +208,90 @@ export function usePipeline(settings) {
     setFidelityWarnings(warns);
   }, []);
 
+  /** Compila e confronta il layer testuale del PDF con la fonte canonica. */
+  const verifyStrictPdf = useCallback(async (source, existingBytes = null) => {
+    const s = sessionRef.current;
+    if (s?.workflow !== 'strict') return existingBytes;
+    s.verified = false;
+    const pdfBytes = existingBytes || await compileToPdf(source, figuresRef.current);
+    // Il PDF riformattato può avere più pagine dell'input: non applicare qui
+    // il limite di ingestione configurato per i PDF sorgente.
+    const pdfText = await extractPdfText(pdfBytes);
+    if (!pdfText) {
+      setStrictReport({
+        workflow: 'strict',
+        corrections: s.corrections || [],
+        ocrComparisons: s.ocrComparisons || [],
+        layoutPlan: s.layoutPlan || null,
+        pdf: { contentOk: false, unverifiable: true, missing: [], added: [], missingInvariants: [] },
+      });
+      return pdfBytes;
+    }
+    const expected = sourcePlainText(s.canonicalText || s.rawText);
+    const actual = sourcePlainText(pdfText);
+    const sequence = compareTokenSequences(expected, actual);
+    const inventory = compareTokenInventory(expected, actual);
+    const invariants = missingInvariants(expected, actual);
+    // La sequenza può differire perché PDF.js legge tabelle, note o colonne in
+    // un ordine visivo diverso. Un'omissione è confermata solo se manca anche
+    // dall'inventario complessivo delle occorrenze.
+    const issues = buildDifferenceContexts(expected, actual, inventory.missing);
+    const issueResolutions = s.strictIssueResolutions || {};
+    const coveredMissing = issues.reduce((total, issue) => total + issue.missing.length, 0);
+    const allCoveredAsArtifacts =
+      inventory.missing.length > 0 &&
+      coveredMissing >= inventory.missing.length &&
+      issues.every((issue) => issueResolutions[issue.key]?.status === 'artifact');
+    const contentOk = invariants.length === 0 &&
+      (inventory.missing.length === 0 || allCoveredAsArtifacts);
+    let aiReview = [];
+    let reviewError = '';
+    if (issues.length) {
+      const reviewKey = JSON.stringify(issues.map((i) => [i.missing, i.source, i.rendered]));
+      if (s.strictReviewKey === reviewKey && Array.isArray(s.strictReview)) {
+        aiReview = s.strictReview;
+      } else {
+        try {
+          setDetail('Il modello controlla le frasi discordanti…');
+          aiReview = await withRetry(
+            () => requestStrictDifferenceReview({ settings, issues, signal: abortRef.current?.signal }),
+            abortRef.current?.signal,
+            (secs) => setDetail(`Revisione differenze · nuovo tentativo tra ${secs}s…`),
+            { max: 2, start: 5000, cap: 20000 },
+          );
+          s.strictReviewKey = reviewKey;
+          s.strictReview = aiReview;
+        } catch (e) {
+          if (e?.name === 'AbortError') throw e;
+          reviewError = e.message || 'Revisione AI non disponibile.';
+        }
+      }
+    }
+    setStrictReport({
+      workflow: 'strict',
+      corrections: s.corrections || [],
+      ocrComparisons: s.ocrComparisons || [],
+      strictIssueResolutions: s.strictIssueResolutions || {},
+      layoutPlan: s.layoutPlan || null,
+      strictReview: s.strictReview || [],
+      strictReviewKey: s.strictReviewKey || null,
+      issueResolutions,
+      pdf: {
+        ...sequence,
+        exactOrder: sequence.ok,
+        contentOk,
+        missing: inventory.missing,
+        added: inventory.added,
+        missingInvariants: invariants,
+        issues,
+        aiReview,
+        reviewError,
+      },
+    });
+    s.verified = contentOk;
+    return pdfBytes;
+  }, [settings]);
+
   // Chiude la revisione figure revocando gli object URL delle miniature.
   const clearReview = useCallback(() => {
     setFigureReview((items) => {
@@ -206,12 +326,17 @@ export function usePipeline(settings) {
   const persist = useCallback(async () => {
     const s = sessionRef.current;
     if (!s?.id) return;
-    const allDone = s.chunks.every((c) => c.status === 'done');
+    const allDone =
+      s.chunks.every((c) => c.status === 'done') &&
+      (s.workflow !== 'strict' || s.verified === true);
     await saveSession({
       id: s.id,
       fileName: s.fileName,
       rawText: s.rawText,
       preamble: s.preamble,
+      // Snapshot esatto dell'editor: conserva correzioni locali, sostituzioni
+      // e fix di punteggiatura senza dover ricostruire i vecchi chunk.
+      editorCode: s.editorCode || null,
       styleHint: s.styleHint || null,
       chunks: s.chunks.map((c) => ({
         text: c.text,
@@ -219,9 +344,27 @@ export function usePipeline(settings) {
         status: c.status,
         fidelity: c.fidelity || null,
       })),
+      workflow: s.workflow || 'legacy',
+      canonicalText: s.canonicalText || null,
+      corrections: s.corrections || [],
+      ocrComparisons: s.ocrComparisons || [],
+      strictIssueResolutions: s.strictIssueResolutions || {},
+      verified: !!s.verified,
+      layoutPlan: s.layoutPlan || null,
       status: allDone ? 'done' : 'paused',
     });
   }, []);
+
+  // L'editor è la fonte di verità: salva in modo differito anche modifiche
+  // manuali e correzioni locali. Prima mancava questo collegamento, quindi la
+  // riapertura della sessione ricostruiva il documento dai chunk precedenti.
+  useEffect(() => {
+    const s = sessionRef.current;
+    if (!s?.id || !typstCode.trim()) return undefined;
+    s.editorCode = typstCode;
+    const timer = setTimeout(() => persist(), 500);
+    return () => clearTimeout(timer);
+  }, [typstCode, persist]);
 
   // Salva lo stato della FASE OCR (avanzamento pagine + parti già estratte),
   // così un libro interrotto a metà estrazione riparte da dove era.
@@ -238,6 +381,7 @@ export function usePipeline(settings) {
         parts: s.ocr.parts,
         figCount: s.ocr.figCount,
         source: s.ocr.source || 'ocr',
+        comparisons: s.ocr.comparisons || [],
       },
       styleHint: s.styleHint || null,
     });
@@ -259,6 +403,7 @@ export function usePipeline(settings) {
     setOcrProgress(null);
     setCanResume(false);
     setFidelityWarnings([]);
+    setStrictReport(null);
     setSpellReport(null);
     figuresRef.current = [];
     sessionRef.current = null;
@@ -299,7 +444,7 @@ export function usePipeline(settings) {
             })
           : toTypst({
               apiKey: settings.googleApiKey,
-              model: settings.geminiModel,
+              model: settings.geminiTypstModel,
               rawText: args.rawText,
               styleHint: args.styleHint,
               continuation: args.continuation,
@@ -394,13 +539,20 @@ export function usePipeline(settings) {
   const finalizeCompile = useCallback(
     async (signal) => {
       const s = sessionRef.current;
-      const combined = combineDocument(s.preamble, s.chunks.map((c) => c.body || ''));
+      const combined = ensureExplicitHyphenation(
+        combineDocument(s.preamble, s.chunks.map((c) => c.body || '')),
+      );
       setTypstCode(combined);
       setStatus((x) => ({ ...x, format: 'done', compile: 'active' }));
       setActiveStep('compile');
       setDetail('');
       collectFidelity();
       try {
+        if (s.workflow === 'strict') {
+          setDetail('Verifica testuale del PDF compilato…');
+          await verifyStrictPdf(combined);
+          if (signal.aborted) return;
+        }
         const svg = await compileToSvg(combined, figuresRef.current);
         if (signal.aborted) return;
         setPreviewSvg(svg);
@@ -419,7 +571,7 @@ export function usePipeline(settings) {
         setPhase('done');
       }
     },
-    [persist, collectFidelity, describeCompileError],
+    [persist, collectFidelity, describeCompileError, verifyStrictPdf],
   );
 
   /** Esegue la fase 2+3 sulla sessione corrente (fresh o resume). */
@@ -453,6 +605,90 @@ export function usePipeline(settings) {
   const startFormat = useCallback(
     async (extracted, fileName, signal) => {
       const id = sessionRef.current?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      if (settings.formatWorkflow === 'strict') {
+        let speller = null;
+        try {
+          speller = await loadSpeller();
+        } catch {
+          // Il dizionario migliora i tagli dentro una parola, ma la pipeline
+          // resta operativa anche se le risorse locali non sono disponibili.
+        }
+        let preparedExtracted = extracted;
+        const intraWordCorrections = [];
+        if (speller) {
+          const repairedWords = fixOcrHyphenation(preparedExtracted, speller);
+          preparedExtracted = repairedWords.fixed;
+          intraWordCorrections.push(...repairedWords.changes.map((description) => {
+            const [before, after] = description.split('→');
+            return { type: 'ocr_word_split', before, after, overlap: '' };
+          }));
+        }
+        const boundaryRepair = repairBoundaryOverlaps(
+          preparedExtracted,
+          10,
+          speller ? (word) => speller.correct(word) : null,
+        );
+        let canonicalText = boundaryRepair.text;
+        let corrections = [...intraWordCorrections, ...boundaryRepair.changes];
+        if (settings.fixTypos) {
+          setDetail('Correzione conservativa con registro delle modifiche…');
+          const proof = await proofreadBody({
+            settings,
+            // Non ripartire dal testo originale: altrimenti la rilettura
+            // annulla silenziosamente le riparazioni tra pagine appena fatte.
+            code: canonicalText,
+            speller,
+            signal,
+            onProgress: (done, total) => setDetail(`Correzione ${done}/${total} paragrafi…`),
+          });
+          canonicalText = proof.code;
+          corrections = [...corrections, ...proof.changes];
+        }
+        setDetail('Il modello progetta il layout senza riscrivere il testo…');
+        const layoutPlan = await withRetry(
+          () => requestStrictLayoutPlan({ settings, markdown: canonicalText, signal }),
+          signal,
+          (secs) => setDetail(`Pianificazione layout · nuovo tentativo tra ${secs}s…`),
+        );
+        const strict = buildStrictDocument(canonicalText, layoutPlan);
+        const previousComparisons = sessionRef.current?.ocr?.comparisons || [];
+        sessionRef.current = {
+          id,
+          fileName,
+          rawText: extracted,
+          canonicalText,
+          corrections,
+          ocrComparisons: previousComparisons,
+          strictIssueResolutions: {},
+          layoutPlan,
+          workflow: 'strict',
+          verified: false,
+          chunks: [{
+            text: extracted,
+            body: strict.body,
+            status: 'done',
+            fidelity: { coverage: 1, missing: [] },
+          }],
+          preamble: strict.preamble,
+          styleHint: undefined,
+          lastError: '',
+        };
+        setStrictReport({
+          workflow: 'strict',
+          corrections,
+          ocrComparisons: previousComparisons,
+          layoutPlan,
+          pdf: null,
+        });
+        setTypstCode(combineDocument(strict.preamble, [strict.body]));
+        await saveFigures(id, figuresRef.current);
+        await persist();
+        setPhase('running');
+        setActiveStep('compile');
+        setStatus((s) => ({ ...s, format: 'done', compile: 'active' }));
+        await finalizeCompile(signal);
+        return;
+      }
       sessionRef.current = {
         id,
         fileName,
@@ -465,6 +701,7 @@ export function usePipeline(settings) {
         preamble: '',
         styleHint: undefined,
         lastError: '',
+        workflow: 'legacy',
       };
       await saveFigures(id, figuresRef.current);
       await persist();
@@ -473,7 +710,7 @@ export function usePipeline(settings) {
       setStatus((s) => ({ ...s, format: 'active' }));
       await runFormat(signal);
     },
-    [settings, runFormat, persist],
+    [settings, runFormat, persist, finalizeCompile],
   );
 
   /**
@@ -519,7 +756,7 @@ export function usePipeline(settings) {
                       () =>
                         ocrImageGemini({
                           apiKey: settings.googleApiKey,
-                          model: settings.geminiModel,
+                          model: settings.geminiOcrModel,
                           imageDataUrl: dataUrl,
                           signal,
                         }),
@@ -542,6 +779,61 @@ export function usePipeline(settings) {
                 );
           if (signal.aborted) return 'aborted';
           const page = await assemblePage(blocks, dataUrl, figCounter);
+          if (settings.formatWorkflow === 'strict' && settings.compareOcr) {
+            if (!Array.isArray(s.ocr.comparisons)) s.ocr.comparisons = [];
+            setDetail(`${label} · confronto con il secondo motore…`);
+            try {
+              let alternateText;
+              if (settings.ocrEngine === 'gemini') {
+                const altBlocks = await withRetry(
+                  () => extractPageBlocks({
+                    apiKey: settings.nvidiaApiKey,
+                    endpoint: settings.nvidiaEndpoint,
+                    model: settings.nvidiaModel,
+                    imageDataUrl: dataUrl,
+                    signal,
+                  }),
+                  signal,
+                  onWait,
+                );
+                alternateText = (await assemblePage(altBlocks, dataUrl, makeFigureCounter(0))).markdown;
+              } else {
+                alternateText = await withRetry(
+                  () => ocrImageGemini({
+                    apiKey: settings.googleApiKey,
+                    model: settings.geminiOcrModel,
+                    imageDataUrl: dataUrl,
+                    signal,
+                  }),
+                  signal,
+                  onWait,
+                );
+              }
+              const cmp = compareTokenSequences(
+                sourcePlainText(page.markdown),
+                sourcePlainText(alternateText),
+                12,
+              );
+              s.ocr.comparisons[i] = {
+                page: i + 1,
+                primary: settings.ocrEngine,
+                alternate: settings.ocrEngine === 'gemini' ? 'nvidia' : 'gemini',
+                agreement: cmp.sourceCount
+                  ? cmp.matched / Math.max(cmp.sourceCount, cmp.outputCount, 1)
+                  : 1,
+                missing: cmp.missing,
+                added: cmp.added,
+              };
+            } catch (comparisonError) {
+              if (signal.aborted || comparisonError?.name === 'AbortError') return 'aborted';
+              s.ocr.comparisons[i] = {
+                page: i + 1,
+                primary: settings.ocrEngine,
+                alternate: settings.ocrEngine === 'gemini' ? 'nvidia' : 'gemini',
+                error: comparisonError.message || 'Confronto OCR non disponibile.',
+              };
+            }
+          }
           s.ocr.parts[i] = total > 1 ? `<!-- pagina ${i + 1} -->\n${page.markdown}` : page.markdown;
           s.ocr.figCount = figCounter.count();
           figuresRef.current.push(...page.figures);
@@ -638,6 +930,7 @@ export function usePipeline(settings) {
           parts: new Array(pageImages.length).fill(null),
           figCount: 0,
           source: 'ocr',
+          comparisons: new Array(pageImages.length).fill(null),
         },
         styleHint: undefined,
         lastError: '',
@@ -732,6 +1025,7 @@ export function usePipeline(settings) {
             parts: meta.ocr.parts || new Array(meta.ocr.total).fill(null),
             figCount: meta.ocr.figCount || 0,
             source: meta.ocr.source || 'ocr',
+            comparisons: meta.ocr.comparisons || new Array(meta.ocr.total).fill(null),
           },
           styleHint: meta.styleHint || undefined,
           lastError: '',
@@ -755,9 +1049,46 @@ export function usePipeline(settings) {
         preamble: meta.preamble || '',
         styleHint: meta.styleHint || undefined,
         lastError: '',
+        workflow: meta.workflow || 'legacy',
+        canonicalText: meta.canonicalText || meta.rawText,
+        corrections: meta.corrections || [],
+        ocrComparisons: meta.ocrComparisons || [],
+        layoutPlan: meta.layoutPlan || null,
+        strictReview: meta.strictReview || [],
+        strictReviewKey: meta.strictReviewKey || null,
+        strictIssueResolutions: meta.strictIssueResolutions || {},
+        verified: meta.verified === true,
       };
       setRawText(meta.rawText || '');
-      setTypstCode(combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || '')));
+      const restoredCode = ensureExplicitHyphenation(
+        meta.editorCode || combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || '')),
+      );
+      sessionRef.current.editorCode = restoredCode;
+      if (meta.editorCode) {
+        // Evita che runFormat ricostruisca subito il vecchio contenuto dai
+        // chunk e annulli lo snapshot appena ripristinato dall'editor.
+        const restored = splitPreamble(restoredCode);
+        sessionRef.current.preamble = restored.preamble;
+        sessionRef.current.chunks = [{
+          text: meta.rawText || '',
+          body: restored.body,
+          status: 'done',
+          fidelity: { coverage: 1, missing: [] },
+        }];
+      }
+      setTypstCode(restoredCode);
+      setStrictReport(
+        meta.workflow === 'strict'
+          ? {
+              workflow: 'strict',
+              corrections: meta.corrections || [],
+              ocrComparisons: meta.ocrComparisons || [],
+              layoutPlan: meta.layoutPlan || null,
+              issueResolutions: meta.strictIssueResolutions || {},
+              pdf: null,
+            }
+          : null,
+      );
       setStatus({ ocr: 'done', format: 'active', compile: 'pending' });
       setPhase('running');
       setActiveStep('format');
@@ -787,6 +1118,7 @@ export function usePipeline(settings) {
       setCompiling(true);
       setCompileError(null);
       try {
+        if (sessionRef.current?.workflow === 'strict') await verifyStrictPdf(source);
         const svg = await compileToSvg(source, figuresRef.current);
         setPreviewSvg(svg);
         return true;
@@ -799,7 +1131,33 @@ export function usePipeline(settings) {
         setCompiling(false);
       }
     },
-    [typstCode, describeCompileError],
+    [typstCode, describeCompileError, verifyStrictPdf],
+  );
+
+  /**
+   * Ricompila soltanto l'anteprima con una singola occorrenza evidenziata.
+   * Il sorgente salvato e il PDF scaricato non vengono mai modificati.
+   */
+  const previewSearchMatch = useCallback(
+    async (match) => {
+      const requestId = ++searchPreviewRef.current;
+      if (!typstCode.trim()) return false;
+      const source = match
+        ? markTypstSearchMatch(typstCode, match.start, match.end)
+        : typstCode;
+      if (match && source === typstCode) return false;
+      try {
+        const svg = await compileToSvg(source, figuresRef.current);
+        if (requestId !== searchPreviewRef.current) return false;
+        setPreviewSvg(svg);
+        return true;
+      } catch {
+        // Una ricerca dentro codice/preambolo resta selezionata nell'editor,
+        // ma non deve sostituire un'anteprima PDF valida con un errore.
+        return false;
+      }
+    },
+    [typstCode],
   );
 
   /**
@@ -815,7 +1173,8 @@ export function usePipeline(settings) {
       setDownloading(true);
       setCompileError(null);
       try {
-        const bytes = await compileToPdf(typstCode, figuresRef.current);
+        let bytes = await compileToPdf(typstCode, figuresRef.current);
+        bytes = await verifyStrictPdf(typstCode, bytes);
         if (mode === 'share') await sharePdf(bytes, fileName || 'documento');
         else await savePdf(bytes, fileName || 'documento');
       } catch (e) {
@@ -824,7 +1183,7 @@ export function usePipeline(settings) {
         setDownloading(false);
       }
     },
-    [typstCode],
+    [typstCode, verifyStrictPdf],
   );
 
   /**
@@ -853,14 +1212,72 @@ export function usePipeline(settings) {
    */
   const autofix = useCallback(async () => {
     if (!typstCode.trim()) return { changes: [] };
-    const { fixed, changes } = autofixTypst(typstCode);
-    if (changes.length) {
-      setTypstCode(fixed);
-      await recompile(fixed);
-    } else {
-      await recompile(typstCode);
+    setCompiling(true);
+    try {
+    const deterministic = autofixTypst(typstCode);
+    let code = deterministic.fixed;
+    const changes = [...deterministic.changes];
+    let finalSvg = null;
+
+    // Fino a quattro errori locali consecutivi. Ogni modifica resta solo in
+    // memoria finché l'intero documento non compila: in caso di insuccesso
+    // l'editor conserva esattamente il sorgente dell'utente.
+    for (let round = 0; round < 4; round++) {
+      try {
+        finalSvg = await compileToSvg(code, figuresRef.current);
+        break;
+      } catch (compileFailure) {
+        const message = compileFailure.message || String(compileFailure);
+        if (!/unclosed|delimiter|unterminated|expected\s+.*[\])}]/i.test(message)) break;
+        const location = await locateTypstError(code, figuresRef.current);
+        const candidates = delimiterRepairCandidates(code, location?.line || 1);
+        let progressed = null;
+        for (const candidate of candidates) {
+          try {
+            const svg = await compileToSvg(candidate.fixed, figuresRef.current);
+            progressed = { ...candidate, svg };
+            break;
+          } catch (candidateFailure) {
+            // Se l'errore si è spostato in avanti, questa riparazione ha
+            // risolto il blocco corrente: conservala provvisoriamente e passa
+            // al successivo. Nulla viene salvato finché non compila tutto.
+            const nextLocation = await locateTypstError(candidate.fixed, figuresRef.current);
+            if (location && nextLocation?.line > location.line) {
+              progressed = { ...candidate, svg: null };
+              break;
+            }
+            const nextMessage = candidateFailure.message || String(candidateFailure);
+            if (/unclosed|delimiter|unterminated/i.test(message) && !/unclosed|delimiter|unterminated/i.test(nextMessage)) {
+              progressed = { ...candidate, svg: null };
+              break;
+            }
+          }
+        }
+        if (!progressed) break;
+        code = progressed.fixed;
+        changes.push(progressed.description);
+        if (progressed.svg) {
+          finalSvg = progressed.svg;
+          break;
+        }
+      }
     }
-    return { changes };
+
+    if (finalSvg) {
+      setTypstCode(code);
+      setPreviewSvg(finalSvg);
+      setCompileError(null);
+      return { changes, ok: true };
+    }
+    // Mostra nuovamente l'errore arricchito, senza applicare tentativi non
+    // verificati. Le sostituzioni statiche precedenti mantengono il vecchio
+    // comportamento soltanto se erano effettivamente presenti.
+    if (deterministic.changes.length) setTypstCode(deterministic.fixed);
+    await recompile(deterministic.fixed);
+    return { changes: deterministic.changes, ok: false };
+    } finally {
+      setCompiling(false);
+    }
   }, [typstCode, recompile]);
 
   /**
@@ -884,7 +1301,8 @@ export function usePipeline(settings) {
         log.push(...det.changes);
       }
       let lastError = '';
-      for (let round = 0; round < 3; round++) {
+      // Quattro compilazioni consentono fino a tre vere richieste di patch.
+      for (let round = 0; round < 4; round++) {
         try {
           const svg = await compileToSvg(code, figuresRef.current);
           setTypstCode(code);
@@ -898,13 +1316,13 @@ export function usePipeline(settings) {
           };
         } catch (e) {
           lastError = e.message || 'Errore di compilazione Typst.';
-          if (round === 2) break; // niente più tentativi AI
+          if (round === 3) break; // niente più tentativi AI
           // Localizza l'errore per bisezione: il modello riceve riga e blocco
           // indiziato (gli errori Typst non hanno posizione).
           const loc = await locateTypstError(code, figuresRef.current);
           const res = await requestTypstFix({ settings, code, error: lastError, hint: loc });
           const { code: next, applied } = applyFixes(code, res.fixes);
-          if (!applied.length) {
+          if (!applied.length || next === code) {
             setTypstCode(code);
             setCompileError(await describeCompileError(code, lastError));
             return {
@@ -915,11 +1333,15 @@ export function usePipeline(settings) {
             };
           }
           code = next;
+          // Rende subito visibile la modifica: se un errore successivo resta,
+          // l'utente può comunque ispezionare la patch e il testo non sembra
+          // tornare silenziosamente alla versione precedente.
+          setTypstCode(code);
           if (res.explanation && !log.includes(res.explanation)) log.push(res.explanation);
           log.push(...applied.map(describeFix));
         }
       }
-      // Tre compilazioni fallite: mantieni comunque le modifiche applicate
+      // Quattro compilazioni fallite: mantieni comunque le modifiche applicate
       // (spesso avvicinano alla soluzione) e mostra l'errore residuo con la
       // posizione localizzata per bisezione.
       const described = await describeCompileError(code, lastError);
@@ -978,14 +1400,56 @@ export function usePipeline(settings) {
    */
   const fixPunctuation = useCallback(async () => {
     if (!typstCode.trim()) return { ok: false, message: 'Nessun codice.' };
-    const { fixed, changes } = fixSpacing(typstCode);
+    let repaired = typstCode;
+    const changes = [];
+    let speller = null;
+    try {
+      speller = await loadSpeller();
+      const hyphenation = fixOcrHyphenation(repaired, speller);
+      repaired = hyphenation.fixed;
+      if (hyphenation.changes.length) {
+        changes.push(`${hyphenation.changes.length} parole sillabate ricomposte`);
+      }
+    } catch {
+      // La punteggiatura resta correggibile anche se il dizionario non carica.
+    }
+    const spacing = fixSpacing(repaired);
+    repaired = spacing.fixed;
+    changes.push(...spacing.changes);
     if (!changes.length) {
+      if (speller) {
+        const ignore = new Set(loadSpellIgnore());
+        setSpellReport({ suspects: findSuspects(typstCode, speller, ignore) });
+      }
       return { ok: true, message: 'Spaziatura e punteggiatura già a posto.' };
     }
+    const fixed = repaired;
+    const s = sessionRef.current;
+    const previousCanonical = s?.workflow === 'strict' ? s.canonicalText : null;
+    if (previousCanonical) {
+      const canonicalHyphenation = speller
+        ? fixOcrHyphenation(previousCanonical, speller).fixed
+        : previousCanonical;
+      s.canonicalText = fixSpacing(canonicalHyphenation).fixed;
+    }
+    if (s) s.editorCode = fixed;
     setTypstCode(fixed);
-    await recompile(fixed);
+    const compiled = await recompile(fixed);
+    if (!compiled) {
+      if (s) {
+        s.canonicalText = previousCanonical;
+        s.editorCode = typstCode;
+      }
+      setTypstCode(typstCode);
+      return { ok: false, message: 'Correzioni annullate: il documento modificato non supera la verifica.' };
+    }
+    await persist();
+    if (speller) {
+      const ignore = new Set(loadSpellIgnore());
+      setSpellReport({ suspects: findSuspects(fixed, speller, ignore) });
+    }
     return { ok: true, message: `Spaziatura sistemata: ${changes.join(' · ')}` };
-  }, [typstCode, recompile]);
+  }, [typstCode, recompile, persist]);
 
   /**
    * Correzione rapida di TUTTI i sospetti con un LLM veloce: invia solo
@@ -1004,18 +1468,33 @@ export function usePipeline(settings) {
       if (!suspects.length) return { ok: true, message: 'Nessuna parola selezionata da correggere.' };
       setSpellBusy(true);
       try {
+        const speller = await loadSpeller();
         // A lotti, per non superare i limiti di output del modello.
-        const proposals = [];
-        for (let i = 0; i < suspects.length; i += 60) {
+        // Le unioni già confermate dal dizionario sono applicate localmente;
+        // soltanto le sequenze ambigue e i veri refusi vengono inviate all'AI.
+        const proposals = suspects
+          .filter((s) => s.suggestedFix)
+          .map((s) => ({ word: s.word, fix: s.suggestedFix }));
+        const aiSuspects = suspects.filter((s) => !s.suggestedFix);
+        for (let i = 0; i < aiSuspects.length; i += 60) {
           proposals.push(
-            ...(await requestSpellFixes({ settings, entries: suspects.slice(i, i + 60) })),
+            ...(await requestSpellFixes({ settings, entries: aiSuspects.slice(i, i + 60) })),
           );
         }
         // Guardrail deterministici: parola singola, nota ai dizionari, e
         // SOLO tra quelle inviate (mai «correzioni» a parole non richieste).
-        const speller = await loadSpeller();
         const allowed = new Set(suspects.map((s) => s.word));
-        const { ok: corrections, rejected } = validateCorrections(proposals, speller, allowed);
+        const acceptedFixes = new Set(
+          suspects
+            .filter((s) => s.suggestedFix)
+            .map((s) => s.suggestedFix.toLocaleLowerCase('it')),
+        );
+        const { ok: corrections, rejected } = validateCorrections(
+          proposals,
+          speller,
+          allowed,
+          acceptedFixes,
+        );
         const before = typstCode;
         const { code, applied } = applySpellFixes(before, corrections);
         if (!applied.length) {
@@ -1031,11 +1510,32 @@ export function usePipeline(settings) {
         }
         // Rete di sicurezza: se il documento compilava PRIMA ma non DOPO le
         // correzioni, si annulla tutto (mai peggiorare la compilazione).
+        const strictSession = sessionRef.current?.workflow === 'strict' ? sessionRef.current : null;
+        const previousCanonical = strictSession?.canonicalText;
+        const previousCorrections = strictSession?.corrections || [];
         try {
           const svg = await compileToSvg(code, figuresRef.current);
+          if (strictSession) {
+            const canonical = applySpellFixes(previousCanonical || strictSession.rawText, corrections);
+            strictSession.canonicalText = canonical.code;
+            strictSession.corrections = [
+              ...previousCorrections,
+              ...canonical.applied.map((a) => ({
+                before: a.word,
+                after: a.fix,
+                type: 'spelling',
+                count: a.count,
+              })),
+            ];
+            await verifyStrictPdf(code);
+          }
           setPreviewSvg(svg);
           setCompileError(null);
         } catch (eAfter) {
+          if (strictSession) {
+            strictSession.canonicalText = previousCanonical;
+            strictSession.corrections = previousCorrections;
+          }
           let beforeOk = false;
           try {
             await compileToSvg(before, figuresRef.current);
@@ -1071,15 +1571,15 @@ export function usePipeline(settings) {
         setSpellBusy(false);
       }
     },
-    [spellReport, typstCode, settings],
+    [spellReport, typstCode, settings, verifyStrictPdf],
   );
 
   /**
-   * Rilettura AI contestuale (italiano): ripristina gli accenti sugli omografi
-   * («è»/«e», «sì»/«si»), reinserisce le parole-funzione saltate dall'OCR e
-   * bilancia le caporali — la classe di errori che dizionario e fedeltà non
-   * possono vedere. Guard di sicurezza in `proofreadBody`: mai rimuovere o
-   * cambiare parole. Rete di sicurezza sulla compilazione come per l'ortografia.
+   * Rilettura AI contestuale (italiano): ripristina accenti, riunisce o separa
+   * frammenti OCR, corregge piccoli refusi usando la frase, reinserisce parole-
+   * funzione saltate e bilancia le caporali. I guard rifiutano sinonimi, cambi
+   * a parole già valide, omissioni, riordini e numeri alterati. Resta attiva la
+   * rete di sicurezza sulla compilazione come per l'ortografia.
    * @returns {Promise<{ok:boolean, message:string}>}
    */
   const proofreadAI = useCallback(async () => {
@@ -1090,7 +1590,7 @@ export function usePipeline(settings) {
     setProofreadBusy(true);
     setProofreadDetail('');
     try {
-      const { code, changed, skipped } = await proofreadBody({
+      const { code, changed, skipped, changes } = await proofreadBody({
         settings,
         code: before,
         signal: controller.signal,
@@ -1101,15 +1601,37 @@ export function usePipeline(settings) {
           ok: true,
           message: skipped
             ? `Nessuna correzione applicata (${skipped} proposte scartate dal controllo di sicurezza).`
-            : 'Rilettura completata: nessun accento o parola da correggere.',
+            : 'Rilettura completata: nessun refuso contestuale da correggere.',
         };
       }
       // Rete di sicurezza: se compilava PRIMA ma non DOPO, si annulla tutto.
+      const strictSession = sessionRef.current?.workflow === 'strict' ? sessionRef.current : null;
+      const previousCanonical = strictSession?.canonicalText;
+      const previousCorrections = strictSession?.corrections || [];
       try {
         const svg = await compileToSvg(code, figuresRef.current);
+        if (strictSession) {
+          let nextCanonical = previousCanonical || strictSession.rawText;
+          for (const change of changes) {
+            if (!nextCanonical.includes(change.before)) {
+              throw new Error('Una correzione non è riconducibile in modo univoco al testo OCR canonico.');
+            }
+            nextCanonical = nextCanonical.replace(change.before, change.after);
+          }
+          strictSession.canonicalText = nextCanonical;
+          strictSession.corrections = [
+            ...previousCorrections,
+            ...changes.map((c) => ({ ...c, type: 'contextual' })),
+          ];
+          await verifyStrictPdf(code);
+        }
         setPreviewSvg(svg);
         setCompileError(null);
       } catch (eAfter) {
+        if (strictSession) {
+          strictSession.canonicalText = previousCanonical;
+          strictSession.corrections = previousCorrections;
+        }
         let beforeOk = false;
         try {
           await compileToSvg(before, figuresRef.current);
@@ -1131,8 +1653,9 @@ export function usePipeline(settings) {
       return {
         ok: true,
         message:
-          `Rilettura applicata a ${changed} paragrafi (accenti, parole saltate, ` +
-          `virgolette)` + (skipped ? ` · ${skipped} proposte scartate dal controllo` : '') + '.',
+          `Rilettura applicata a ${changed} paragrafi (refusi OCR, parole ` +
+          `spezzate o fuse, accenti e virgolette)` +
+          (skipped ? ` · ${skipped} proposte scartate dal controllo` : '') + '.',
       };
     } catch (e) {
       if (e?.name === 'AbortError') return { ok: false, message: 'Rilettura annullata.' };
@@ -1141,7 +1664,274 @@ export function usePipeline(settings) {
       setProofreadBusy(false);
       setProofreadDetail('');
     }
-  }, [typstCode, settings]);
+  }, [typstCode, settings, verifyStrictPdf]);
+
+  /** Revisione interattiva di una singola voce del registro conservativo. */
+  const reviewStrictCorrection = useCallback(async (index, action) => {
+    const s = sessionRef.current;
+    const correction = s?.corrections?.[index];
+    if (s?.workflow !== 'strict' || !correction) {
+      return { ok: false, message: 'Correzione non più disponibile.' };
+    }
+    setStrictCorrectionBusy({ index, action });
+    const updateCorrections = (next) => {
+      s.corrections = next;
+      setStrictReport((report) => report ? { ...report, corrections: next } : report);
+    };
+    try {
+      if (action === 'review-ai') {
+        const review = await requestCorrectionReview({
+          settings,
+          before: correction.before,
+          after: correction.after,
+          context: correctionContext(s.rawText, correction.before, correction.after),
+          signal: abortRef.current?.signal,
+        });
+        let applicable = review.choice !== 'proposal';
+        if (review.choice === 'proposal') {
+          try {
+            const speller = await loadSpeller();
+            applicable = isSafeContextualCorrection(correction.before, review.text, speller);
+          } catch {
+            applicable = false;
+          }
+        }
+        const next = s.corrections.map((item, i) => i === index
+          ? { ...item, aiReview: { ...review, applicable } }
+          : item);
+        updateCorrections(next);
+        await persist();
+        return {
+          ok: true,
+          message: applicable
+            ? 'Controllo AI completato: scegli se applicarne l’esito.'
+            : 'Controllo AI completato, ma la proposta non supera i controlli di sicurezza.',
+        };
+      }
+
+      const currentText = correction.appliedText ?? correction.after;
+      const target = action === 'use-original'
+        ? correction.before
+        : action === 'use-ai'
+          ? correction.aiReview?.text
+          : correction.after;
+      if (typeof target !== 'string' || !target.trim()) {
+        return { ok: false, message: 'Questa voce strutturale non può essere reinserita automaticamente.' };
+      }
+      if (action === 'use-ai' && correction.aiReview?.applicable !== true) {
+        return { ok: false, message: 'La proposta AI non ha superato i controlli di sicurezza.' };
+      }
+      const decision = action === 'use-original' ? 'original' : action === 'use-ai' ? 'ai' : 'corrected';
+      const nextCorrections = s.corrections.map((item, i) => i === index
+        ? { ...item, decision, appliedText: target }
+        : item);
+      if (target === currentText) {
+        updateCorrections(nextCorrections);
+        await persist();
+        return { ok: true, message: 'Scelta registrata; il testo era già quello selezionato.' };
+      }
+
+      const currentCanonical = s.canonicalText || s.rawText;
+      const nextCanonical = replaceUniqueText(currentCanonical, currentText, target);
+      if (nextCanonical == null) {
+        return {
+          ok: false,
+          message: 'Il passaggio non è localizzabile in modo univoco: nessuna modifica è stata applicata.',
+        };
+      }
+      let nextCode = rebaseCanonicalRevision(
+        typstCode,
+        currentCanonical,
+        nextCanonical,
+        s.layoutPlan || {},
+      );
+      if (nextCode == null) {
+        return {
+          ok: false,
+          message: 'Il frammento Typst è stato modificato altrove e non può essere sostituito con sicurezza.',
+        };
+      }
+      nextCode = ensureExplicitHyphenation(nextCode);
+
+      const previous = {
+        canonicalText: s.canonicalText,
+        corrections: s.corrections,
+        editorCode: s.editorCode,
+        preamble: s.preamble,
+        chunks: s.chunks,
+      };
+      const svg = await compileToSvg(nextCode, figuresRef.current);
+      s.canonicalText = nextCanonical;
+      s.corrections = nextCorrections;
+      s.editorCode = nextCode;
+      const parts = splitPreamble(nextCode);
+      s.preamble = parts.preamble;
+      s.chunks = [{
+        text: s.rawText,
+        body: parts.body,
+        status: 'done',
+        fidelity: { coverage: 1, missing: [] },
+      }];
+      try {
+        await verifyStrictPdf(nextCode);
+      } catch (e) {
+        s.canonicalText = previous.canonicalText;
+        s.corrections = previous.corrections;
+        s.editorCode = previous.editorCode;
+        s.preamble = previous.preamble;
+        s.chunks = previous.chunks;
+        throw e;
+      }
+      setTypstCode(nextCode);
+      setPreviewSvg(svg);
+      setCompileError(null);
+      await persist();
+      return { ok: true, message: 'Scelta applicata e PDF ricontrollato.' };
+    } catch (e) {
+      if (e?.name === 'AbortError') return { ok: false, message: 'Revisione annullata.' };
+      return { ok: false, message: e.message || 'Impossibile revisionare questa correzione.' };
+    } finally {
+      setStrictCorrectionBusy(null);
+    }
+  }, [persist, settings, typstCode, verifyStrictPdf]);
+
+  /** Azioni sui passaggi discordanti fra fonte canonica e PDF compilato. */
+  const reviewStrictIssue = useCallback(async (index, action) => {
+    const s = sessionRef.current;
+    const issue = strictReport?.pdf?.issues?.[index];
+    if (s?.workflow !== 'strict' || !issue) return { ok: false, message: 'Passaggio non più disponibile.' };
+    setStrictIssueBusy({ index, action });
+    const saveResolution = async (value) => {
+      const next = { ...(s.strictIssueResolutions || {}), [issue.key]: value };
+      s.strictIssueResolutions = next;
+      setStrictReport((report) => {
+        if (!report) return report;
+        const covered = report.pdf?.issues?.reduce((total, item) => total + item.missing.length, 0) || 0;
+        const allArtifacts =
+          covered >= (report.pdf?.missing?.length || 0) &&
+          report.pdf?.issues?.every((item) => next[item.key]?.status === 'artifact');
+        return {
+          ...report,
+          issueResolutions: next,
+          pdf: report.pdf ? {
+            ...report.pdf,
+            contentOk: report.pdf.missingInvariants?.length === 0 && allArtifacts,
+          } : report.pdf,
+        };
+      });
+      await persist();
+    };
+    try {
+      if (action === 'mark-artifact') {
+        await saveResolution({ status: 'artifact', explanation: 'Confermato manualmente come artefatto di estrazione.' });
+        return { ok: true, message: 'Segnalazione archiviata come artefatto di estrazione.' };
+      }
+      const previousResolution = s.strictIssueResolutions?.[issue.key] || {};
+      if (action === 'review-ai') {
+        const review = await requestStrictPassageRepair({
+          settings,
+          issue,
+          context: correctionContext(s.rawText, issue.source, issue.rendered, 900),
+          signal: abortRef.current?.signal,
+        });
+        const sourceCount = canonicalTokens(issue.source).length;
+        const proposalCount = canonicalTokens(review.text).length;
+        const safe = review.choice !== 'proposal' || (
+          proposalCount >= Math.floor(sourceCount * 0.8) &&
+          proposalCount <= Math.ceil(sourceCount * 1.35) &&
+          missingInvariants(issue.source, review.text).length === 0
+        );
+        await saveResolution({ ...previousResolution, passageReview: { ...review, safe } });
+        return {
+          ok: true,
+          message: safe
+            ? 'Analisi puntuale completata: controlla e applica l’esito se concordi.'
+            : 'La proposta è stata mostrata ma bloccata perché perde testo o invarianti.',
+        };
+      }
+
+      const review = previousResolution.passageReview;
+      if (action === 'apply-ai' && !review) return { ok: false, message: 'Esegui prima il ricontrollo con IA.' };
+      if (action === 'apply-ai' && review.choice === 'artifact') {
+        await saveResolution({ ...previousResolution, status: 'artifact' });
+        return { ok: true, message: 'Esito IA confermato come artefatto di estrazione.' };
+      }
+      if (action === 'apply-ai' && review.safe !== true) {
+        return { ok: false, message: 'La proposta IA non supera i controlli di completezza.' };
+      }
+
+      const currentCanonical = s.canonicalText || s.rawText;
+      let nextCanonical = currentCanonical;
+      let nextCode;
+      if (action === 'apply-ai' && review.choice === 'proposal') {
+        nextCanonical = replaceUniqueText(currentCanonical, issue.source, review.text);
+        if (nextCanonical == null) {
+          return { ok: false, message: 'La frase canonica non è localizzabile in modo univoco; nessuna modifica applicata.' };
+        }
+        nextCode = rebaseCanonicalRevision(typstCode, currentCanonical, nextCanonical, s.layoutPlan || {});
+      } else {
+        // Sia il comando manuale sia l'esito "canonical" rigenerano il blocco
+        // dal testo OCR canonico, eliminando troncamenti o caratteri invisibili.
+        nextCode = restoreCanonicalPassage(typstCode, currentCanonical, issue.source, s.layoutPlan || {});
+      }
+      if (nextCode == null) {
+        return { ok: false, message: 'Non è stato possibile localizzare un solo blocco Typst corrispondente.' };
+      }
+      nextCode = ensureExplicitHyphenation(nextCode);
+
+      const previous = {
+        canonicalText: s.canonicalText,
+        editorCode: s.editorCode,
+        preamble: s.preamble,
+        chunks: s.chunks,
+        corrections: s.corrections,
+        resolutions: s.strictIssueResolutions,
+      };
+      const svg = await compileToSvg(nextCode, figuresRef.current);
+      s.canonicalText = nextCanonical;
+      s.editorCode = nextCode;
+      s.strictIssueResolutions = {
+        ...(s.strictIssueResolutions || {}),
+        [issue.key]: { ...previousResolution, status: action === 'apply-ai' ? 'ai-applied' : 'canonical-restored' },
+      };
+      if (action === 'apply-ai' && review.choice === 'proposal') {
+        s.corrections = [
+          ...(s.corrections || []),
+          {
+            type: 'strict_issue_ai',
+            before: issue.source,
+            after: review.text,
+            decision: 'ai',
+            appliedText: review.text,
+          },
+        ];
+      }
+      const parts = splitPreamble(nextCode);
+      s.preamble = parts.preamble;
+      s.chunks = [{ text: s.rawText, body: parts.body, status: 'done', fidelity: { coverage: 1, missing: [] } }];
+      try {
+        await verifyStrictPdf(nextCode);
+      } catch (e) {
+        s.canonicalText = previous.canonicalText;
+        s.editorCode = previous.editorCode;
+        s.preamble = previous.preamble;
+        s.chunks = previous.chunks;
+        s.corrections = previous.corrections;
+        s.strictIssueResolutions = previous.resolutions;
+        throw e;
+      }
+      setTypstCode(nextCode);
+      setPreviewSvg(svg);
+      setCompileError(null);
+      await persist();
+      return { ok: true, message: 'Passaggio rigenerato, compilato e confrontato nuovamente.' };
+    } catch (e) {
+      if (e?.name === 'AbortError') return { ok: false, message: 'Revisione annullata.' };
+      return { ok: false, message: e.message || 'Impossibile revisionare il passaggio.' };
+    } finally {
+      setStrictIssueBusy(null);
+    }
+  }, [persist, settings, strictReport, typstCode, verifyStrictPdf]);
 
   /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
@@ -1345,12 +2135,18 @@ export function usePipeline(settings) {
     pageReview,
     confirmPages,
     fidelityWarnings,
+    strictReport,
+    strictCorrectionBusy,
+    reviewStrictCorrection,
+    strictIssueBusy,
+    reviewStrictIssue,
     sessions,
     openSession,
     deleteSavedSession,
     refreshSessions,
     runPipeline,
     recompile,
+    previewSearchMatch,
     restyle,
     applyLocalStyle,
     autofix,

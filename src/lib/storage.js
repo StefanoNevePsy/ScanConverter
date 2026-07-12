@@ -11,6 +11,8 @@ const KEYS = {
   nvidiaEndpoint: 'sc.nvidiaEndpoint',
   nvidiaModel: 'sc.nvidiaModel',
   geminiModel: 'sc.geminiModel',
+  geminiOcrModel: 'sc.geminiOcrModel',
+  geminiTypstModel: 'sc.geminiTypstModel',
   ocrEngine: 'sc.ocrEngine',
   typstEngine: 'sc.typstEngine',
   nvidiaTypstModel: 'sc.nvidiaTypstModel',
@@ -21,6 +23,8 @@ const KEYS = {
   chunkSize: 'sc.chunkSize',
   fixTypos: 'sc.fixTypos',
   ocrLongSide: 'sc.ocrLongSide',
+  formatWorkflow: 'sc.formatWorkflow',
+  compareOcr: 'sc.compareOcr',
 };
 
 export const DEFAULTS = {
@@ -28,7 +32,8 @@ export const DEFAULTS = {
   // OpenAI chat/completions). Il vecchio ai.api.nvidia.com/gr/... dava 404.
   nvidiaEndpoint: 'https://integrate.api.nvidia.com/v1/chat/completions',
   nvidiaModel: 'nvidia/nemotron-parse',
-  geminiModel: 'gemini-flash-latest',
+  geminiOcrModel: 'gemini-flash-latest',
+  geminiTypstModel: 'gemini-flash-latest',
   // Motore OCR (fase 1, immagine → testo): 'nvidia' (Nemotron-Parse, estrae
   // anche figure/bbox) oppure 'gemini' (multimodale: più robusto su scansioni
   // pessime e usabile da web, ma senza figure).
@@ -55,11 +60,16 @@ export const DEFAULTS = {
   // Lato lungo (px) di rasterizzazione dei PDF per l'OCR. Più alto = più
   // accurato su scansioni pessime, ma payload/tempi maggiori. 2600 ≈ 320 DPI.
   ocrLongSide: 2600,
+  // 'legacy': conversione completa tramite LLM; 'strict': testo immutabile,
+  // renderer Typst deterministico e verifiche bloccanti.
+  formatWorkflow: 'legacy',
+  compareOcr: false,
 };
 
 // Valori ammessi per il motore Typst.
 const ENGINES = ['gemini', 'nvidia'];
 const PDF_MODES = ['auto', 'ocr'];
+const FORMAT_WORKFLOWS = ['legacy', 'strict'];
 
 const LIMITS = {
   maxPages: { min: 1, max: 2000 },
@@ -103,12 +113,16 @@ export function loadSettings() {
   if (LEGACY_NVIDIA_ENDPOINTS.includes(nvidiaEndpoint)) {
     nvidiaEndpoint = DEFAULTS.nvidiaEndpoint;
   }
+  // Migrazione trasparente: le installazioni precedenti avevano un solo
+  // modello Gemini condiviso dalle due fasi.
+  const legacyGeminiModel = read(KEYS.geminiModel, DEFAULTS.geminiTypstModel);
   return {
     nvidiaApiKey: read(KEYS.nvidia),
     googleApiKey: read(KEYS.google),
     nvidiaEndpoint,
     nvidiaModel: read(KEYS.nvidiaModel, DEFAULTS.nvidiaModel),
-    geminiModel: read(KEYS.geminiModel, DEFAULTS.geminiModel),
+    geminiOcrModel: read(KEYS.geminiOcrModel, legacyGeminiModel),
+    geminiTypstModel: read(KEYS.geminiTypstModel, legacyGeminiModel),
     ocrEngine: ENGINES.includes(read(KEYS.ocrEngine, DEFAULTS.ocrEngine))
       ? read(KEYS.ocrEngine, DEFAULTS.ocrEngine)
       : DEFAULTS.ocrEngine,
@@ -127,6 +141,10 @@ export function loadSettings() {
     chunkSize: readInt(KEYS.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize),
     fixTypos: readBool(KEYS.fixTypos, DEFAULTS.fixTypos),
     ocrLongSide: readInt(KEYS.ocrLongSide, DEFAULTS.ocrLongSide, LIMITS.ocrLongSide),
+    formatWorkflow: FORMAT_WORKFLOWS.includes(read(KEYS.formatWorkflow, DEFAULTS.formatWorkflow))
+      ? read(KEYS.formatWorkflow, DEFAULTS.formatWorkflow)
+      : DEFAULTS.formatWorkflow,
+    compareOcr: readBool(KEYS.compareOcr, DEFAULTS.compareOcr),
   };
 }
 
@@ -175,7 +193,8 @@ export function saveSettings(s) {
   write(KEYS.google, s.googleApiKey?.trim());
   write(KEYS.nvidiaEndpoint, s.nvidiaEndpoint?.trim() || DEFAULTS.nvidiaEndpoint);
   write(KEYS.nvidiaModel, s.nvidiaModel?.trim() || DEFAULTS.nvidiaModel);
-  write(KEYS.geminiModel, s.geminiModel?.trim() || DEFAULTS.geminiModel);
+  write(KEYS.geminiOcrModel, s.geminiOcrModel?.trim() || DEFAULTS.geminiOcrModel);
+  write(KEYS.geminiTypstModel, s.geminiTypstModel?.trim() || DEFAULTS.geminiTypstModel);
   write(KEYS.ocrEngine, ENGINES.includes(s.ocrEngine) ? s.ocrEngine : DEFAULTS.ocrEngine);
   write(KEYS.typstEngine, ENGINES.includes(s.typstEngine) ? s.typstEngine : DEFAULTS.typstEngine);
   write(KEYS.nvidiaTypstModel, s.nvidiaTypstModel?.trim() || DEFAULTS.nvidiaTypstModel);
@@ -186,4 +205,9 @@ export function saveSettings(s) {
   writeInt(KEYS.chunkSize, s.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize);
   write(KEYS.fixTypos, s.fixTypos ? '1' : '0');
   writeInt(KEYS.ocrLongSide, s.ocrLongSide, DEFAULTS.ocrLongSide, LIMITS.ocrLongSide);
+  write(
+    KEYS.formatWorkflow,
+    FORMAT_WORKFLOWS.includes(s.formatWorkflow) ? s.formatWorkflow : DEFAULTS.formatWorkflow,
+  );
+  write(KEYS.compareOcr, s.compareOcr ? '1' : '0');
 }

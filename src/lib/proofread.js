@@ -5,13 +5,14 @@
 
     • accenti caduti sugli OMOGRAFI: «è»→«e», «sì»→«si», «È»→«E»;
     • parole-funzione saltate dall'OCR nei vuoti («terapia  sempre» → «è sempre»);
-    • caporali « » non bilanciate.
+    • caporali « » non bilanciate;
+    • parole spezzate/fuse e piccoli refusi OCR risolvibili dal contesto.
 
   È un intervento LLM, quindi potenzialmente rischioso. Il guard lo rende sicuro:
-  il modello può SOLO aggiungere accenti/virgolette/spazi o INSERIRE parole
-  mancanti; non può rimuovere, riordinare o alterare le parole esistenti. Ogni
-  paragrafo corretto è accettato solo se le parole originali (senza accenti)
-  restano una SOTTOSEQUENZA di quelle corrette; altrimenti si tiene l'originale.
+  accetta accenti, parole-funzione mancanti, fusioni/suddivisioni e piccoli refusi
+  soltanto quando la forma OCR è ignota e quella proposta è nel dizionario. Non
+  consente sinonimi, cambi a parole già valide, riordini, omissioni o numeri
+  alterati. Se il dizionario non è disponibile torna al guard più restrittivo.
 
   Per non toccare la sintassi Typst, si inviano al modello SOLO i paragrafi di
   prosa pura: quelli con codice inline (#funzioni, math $…$, figure, preambolo)
@@ -21,6 +22,7 @@
 import { nvidiaChat } from './nvidia.js';
 import { geminiGenerate } from './gemini.js';
 import { extractJson } from './aifix.js';
+import { loadSpeller } from './spell.js';
 
 const SYSTEM =
   'Sei un correttore di bozze madrelingua italiano, esperto di testi ' +
@@ -38,6 +40,7 @@ export function isPlainProse(p) {
   if (/^[=+\-]/.test(s)) return false; // titoli, liste, righe speciali
   if (/^#/.test(s)) return false; // #set/#show/#let/#figure a inizio riga
   if (/#[a-zA-Z]/.test(s)) return false; // funzioni Typst inline (#footnote…)
+  if (/<\/?footnote>/i.test(s)) return false; // marcatore semantico OCR
   if (/\$[^$]*\$/.test(s)) return false; // matematica inline
   if (/<!--|-->/.test(s)) return false; // marcatori di pagina
   if (/!\[[^\]]*\]\([^)]*\)/.test(s)) return false; // figure Markdown residue
@@ -82,17 +85,139 @@ export function isSubsequence(a, b) {
  * solo inserzioni, es. una «è» saltata). Vieta anche inserzioni sregolate.
  */
 export function isSafeCorrection(orig, corr) {
+  return isSafeContextualCorrection(orig, corr, null);
+}
+
+const FUNCTION_WORDS = new Set([
+  'a', 'ad', 'al', 'alla', 'alle', 'anche', 'che', 'ci', 'con', 'da', 'dal',
+  'dei', 'del', 'della', 'di', 'e', 'ed', 'era', 'è', 'gli', 'ha', 'i', 'il',
+  'in', 'la', 'le', 'lo', 'ma', 'nel', 'non', 'o', 'per', 'si', 'su', 'un',
+  'una', 'uno',
+]);
+
+function lexicalTokens(text) {
+  return String(text || '').match(/[\p{L}\p{M}][\p{L}\p{M}'’]*|\p{N}+(?:[.,]\p{N}+)*/gu) || [];
+}
+
+function normalizedWord(word) {
+  return String(word || '')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLocaleLowerCase('it');
+}
+
+function structuralPunctuation(text) {
+  // Spazi, trattini e virgolette possono essere riparati; la punteggiatura che
+  // cambia la struttura o il significato della frase deve restare identica.
+  return (String(text || '').match(/[.,;:!?()[\]{}]/g) || []).join('');
+}
+
+function charDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) {
+      next[j] = Math.min(
+        next[j - 1] + 1,
+        prev[j] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    prev = next;
+  }
+  return prev[b.length];
+}
+
+/**
+ * Guard contestuale: consente accenti, piccoli refusi da parola ignota a
+ * parola nota, fusioni/suddivisioni e inserzioni di parole-funzione. Vieta
+ * sinonimi, riordini, cancellazioni di contenuto e cambi di parole già valide.
+ */
+export function isSafeContextualCorrection(orig, corr, speller = null) {
   const a = contentWords(orig);
   const b = contentWords(corr);
   if (!b.length) return false;
   if (b.length > a.length + Math.ceil(a.length * 0.15) + 3) return false; // troppe aggiunte
-  return isSubsequence(a, b);
+  if (structuralPunctuation(orig) !== structuralPunctuation(corr)) return false;
+  if (!speller?.correct) return isSubsequence(a, b);
+
+  const source = lexicalTokens(orig);
+  const target = lexicalTokens(corr);
+  const isNumber = (token) => /^\p{N}/u.test(token);
+  const known = (token) => !isNumber(token) && speller.correct(token);
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  const maxEdits = Math.max(3, Math.ceil(source.length * 0.12));
+
+  while (i < source.length || j < target.length) {
+    if (i < source.length && j < target.length) {
+      const sa = normalizedWord(source[i]);
+      const tb = normalizedWord(target[j]);
+      if (sa === tb) {
+        i++;
+        j++;
+        continue;
+      }
+      // Due frammenti OCR → una parola: «comparta-mento» → «comportamento».
+      if (i + 1 < source.length && known(target[j])) {
+        const merged = normalizedWord(source[i] + source[i + 1]);
+        const limit = Math.max(2, Math.ceil(tb.length * 0.2));
+        if (charDistance(merged, tb) <= limit) {
+          i += 2;
+          j++;
+          edits++;
+          continue;
+        }
+      }
+      // Una parola fusa → due parole: «contareche» → «contare che».
+      if (j + 1 < target.length && known(target[j]) && known(target[j + 1])) {
+        const split = normalizedWord(target[j] + target[j + 1]);
+        if (charDistance(sa, split) <= 2) {
+          i++;
+          j += 2;
+          edits++;
+          continue;
+        }
+      }
+      // Parola-funzione saltata, senza rimuovere quella sorgente corrente.
+      if (
+        FUNCTION_WORDS.has(target[j].toLocaleLowerCase('it')) &&
+        j + 1 < target.length &&
+        sa === normalizedWord(target[j + 1])
+      ) {
+        j++;
+        edits++;
+        continue;
+      }
+      // Refuso lessicale: solo se la forma sorgente è ignota, quella nuova è
+      // nota e la distanza è piccola. Una parola già valida non viene riscritta.
+      if (!isNumber(source[i]) && !known(source[i]) && known(target[j])) {
+        const limit = Math.max(2, Math.ceil(Math.max(sa.length, tb.length) * 0.25));
+        if (charDistance(sa, tb) <= limit) {
+          i++;
+          j++;
+          edits++;
+          continue;
+        }
+      }
+      // Duplicato OCR eliminabile soltanto se la stessa parola segue subito.
+      if (i + 1 < source.length && sa === normalizedWord(source[i + 1]) && sa === tb) {
+        i += 2;
+        j++;
+        edits++;
+        continue;
+      }
+    }
+    return false;
+  }
+  return edits <= maxEdits;
 }
 
 /**
  * Chiede al modello (forte, quello delle correzioni) di rileggere un lotto di
- * paragrafi, restituendo per ciascuno il testo corretto. Solo accenti, parole
- * saltate e virgolette: nessun rimaneggiamento del contenuto.
+ * paragrafi, restituendo per ciascuno il testo corretto. Sono ammessi accenti,
+ * parole saltate e piccoli refusi OCR: nessun rimaneggiamento del contenuto.
  * @returns {Promise<Map<number,string>>} indice → testo corretto
  */
 export async function requestProofread({ settings, paragraphs, signal }) {
@@ -104,6 +229,8 @@ export async function requestProofread({ settings, paragraphs, signal }) {
     '2) parole brevi saltate dall’OCR dove resta un vuoto/doppio spazio ' +
     '(spesso la «è»): reinseriscile;\n' +
     '3) caporali «» non bilanciate: chiudile/aprile correttamente.\n' +
+    '4) parole spezzate, fuse o con 1-2 lettere OCR errate: correggile usando ' +
+    'l’intera frase per scegliere la forma e la flessione grammaticalmente corretta.\n' +
     'NON tradurre, NON riassumere, NON riscrivere, NON aggiungere o togliere ' +
     'concetti, NON cambiare parole corrette. Mantieni identici ordine, ' +
     'contenuto e la formattazione Markdown (_corsivo_, ecc.). Se un paragrafo ' +
@@ -147,6 +274,61 @@ export async function requestProofread({ settings, paragraphs, signal }) {
   return map;
 }
 
+/** Rivede una singola correzione già localizzata, senza ricevere il documento. */
+export async function requestCorrectionReview({ settings, before, after, context, signal }) {
+  const user =
+    'Controlla una singola correzione OCR usando il breve contesto fornito. ' +
+    'Devi scegliere fra: original (il testo OCR era già corretto), corrected ' +
+    '(la correzione attuale è migliore), proposal (serve una terza versione ' +
+    'minima). Non parafrasare e non eliminare informazioni. Se proponi una ' +
+    'terza versione, conserva tutte le parole e il significato recuperabili ' +
+    'dall’originale OCR; correggi soltanto refusi, fusioni, separazioni, accenti ' +
+    'o una breve parola-funzione mancante.\n\n' +
+    `CONTESTO OCR:\n${String(context || '').slice(0, 1800)}\n\n` +
+    `ORIGINALE OCR:\n${before}\n\nCORREZIONE ATTUALE:\n${after}\n\n` +
+    'Rispondi SOLO con: {"choice":"original|corrected|proposal",' +
+    '"text":"testo esatto scelto o proposto","explanation":"spiegazione breve"}';
+  let text;
+  if (settings.fixEngine === 'gemini') {
+    text = await geminiGenerate({
+      apiKey: settings.googleApiKey,
+      model: settings.fixModel,
+      system: SYSTEM,
+      user,
+      temperature: 0,
+      maxTokens: 2048,
+      json: true,
+      signal,
+    });
+  } else {
+    text = await nvidiaChat({
+      apiKey: settings.nvidiaApiKey,
+      endpoint: settings.nvidiaEndpoint,
+      model: settings.fixModel,
+      system: SYSTEM,
+      user,
+      temperature: 0,
+      maxTokens: 2048,
+      signal,
+    });
+  }
+  const parsed = extractJson(text);
+  const choice = ['original', 'corrected', 'proposal'].includes(parsed?.choice)
+    ? parsed.choice
+    : 'corrected';
+  const selected = choice === 'original'
+    ? before
+    : choice === 'corrected'
+      ? after
+      : String(parsed?.text || '');
+  if (!selected.trim()) throw new Error('Il controllo AI non ha restituito una proposta utilizzabile.');
+  return {
+    choice,
+    text: selected,
+    explanation: String(parsed?.explanation || '').slice(0, 400),
+  };
+}
+
 /**
  * Rilegge tutto il corpo Typst: individua i paragrafi di prosa pura, li invia
  * a lotti al modello, applica SOLO le correzioni che superano il guard di
@@ -161,8 +343,16 @@ export async function requestProofread({ settings, paragraphs, signal }) {
  * @returns {Promise<{code:string, checked:number, changed:number, skipped:number,
  *   changes:{before:string, after:string}[]}>}
  */
-export async function proofreadBody({ settings, code, batchSize = 12, signal, onProgress }) {
+export async function proofreadBody({ settings, code, batchSize = 12, signal, onProgress, speller = null }) {
   const blocks = splitParagraphs(code);
+  let checker = speller;
+  if (!checker) {
+    try {
+      checker = await loadSpeller();
+    } catch {
+      // Fallback al guard storico (accenti/inserzioni) se i dizionari mancano.
+    }
+  }
   // Indici (nell'array blocks) dei paragrafi di prosa pura, con il loro testo.
   const targets = [];
   for (let b = 0; b < blocks.length; b += 2) {
@@ -189,7 +379,12 @@ export async function proofreadBody({ settings, code, batchSize = 12, signal, on
     batch.forEach((b, k) => {
       const before = blocks[b];
       const after = map.get(k);
-      if (typeof after === 'string' && after.trim() && after !== before && isSafeCorrection(before, after)) {
+      if (
+        typeof after === 'string' &&
+        after.trim() &&
+        after !== before &&
+        isSafeContextualCorrection(before, after, checker)
+      ) {
         blocks[b] = after;
         changed++;
         changes.push({ before, after });

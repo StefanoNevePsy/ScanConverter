@@ -13,6 +13,7 @@ import RestylePanel from './components/RestylePanel.jsx';
 import FigureReviewPanel from './components/FigureReviewPanel.jsx';
 import PagesReviewPanel from './components/PagesReviewPanel.jsx';
 import FidelityPanel from './components/FidelityPanel.jsx';
+import StrictReportPanel from './components/StrictReportPanel.jsx';
 import SpellPanel from './components/SpellPanel.jsx';
 import OcrTextPanel from './components/OcrTextPanel.jsx';
 import SessionsList from './components/SessionsList.jsx';
@@ -23,6 +24,7 @@ import {
   IconFile,
   IconCheck,
   IconX,
+  IconArrowLeft,
 } from './components/Icons.jsx';
 
 export default function App() {
@@ -38,8 +40,16 @@ export default function App() {
 
   // Chiave Google richiesta se Gemini è motore OCR o motore Typst; chiave
   // NVIDIA richiesta se NVIDIA è motore OCR o motore Typst.
-  const needsGoogle = settings.ocrEngine === 'gemini' || settings.typstEngine !== 'nvidia';
-  const needsNvidia = settings.ocrEngine !== 'gemini' || settings.typstEngine === 'nvidia';
+  const needsGoogle =
+    settings.ocrEngine === 'gemini' ||
+    settings.typstEngine !== 'nvidia' ||
+    (settings.formatWorkflow === 'strict' && settings.compareOcr) ||
+    (settings.formatWorkflow === 'strict' && settings.fixTypos && settings.fixEngine === 'gemini');
+  const needsNvidia =
+    settings.ocrEngine !== 'gemini' ||
+    settings.typstEngine === 'nvidia' ||
+    (settings.formatWorkflow === 'strict' && settings.compareOcr) ||
+    (settings.formatWorkflow === 'strict' && settings.fixTypos && settings.fixEngine !== 'gemini');
   const keysReady = Boolean(
     (!needsNvidia || settings.nvidiaApiKey) && (!needsGoogle || settings.googleApiKey),
   );
@@ -79,8 +89,16 @@ export default function App() {
       setSettings(next);
       // Se un file era in attesa delle chiavi, avvia ora la pipeline — ma solo
       // se le chiavi effettivamente richieste dalla nuova configurazione ci sono.
-      const nextNeedsGoogle = next.ocrEngine === 'gemini' || next.typstEngine !== 'nvidia';
-      const nextNeedsNvidia = next.ocrEngine !== 'gemini' || next.typstEngine === 'nvidia';
+      const nextNeedsGoogle =
+        next.ocrEngine === 'gemini' ||
+        next.typstEngine !== 'nvidia' ||
+        (next.formatWorkflow === 'strict' && next.compareOcr) ||
+        (next.formatWorkflow === 'strict' && next.fixTypos && next.fixEngine === 'gemini');
+      const nextNeedsNvidia =
+        next.ocrEngine !== 'gemini' ||
+        next.typstEngine === 'nvidia' ||
+        (next.formatWorkflow === 'strict' && next.compareOcr) ||
+        (next.formatWorkflow === 'strict' && next.fixTypos && next.fixEngine !== 'gemini');
       const nextReady =
         (!nextNeedsNvidia || next.nvidiaApiKey) && (!nextNeedsGoogle || next.googleApiKey);
       if (file && nextReady && pipe.phase === 'idle') {
@@ -99,7 +117,7 @@ export default function App() {
 
   // Live preview con debounce sulle modifiche manuali del codice.
   useEffect(() => {
-    if (!livePreview || !pipe.typstCode.trim()) return;
+    if (!livePreview || pipe.aiFixing || !pipe.typstCode.trim()) return;
     if (pipe.typstCode === lastCompiledRef.current) return;
     const t = setTimeout(async () => {
       const ok = await pipe.recompile(pipe.typstCode);
@@ -183,6 +201,7 @@ export default function App() {
       <TopBar
         keysReady={keysReady}
         onOpenSettings={() => setSettingsOpen(true)}
+        onDashboard={hasWorkspace ? startOver : null}
         status={pipe.status}
         running={pipe.phase === 'running'}
       />
@@ -225,14 +244,24 @@ export default function App() {
 
 /* ---------------------------------------------------------------- Top bar */
 
-function TopBar({ keysReady, onOpenSettings, status, running }) {
+function TopBar({ keysReady, onOpenSettings, onDashboard, status, running }) {
   return (
     <header
       className="safe-top sticky top-0 border-b border-border bg-bg/80 backdrop-blur-md"
       style={{ zIndex: 'var(--z-sticky)' }}
     >
       <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          {onDashboard && (
+            <button
+              onClick={onDashboard}
+              aria-label="Torna alla dashboard"
+              title="Torna alla dashboard"
+              className="grid size-9 shrink-0 place-items-center rounded-lg border border-border bg-surface text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <IconArrowLeft width={18} height={18} />
+            </button>
+          )}
           <span className="grid size-9 place-items-center rounded-xl bg-primary-soft text-lg">
             📜
           </span>
@@ -353,6 +382,22 @@ function Workspace({
   const [styleHint, setStyleHint] = useState(''); // scelte di impaginazione correnti
   const [autofixMsg, setAutofixMsg] = useState(null);
   const [searchReq, setSearchReq] = useState(null); // ricerca pilotata nell'editor
+  const [pdfSearchRevision, setPdfSearchRevision] = useState(null);
+  const pdfSearchRequestRef = useRef(0);
+
+  const handleSearchMatch = useCallback(async (match) => {
+    const requestId = ++pdfSearchRequestRef.current;
+    const ok = await pipe.previewSearchMatch(match);
+    if (requestId !== pdfSearchRequestRef.current) return;
+    if (match && ok) {
+      setPdfSearchRevision(match.id);
+    } else {
+      // Se la selezione era sintassi Typst (non testo visibile), ripristina
+      // l'anteprima normale invece di lasciare evidenziata l'occorrenza prima.
+      if (match) await pipe.previewSearchMatch(null);
+      if (requestId === pdfSearchRequestRef.current) setPdfSearchRevision(null);
+    }
+  }, [pipe.previewSearchMatch]);
 
   const handleAutofix = useCallback(async () => {
     const { changes } = await pipe.autofix();
@@ -392,9 +437,9 @@ function Workspace({
   }, [pipe]);
 
   // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
-  const locateWord = useCallback((word) => {
+  const locateWord = useCallback((suspect) => {
     setMobileTab('code');
-    setSearchReq({ query: word, id: Date.now() });
+    setSearchReq({ query: suspect.word, wholeWord: true, id: Date.now() });
   }, []);
 
   return (
@@ -484,6 +529,13 @@ function Workspace({
       )}
 
       <FidelityPanel warnings={pipe.fidelityWarnings} />
+      <StrictReportPanel
+        report={pipe.strictReport}
+        correctionBusy={pipe.strictCorrectionBusy}
+        onReviewCorrection={pipe.reviewStrictCorrection}
+        issueBusy={pipe.strictIssueBusy}
+        onReviewIssue={pipe.reviewStrictIssue}
+      />
 
       {pipe.spellReport && (
         <SpellPanel
@@ -500,11 +552,12 @@ function Workspace({
 
       {pipe.rawText && !pipe.figureReview && (
         <RestylePanel
-          onRestyle={(hint) => pipe.restyle(hint)}
+          onRestyle={pipe.strictReport ? null : (hint) => pipe.restyle(hint)}
           onApplyLocal={(sel) => pipe.applyLocalStyle(sel)}
           onHintChange={setStyleHint}
           busy={pipe.phase === 'running'}
           disabled={pipe.phase === 'running'}
+          strict={!!pipe.strictReport}
         />
       )}
 
@@ -523,8 +576,9 @@ function Workspace({
       </div>
 
       {/* Doppia colonna: editor Typst | anteprima PDF.
-          Su mobile una scheda alla volta, a tutta altezza. */}
-      <div className="flex min-h-[60vh] flex-1 flex-col gap-4 lg:grid lg:min-h-[520px] lg:grid-cols-2">
+          Su mobile una scheda alla volta. L'altezza segue la viewport ma è
+          limitata: editor e PDF scorrono internamente invece di allungare la pagina. */}
+      <div className="flex h-[clamp(380px,70dvh,800px)] min-h-0 flex-none flex-col gap-4 lg:grid lg:grid-cols-2">
         <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'code' ? 'flex' : 'hidden'} lg:flex`}>
           {autofixMsg && (
             <div className="mb-2 rounded-lg border border-primary/40 bg-primary-soft px-3 py-2 text-xs text-ink">
@@ -559,6 +613,7 @@ function Workspace({
             proofreadBusy={pipe.proofreadBusy}
             proofreadDetail={pipe.proofreadDetail}
             searchRequest={searchReq}
+            onSearchMatch={handleSearchMatch}
             compiling={pipe.compiling}
             error={pipe.compileError}
             disabled={pipe.phase === 'running' && !pipe.typstCode}
@@ -572,6 +627,7 @@ function Workspace({
             compiling={pipe.compiling || pipe.status.compile === 'active'}
             downloading={pipe.downloading}
             onDownload={onDownload}
+            searchRevision={pdfSearchRevision}
           />
         </div>
       </div>

@@ -197,6 +197,10 @@ export async function toTypst({ apiKey, model, rawText, styleHint, continuation,
     ? parts.map((p) => p?.text || '').join('')
     : '';
 
+  if (finish === 'MAX_TOKENS') {
+    throw new Error('Gemini ha interrotto il codice per limite di token. Riduci la dimensione dei chunk e riprendi.');
+  }
+
   if (!text.trim()) {
     const block = data?.promptFeedback?.blockReason;
     throw new Error(
@@ -268,9 +272,12 @@ export async function geminiGenerate({ apiKey, model, system, user, temperature 
   const data = await res.json();
   const parts = data?.candidates?.[0]?.content?.parts;
   const text = Array.isArray(parts) ? parts.map((p) => p?.text || '').join('') : '';
+  const finish = data?.candidates?.[0]?.finishReason;
+  if (finish === 'MAX_TOKENS') {
+    throw new Error('Gemini ha interrotto la risposta per limite di token.');
+  }
   if (!text.trim()) {
     const block = data?.promptFeedback?.blockReason;
-    const finish = data?.candidates?.[0]?.finishReason;
     throw new Error(
       block
         ? `Richiesta bloccata da Gemini (${block}).`
@@ -284,14 +291,20 @@ export async function geminiGenerate({ apiKey, model, system, user, temperature 
 const OCR_PROMPT =
   'Sei un sistema OCR di alta precisione. Trascrivi INTEGRALMENTE e alla ' +
   'lettera tutto il testo presente in questa pagina (scansione o foto), ' +
-  'nell’ordine di lettura corretto (se ci sono due colonne, prima tutta la ' +
-  'colonna di sinistra, poi quella di destra). Usa Markdown: "#"/"##"/"###" ' +
-  'per i titoli secondo la gerarchia, una riga vuota tra i paragrafi, ' +
+  'nell’ordine di lettura corretto (con due o tre colonne, completa ciascuna ' +
+  'colonna dall’alto in basso prima di passare alla successiva). Usa Markdown: ' +
+  '"#"/"##"/"###" per i VERI titoli secondo dimensione, numerazione e ' +
+  'gerarchia (documento/parte, capitolo, sezione, sottosezione); non trasformare ' +
+  'mai una testatina in titolo. Mantieni una riga vuota tra i paragrafi, ' +
   '_corsivo_ dove il testo è in corsivo, e le note a piè di pagina come testo ' +
-  'in fondo. NON tradurre, NON riassumere, NON correggere gli errori del ' +
+  'in fondo, racchiudendo ciascuna nota in `<footnote>testo della nota</footnote>` ' +
+  'senza inserirla come paragrafo del corpo. NON tradurre, NON riassumere, NON correggere gli errori del ' +
   'testo, NON aggiungere commenti o spiegazioni tue. Se una parola è ' +
-  'illeggibile trascrivila come meglio puoi. Ignora l’arredo di pagina ' +
-  '(numeri di pagina, testatine ripetute). Restituisci SOLO la trascrizione.';
+  'illeggibile trascrivila come meglio puoi. Se una parola è tagliata dal bordo ' +
+  'pagina, trascrivi soltanto il frammento realmente visibile e il suo eventuale ' +
+  'trattino: non completarla inventando lettere. Ignora SEMPRE l’arredo di pagina ' +
+  '(numeri di pagina in alto o in basso, testatine, titoli correnti ripetuti, ' +
+  'cornici). Restituisci SOLO la trascrizione.';
 
 /**
  * OCR di UNA pagina con Gemini (multimodale): invia l'immagine e riceve il

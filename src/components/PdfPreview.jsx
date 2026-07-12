@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { IconDownload, IconSpinner, IconFile, IconShare } from './Icons.jsx';
 import { isNativeApp } from '../lib/download.js';
+import { SEARCH_HIGHLIGHT_COLOR } from '../lib/searchPreview.js';
 
 /**
  * Anteprima a colonna destra. Renderizza l'SVG vettoriale prodotto da Typst
@@ -9,8 +10,9 @@ import { isNativeApp } from '../lib/download.js';
  * nativa "Salva" apre il dialogo di sistema con scelta di cartella e nome,
  * "Condividi" il foglio di condivisione.
  */
-export default function PdfPreview({ svg, compiling, downloading, onDownload }) {
+export default function PdfPreview({ svg, compiling, downloading, onDownload, searchRevision }) {
   const native = isNativeApp();
+  const paperRef = useRef(null);
   // Rende l'SVG responsivo: larghezza 100%, altezza automatica.
   const html = useMemo(() => {
     if (!svg) return '';
@@ -19,6 +21,24 @@ export default function PdfPreview({ svg, compiling, downloading, onDownload }) 
       '<svg style="width:100%;height:auto;display:block" ',
     );
   }, [svg]);
+
+  // L'evidenziazione Typst diventa un rettangolo colorato nell'SVG. Lo trova
+  // e centra automaticamente dentro il pannello PDF, anche per documenti
+  // multipagina molto lunghi.
+  useEffect(() => {
+    if (!searchRevision || !paperRef.current) return;
+    const hex = SEARCH_HIGHLIGHT_COLOR.toLowerCase();
+    const rgb = 'rgb(255, 222, 89)';
+    const target = [...paperRef.current.querySelectorAll('[fill], [style]')].find((node) => {
+      const paint = `${node.getAttribute('fill') || ''} ${node.getAttribute('style') || ''}`.toLowerCase();
+      return paint.includes(hex) || paint.includes(rgb);
+    });
+    if (!target) return;
+    target.style.filter = 'drop-shadow(0 0 2px rgba(180, 110, 0, .9))';
+    requestAnimationFrame(() => {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    });
+  }, [svg, searchRevision]);
 
   return (
     <section className="card flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -58,6 +78,7 @@ export default function PdfPreview({ svg, compiling, downloading, onDownload }) 
           // trasparente e in tema scuro il testo nero sparirebbe.
           <div className="mx-auto max-w-3xl p-3">
             <div
+              ref={paperRef}
               className="overflow-hidden rounded-lg bg-white shadow-lg [&_svg]:h-auto [&_svg]:w-full"
               // eslint-disable-next-line react/no-danger
               dangerouslySetInnerHTML={{ __html: html }}

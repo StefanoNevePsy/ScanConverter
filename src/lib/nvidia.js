@@ -176,6 +176,10 @@ export async function nvidiaChat({ apiKey, endpoint, model, system, user, temper
   }
 
   const data = await res.json();
+  const finishReason = data?.choices?.[0]?.finish_reason;
+  if (finishReason === 'length') {
+    throw new Error('Il modello NVIDIA ha interrotto la risposta per limite di token.');
+  }
   const msg = data?.choices?.[0]?.message;
   // Alcuni modelli "reasoning" antepongono il ragionamento: usiamo solo content.
   let text = typeof msg?.content === 'string' ? msg.content : '';
@@ -183,8 +187,7 @@ export async function nvidiaChat({ apiKey, endpoint, model, system, user, temper
     text = msg.content.map((p) => (typeof p === 'string' ? p : p?.text || '')).join('');
   }
   if (!text.trim()) {
-    const reason = data?.choices?.[0]?.finish_reason;
-    throw new Error(`Il modello NVIDIA non ha restituito testo (finish_reason: ${reason || 'n/d'}).`);
+    throw new Error(`Il modello NVIDIA non ha restituito testo (finish_reason: ${finishReason || 'n/d'}).`);
   }
   return stripReasoning(text);
 }

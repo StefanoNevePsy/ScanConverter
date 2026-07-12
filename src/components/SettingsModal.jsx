@@ -147,6 +147,30 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             onToggle={() => setShowNvidia((v) => !v)}
             autoComplete="off"
           />
+
+          <div>
+            <span className="mb-1.5 block text-sm font-medium text-ink">
+              Workflow di formattazione
+            </span>
+            <span className="mb-2 block text-xs text-faint">
+              Il workflow ad alta fedeltà conserva il testo OCR come fonte
+              canonica e genera il layout senza farlo riscrivere al modello.
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <EngineButton
+                active={form.formatWorkflow !== 'strict'}
+                onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'legacy' }))}
+                title="Attuale"
+                sub="layout generato dal modello"
+              />
+              <EngineButton
+                active={form.formatWorkflow === 'strict'}
+                onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'strict' }))}
+                title="Fedeltà massima"
+                sub="testo immutabile e verificato"
+              />
+            </div>
+          </div>
           <Field
             label="GOOGLE_API_KEY"
             hint="Per la conversione del testo in codice Typst con Gemini."
@@ -183,12 +207,44 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
               />
             </div>
             {form.ocrEngine === 'gemini' && (
-              <span className="mt-2 block text-xs text-faint">
-                Gemini legge l’immagine intera: più tollerante con scansioni di
-                bassa qualità e usabile da web, ma non separa figure/tabelle
-                (nessuna revisione delle figure). Usa il «Modello Gemini» qui
-                sotto.
-              </span>
+              <div className="mt-3">
+                <ModelSelect
+                  label="Modello Gemini per OCR"
+                  hint="Legge l’immagine intera; non separa le figure per la revisione."
+                  value={form.geminiOcrModel}
+                  onChange={update('geminiOcrModel')}
+                  options={gemini.list}
+                  loading={gemini.loading}
+                  error={gemini.error}
+                  onRefresh={() => fetchGemini(form.googleApiKey)}
+                  placeholder={DEFAULTS.geminiOcrModel}
+                  listId="dl-gemini-ocr"
+                />
+              </div>
+            )}
+            {form.formatWorkflow === 'strict' && (
+              <div className="mt-3">
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={!!form.compareOcr}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, compareOcr: e.target.checked }))
+                    }
+                    className="mt-0.5 accent-primary"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-ink">
+                      Confronta con un secondo OCR
+                    </span>
+                    <span className="block text-xs text-faint">
+                      Esegue anche l’altro motore (Gemini/NVIDIA) sulla stessa
+                      pagina e segnala le divergenze. Richiede entrambe le chiavi
+                      e raddoppia il costo OCR.
+                    </span>
+                  </span>
+                </label>
+              </div>
             )}
           </div>
 
@@ -217,9 +273,17 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
           </div>
 
           {/* Modello del motore attivo, con elenco auto-aggiornante. */}
+          {form.formatWorkflow === 'strict' && (
+            <div className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-muted">
+              Nel workflow «Fedeltà massima» questo modello sceglie soltanto
+              il piano editoriale (font, margini, densità e stili dei blocchi).
+              Il testo e il codice Typst sono prodotti localmente e non possono
+              essere riscritti dal modello.
+            </div>
+          )}
           {engineNvidia ? (
             <ModelSelect
-              label="Modello NVIDIA per il Typst"
+              label={form.formatWorkflow === 'strict' ? 'Modello NVIDIA per il piano editoriale' : 'Modello NVIDIA per il Typst'}
               hint="Consigliato un modello istruct generico (es. llama-3.3-70b-instruct)."
               value={form.nvidiaTypstModel}
               onChange={update('nvidiaTypstModel')}
@@ -232,16 +296,16 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             />
           ) : (
             <ModelSelect
-              label="Modello Gemini"
+              label={form.formatWorkflow === 'strict' ? 'Modello Gemini per il piano editoriale' : 'Modello Gemini per il Typst'}
               hint="L'elenco si aggiorna dalla tua chiave Google."
-              value={form.geminiModel}
-              onChange={update('geminiModel')}
+              value={form.geminiTypstModel}
+              onChange={update('geminiTypstModel')}
               options={gemini.list}
               loading={gemini.loading}
               error={gemini.error}
               onRefresh={() => fetchGemini(form.googleApiKey)}
-              placeholder={DEFAULTS.geminiModel}
-              listId="dl-gemini"
+              placeholder={DEFAULTS.geminiTypstModel}
+              listId="dl-gemini-typst"
             />
           )}
 
@@ -301,13 +365,13 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
               {engineNvidia ? (
                 <ModelSelect
                   label="Modello Gemini (riserva)"
-                  value={form.geminiModel}
-                  onChange={update('geminiModel')}
+                  value={form.geminiTypstModel}
+                  onChange={update('geminiTypstModel')}
                   options={gemini.list}
                   loading={gemini.loading}
                   error={gemini.error}
                   onRefresh={() => fetchGemini(form.googleApiKey)}
-                  placeholder={DEFAULTS.geminiModel}
+                  placeholder={DEFAULTS.geminiTypstModel}
                   listId="dl-gemini-adv"
                 />
               ) : (
@@ -456,13 +520,14 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
   );
 }
 
-function EngineButton({ active, onClick, title, sub }) {
+function EngineButton({ active, onClick, title, sub, disabled = false }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-pressed={active}
-      className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+      className={`rounded-lg border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed ${
         active
           ? 'border-primary bg-primary-soft text-ink'
           : 'border-border bg-surface-2 text-muted hover:text-ink'

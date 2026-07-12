@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand, IconSpell, IconText } from './Icons.jsx';
 import CopyButton from './CopyButton.jsx';
-
-// Altezza riga dell'editor (leading-6): serve per centrare i risultati.
-const LINE_H = 24;
+import { findEditorMatches, scrollTextareaOffsetIntoView } from '../lib/editorScroll.js';
 
 /**
  * Editor a colonna sinistra: codice Typst generato e modificabile dall'utente,
@@ -23,6 +21,7 @@ export default function TypstEditor({
   proofreadBusy,
   proofreadDetail,
   searchRequest,
+  onSearchMatch,
   compiling,
   error,
   disabled,
@@ -31,11 +30,13 @@ export default function TypstEditor({
   const gutterRef = useRef(null);
   const searchRef = useRef(null);
   const pendingJumpRef = useRef(false);
+  const activeMatchRef = useRef(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [replaceStr, setReplaceStr] = useState('');
   const [current, setCurrent] = useState(0);
+  const [wholeWord, setWholeWord] = useState(false);
 
   const lineCount = useMemo(
     () => Math.max(value.split('\n').length, 1),
@@ -44,17 +45,8 @@ export default function TypstEditor({
 
   // Posizioni (indici) delle occorrenze, case-insensitive.
   const matches = useMemo(() => {
-    if (!query) return [];
-    const hay = value.toLowerCase();
-    const needle = query.toLowerCase();
-    const out = [];
-    let i = 0;
-    while ((i = hay.indexOf(needle, i)) !== -1 && out.length < 5000) {
-      out.push(i);
-      i += needle.length || 1;
-    }
-    return out;
-  }, [value, query]);
+    return findEditorMatches(value, query, wholeWord);
+  }, [value, query, wholeWord]);
 
   useEffect(() => {
     if (current >= matches.length) setCurrent(0);
@@ -66,6 +58,7 @@ export default function TypstEditor({
   useEffect(() => {
     if (!searchRequest?.query) return;
     setQuery(searchRequest.query);
+    setWholeWord(searchRequest.wholeWord === true);
     setSearchOpen(true);
     pendingJumpRef.current = true;
   }, [searchRequest]);
@@ -80,15 +73,29 @@ export default function TypstEditor({
   const goto = (k) => {
     if (!matches.length) return;
     const n = ((k % matches.length) + matches.length) % matches.length;
+    activeMatchRef.current = true;
     setCurrent(n);
     const ta = taRef.current;
     if (!ta) return;
     const pos = matches[n];
-    ta.focus();
-    ta.setSelectionRange(pos, pos + query.length);
-    const line = value.slice(0, pos).split('\n').length;
-    ta.scrollTop = Math.max(0, (line - 1) * LINE_H - ta.clientHeight / 2);
-    syncScroll();
+    // Applica la selezione dopo il render causato da setCurrent: sui WebView
+    // React può altrimenti ripristinare il cursore e rendere invisibile il
+    // risultato appena trovato.
+    requestAnimationFrame(() => {
+      const editor = taRef.current;
+      if (!editor) return;
+      editor.focus({ preventScroll: true });
+      editor.setSelectionRange(pos, pos + query.length, 'forward');
+      scrollTextareaOffsetIntoView(editor, value, pos);
+      syncScroll();
+    });
+    onSearchMatch?.({
+      query,
+      start: pos,
+      end: pos + query.length,
+      occurrence: n,
+      id: `${Date.now()}-${n}`,
+    });
   };
 
   // Salto al primo risultato di una ricerca esterna (dopo il ricalcolo).
@@ -96,6 +103,9 @@ export default function TypstEditor({
     if (pendingJumpRef.current && matches.length) {
       pendingJumpRef.current = false;
       goto(0);
+    } else if (pendingJumpRef.current && query && !matches.length) {
+      pendingJumpRef.current = false;
+      onSearchMatch?.(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches]);
@@ -103,12 +113,14 @@ export default function TypstEditor({
   const replaceCurrent = () => {
     if (!matches.length) return;
     const pos = matches[current];
+    pendingJumpRef.current = true;
     onChange(value.slice(0, pos) + replaceStr + value.slice(pos + query.length));
   };
 
   const replaceAll = () => {
     if (!query || !matches.length) return;
     const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    pendingJumpRef.current = true;
     onChange(value.replace(re, () => replaceStr));
   };
 
@@ -118,6 +130,9 @@ export default function TypstEditor({
   };
   const closeSearch = () => {
     setSearchOpen(false);
+    setWholeWord(false);
+    activeMatchRef.current = false;
+    onSearchMatch?.(null);
     taRef.current?.focus();
   };
 
@@ -131,7 +146,7 @@ export default function TypstEditor({
   const onSearchKeyDown = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      goto(current + (e.shiftKey ? -1 : 1));
+      goto(activeMatchRef.current ? current + (e.shiftKey ? -1 : 1) : e.shiftKey ? -1 : 0);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       closeSearch();
@@ -162,7 +177,7 @@ export default function TypstEditor({
             <button
               onClick={onProofread}
               disabled={!value.trim() || proofreadBusy}
-              title="Rilettura AI (italiano): ripristina accenti «è/e», parole saltate e virgolette"
+              title="Rilettura AI: corregge refusi OCR nel contesto, parole spezzate o fuse, accenti e virgolette"
               aria-label="Rilettura AI"
               className="inline-flex items-center gap-1 rounded-lg bg-surface-2 px-2 py-1.5 text-ink transition-colors hover:bg-surface-3 disabled:opacity-50"
             >
@@ -210,7 +225,16 @@ export default function TypstEditor({
             <input
               ref={searchRef}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                // Lascia il focus nel campo mentre si digita. Il salto parte
+                // con Invio (o con le frecce), come nei normali strumenti di
+                // ricerca; se c'era un risultato attivo ripristina il PDF.
+                if (activeMatchRef.current) onSearchMatch?.(null);
+                activeMatchRef.current = false;
+                setCurrent(0);
+                setWholeWord(false);
+                setQuery(e.target.value);
+              }}
               onKeyDown={onSearchKeyDown}
               placeholder="Cerca…"
               className="w-full min-w-24 flex-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-ink placeholder:text-faint focus:border-primary focus:outline-none"
@@ -219,7 +243,7 @@ export default function TypstEditor({
               {matches.length ? `${current + 1}/${matches.length}` : query ? '0' : ''}
             </span>
             <button
-              onClick={() => goto(current - 1)}
+              onClick={() => goto(activeMatchRef.current ? current - 1 : -1)}
               disabled={!matches.length}
               aria-label="Occorrenza precedente"
               className="rounded-md bg-surface-2 px-2 py-1 text-xs text-ink hover:bg-surface-3 disabled:opacity-40"
@@ -227,7 +251,7 @@ export default function TypstEditor({
               ↑
             </button>
             <button
-              onClick={() => goto(current + 1)}
+              onClick={() => goto(activeMatchRef.current ? current + 1 : 0)}
               disabled={!matches.length}
               aria-label="Occorrenza successiva"
               className="rounded-md bg-surface-2 px-2 py-1 text-xs text-ink hover:bg-surface-3 disabled:opacity-40"
@@ -294,7 +318,7 @@ export default function TypstEditor({
           spellCheck={false}
           disabled={disabled}
           placeholder={disabled ? '' : 'Il codice Typst apparirà qui dopo l’elaborazione…'}
-          className="min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-[13px] leading-6 text-ink caret-primary placeholder:text-faint focus:outline-none"
+          className="typst-editor min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-[13px] leading-6 text-ink caret-primary placeholder:text-faint focus:outline-none"
         />
       </div>
 

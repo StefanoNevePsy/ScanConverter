@@ -1,0 +1,57 @@
+name: Build app Android
+
+# Compila un APK Android installabile usando la webapp Vite e il contenitore
+# nativo Capacitor. Avvio manuale dalla tab "Actions" oppure creando un tag
+# di versione (es. git tag v0.1.0 && git push --tags). L'APK compare tra gli
+# artifact del run e non richiede certificati o segreti di firma.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # Electron non serve alla build Android: evita un download pesante.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+      - name: Build webapp and sync Capacitor plugins
+        run: npm run build:android
+
+      - name: Build installable debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanconverter-android-apk
+          if-no-files-found: error
+          path: android/app/build/outputs/apk/debug/app-debug.apk

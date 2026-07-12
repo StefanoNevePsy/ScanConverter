@@ -21,15 +21,29 @@
  */
 export function normalizeHeadingLevels(md) {
   const re = /^(#{1,6})\s+/;
+  // La numerazione esplicita è un segnale più affidabile del numero di #
+  // prodotto dall'OCR: 2 → livello 1, 2.3 → livello 2, 2.3.1 → livello 3.
+  const numbered = md
+    .split('\n')
+    .map((line) => {
+      const m = line.match(re);
+      if (!m) return line;
+      const title = line.slice(m[0].length);
+      const n = title.match(/^\s*(\d+(?:\.\d+){0,5})[.)]?\s+/);
+      if (!n) return line;
+      const depth = Math.min(6, n[1].split('.').length);
+      return '#'.repeat(depth) + ' ' + title;
+    })
+    .join('\n');
   const depths = new Set();
-  for (const line of md.split('\n')) {
+  for (const line of numbered.split('\n')) {
     const m = line.match(re);
     if (m) depths.add(m[1].length);
   }
-  if (depths.size === 0) return md;
+  if (depths.size === 0) return numbered;
   const sorted = [...depths].sort((a, b) => a - b);
   const map = new Map(sorted.map((d, i) => [d, i + 1]));
-  return md
+  return numbered
     .split('\n')
     .map((line) => {
       const m = line.match(re);

@@ -5,8 +5,9 @@
   compilatore + il codice vengono dati a un modello forte (di default
   GLM-5.2 via NVIDIA, configurabile: DeepSeek, Gemini, ecc.) che risponde con
   una lista di sostituzioni minime {find, replace} in JSON. Le sostituzioni
-  vengono applicate testualmente — MAI l'intero documento riscritto — così il
-  contenuto resta intatto e la modifica è verificabile.
+  vengono applicate testualmente — con corrispondenza esatta o, solo se
+  univoca, tollerante alla spaziatura — MAI l'intero documento riscritto.
+  Così il contenuto resta intatto e la modifica è verificabile.
 */
 
 import { nvidiaChat } from './nvidia.js';
@@ -19,7 +20,25 @@ export const FIX_SYSTEM =
   'valido, senza alcun altro testo.';
 
 /** Costruisce il messaggio utente con errore + codice (+ posizione, se nota). */
+export function focusCodeForRepair(code, hint, maxChars = 30000) {
+  const source = String(code || '');
+  if (source.length <= maxChars || !hint?.line) return source;
+  const lines = source.split('\n');
+  const target = Math.max(0, Math.min(lines.length - 1, hint.line - 1));
+  let start = target;
+  let end = target;
+  let size = lines[target].length;
+  while (size < maxChars && (start > 0 || end + 1 < lines.length)) {
+    if (start > 0) size += lines[--start].length + 1;
+    if (size >= maxChars) break;
+    if (end + 1 < lines.length) size += lines[++end].length + 1;
+  }
+  return lines.slice(start, end + 1).join('\n');
+}
+
 export function buildFixUser(code, error, hint) {
+  const focusedCode = focusCodeForRepair(code, hint);
+  const excerpted = focusedCode.length < String(code || '').length;
   return (
     'Questo codice Typst NON compila.\n\n' +
     `ERRORE DEL COMPILATORE:\n${error}\n\n` +
@@ -30,8 +49,11 @@ export function buildFixUser(code, error, hint) {
         'correzione lì (l’errore può però nascere poco prima, es. un ' +
         'delimitatore aperto nel blocco precedente).\n\n'
       : '') +
-    'CODICE COMPLETO:\n```typst\n' +
-    code +
+    (excerpted
+      ? 'ESTRATTO DEL CODICE ATTORNO ALL’ERRORE (il resto è omesso perché il documento è molto lungo):\n'
+      : 'CODICE COMPLETO:\n') +
+    '```typst\n' +
+    focusedCode +
     '\n```\n\n' +
     'Individua la causa (es. delimitatori non chiusi, parentesi sbilanciate, ' +
     'sintassi LaTeX residua, funzioni inesistenti) e proponi correzioni ' +
@@ -43,6 +65,19 @@ export function buildFixUser(code, error, hint) {
     'codice; non riscrivere l’intero documento; non riassumere né eliminare ' +
     'testo del contenuto.'
   );
+}
+
+function whitespaceFlexibleMatch(source, find) {
+  const pieces = find.trim().split(/\s+/).filter(Boolean);
+  if (pieces.length < 2) return null;
+  const escaped = pieces.map((piece) => piece.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp(escaped.join('\\s+'), 'gu');
+  const matches = [...source.matchAll(re)];
+  // Mai scegliere arbitrariamente fra più occorrenze: la patch deve restare
+  // puntiforme e verificabile.
+  return matches.length === 1
+    ? { index: matches[0].index, length: matches[0][0].length }
+    : null;
 }
 
 /**
@@ -76,7 +111,8 @@ export function extractJson(text) {
 }
 
 /**
- * Applica le sostituzioni testuali (prima occorrenza esatta di `find`).
+ * Applica le sostituzioni testuali: prima corrispondenza esatta; altrimenti
+ * accetta differenze nella sola spaziatura esclusivamente se l'esito è unico.
  * @param {string} code
  * @param {{find:string,replace:string}[]} fixes
  * @returns {{code:string, applied:{find:string,replace:string}[], failed:{find:string}[]}}
@@ -87,12 +123,22 @@ export function applyFixes(code, fixes) {
   const failed = [];
   for (const f of fixes || []) {
     if (!f || typeof f.find !== 'string' || typeof f.replace !== 'string' || !f.find) continue;
-    const idx = s.indexOf(f.find);
-    if (idx === -1) {
+    if (f.find === f.replace) {
       failed.push({ find: f.find });
       continue;
     }
-    s = s.slice(0, idx) + f.replace + s.slice(idx + f.find.length);
+    let idx = s.indexOf(f.find);
+    let length = f.find.length;
+    if (idx === -1) {
+      const flexible = whitespaceFlexibleMatch(s, f.find);
+      if (!flexible) {
+        failed.push({ find: f.find });
+        continue;
+      }
+      idx = flexible.index;
+      length = flexible.length;
+    }
+    s = s.slice(0, idx) + f.replace + s.slice(idx + length);
     applied.push(f);
   }
   return { code: s, applied, failed };
@@ -131,7 +177,7 @@ async function requestOnce({ settings, code, error, hint, signal }) {
   if (engine === 'gemini') {
     text = await geminiGenerate({
       apiKey: settings.googleApiKey,
-      model: settings.fixModel || settings.geminiModel,
+      model: settings.fixModel || settings.geminiTypstModel,
       system: FIX_SYSTEM,
       user,
       temperature: 0.1,

@@ -92,6 +92,12 @@ export const IconX = (p) => (
   </svg>
 );
 
+export const IconArrowLeft = (p) => (
+  <svg {...base} {...p}>
+    <path d="M19 12H5M12 19l-7-7 7-7" />
+  </svg>
+);
+
 export const IconAlert = (p) => (
   <svg {...base} {...p}>
     <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
