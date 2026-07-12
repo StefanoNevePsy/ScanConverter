@@ -17,7 +17,7 @@ import {
   enforceHeadingLevels,
 } from '../lib/session.js';
 import { buildPreamble, extractTitle } from '../lib/preamble.js';
-import { autofixTypst } from '../lib/typstfix.js';
+import { autofixTypst, delimiterRepairCandidates } from '../lib/typstfix.js';
 import { checkFidelity, fidelityNoteFrom } from '../lib/fidelity.js';
 import { requestTypstFix, applyFixes, describeFix } from '../lib/aifix.js';
 import {
@@ -1133,14 +1133,72 @@ export function usePipeline(settings) {
    */
   const autofix = useCallback(async () => {
     if (!typstCode.trim()) return { changes: [] };
-    const { fixed, changes } = autofixTypst(typstCode);
-    if (changes.length) {
-      setTypstCode(fixed);
-      await recompile(fixed);
-    } else {
-      await recompile(typstCode);
+    setCompiling(true);
+    try {
+    const deterministic = autofixTypst(typstCode);
+    let code = deterministic.fixed;
+    const changes = [...deterministic.changes];
+    let finalSvg = null;
+
+    // Fino a quattro errori locali consecutivi. Ogni modifica resta solo in
+    // memoria finché l'intero documento non compila: in caso di insuccesso
+    // l'editor conserva esattamente il sorgente dell'utente.
+    for (let round = 0; round < 4; round++) {
+      try {
+        finalSvg = await compileToSvg(code, figuresRef.current);
+        break;
+      } catch (compileFailure) {
+        const message = compileFailure.message || String(compileFailure);
+        if (!/unclosed|delimiter|unterminated|expected\s+.*[\])}]/i.test(message)) break;
+        const location = await locateTypstError(code, figuresRef.current);
+        const candidates = delimiterRepairCandidates(code, location?.line || 1);
+        let progressed = null;
+        for (const candidate of candidates) {
+          try {
+            const svg = await compileToSvg(candidate.fixed, figuresRef.current);
+            progressed = { ...candidate, svg };
+            break;
+          } catch (candidateFailure) {
+            // Se l'errore si è spostato in avanti, questa riparazione ha
+            // risolto il blocco corrente: conservala provvisoriamente e passa
+            // al successivo. Nulla viene salvato finché non compila tutto.
+            const nextLocation = await locateTypstError(candidate.fixed, figuresRef.current);
+            if (location && nextLocation?.line > location.line) {
+              progressed = { ...candidate, svg: null };
+              break;
+            }
+            const nextMessage = candidateFailure.message || String(candidateFailure);
+            if (/unclosed|delimiter|unterminated/i.test(message) && !/unclosed|delimiter|unterminated/i.test(nextMessage)) {
+              progressed = { ...candidate, svg: null };
+              break;
+            }
+          }
+        }
+        if (!progressed) break;
+        code = progressed.fixed;
+        changes.push(progressed.description);
+        if (progressed.svg) {
+          finalSvg = progressed.svg;
+          break;
+        }
+      }
     }
-    return { changes };
+
+    if (finalSvg) {
+      setTypstCode(code);
+      setPreviewSvg(finalSvg);
+      setCompileError(null);
+      return { changes, ok: true };
+    }
+    // Mostra nuovamente l'errore arricchito, senza applicare tentativi non
+    // verificati. Le sostituzioni statiche precedenti mantengono il vecchio
+    // comportamento soltanto se erano effettivamente presenti.
+    if (deterministic.changes.length) setTypstCode(deterministic.fixed);
+    await recompile(deterministic.fixed);
+    return { changes: deterministic.changes, ok: false };
+    } finally {
+      setCompiling(false);
+    }
   }, [typstCode, recompile]);
 
   /**

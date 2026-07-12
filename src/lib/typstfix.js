@@ -250,6 +250,121 @@ const FONT_MAP = {
   Courier: 'DejaVu Sans Mono',
 };
 
+function blockRangeAtLine(source, line = 1) {
+  const lines = String(source || '').split('\n');
+  const target = Math.max(0, Math.min(lines.length - 1, Number(line || 1) - 1));
+  let first = target;
+  let last = target;
+  while (first > 0 && lines[first - 1].trim()) first--;
+  while (last + 1 < lines.length && lines[last + 1].trim()) last++;
+  let start = 0;
+  for (let i = 0; i < first; i++) start += lines[i].length + 1;
+  let end = start;
+  for (let i = first; i <= last; i++) end += lines[i].length + (i < last ? 1 : 0);
+  return { start, end, text: String(source || '').slice(start, end) };
+}
+
+/** Delimitatori strutturali realmente sbilanciati nell'intero documento. */
+function scanStructuralDelimiters(source) {
+  const pairs = { '(': ')', '[': ']', '{': '}' };
+  const closing = new Set(Object.values(pairs));
+  const stack = [];
+  const stray = [];
+  let quote = false;
+  let raw = false;
+  let lineComment = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    const prev = source[i - 1];
+    if (ch === '\n') {
+      lineComment = false;
+      continue;
+    }
+    if (lineComment) continue;
+    if (!quote && !raw && ch === '/' && source[i + 1] === '/') {
+      lineComment = true;
+      i++;
+      continue;
+    }
+    if (prev !== '\\' && ch === '`') {
+      raw = !raw;
+      continue;
+    }
+    if (raw) continue;
+    if (prev !== '\\' && ch === '"') {
+      quote = !quote;
+      continue;
+    }
+    if (quote || prev === '\\') continue;
+    if (pairs[ch]) {
+      stack.push({ ch, index: i });
+    } else if (closing.has(ch)) {
+      const expectedOpen = Object.keys(pairs).find((open) => pairs[open] === ch);
+      if (stack.at(-1)?.ch === expectedOpen) stack.pop();
+      else stray.push({ ch, index: i });
+    }
+  }
+  return { open: stack, stray, pairs };
+}
+
+/**
+ * Genera riparazioni MINIME per un errore di delimitatore vicino a `line`.
+ * Non decide quale applicare: il chiamante deve provarle col compilatore e
+ * accettare soltanto quella che rende valido il documento.
+ */
+export function delimiterRepairCandidates(source, line = 1, maxCandidates = 24) {
+  const s = String(source || '');
+  const range = blockRangeAtLine(s, line);
+  const candidates = [];
+  const seen = new Set([s]);
+  const add = (fixed, description) => {
+    if (!fixed || seen.has(fixed) || candidates.length >= maxCandidates) return;
+    seen.add(fixed);
+    candidates.push({ fixed, description });
+  };
+
+  const structural = scanStructuralDelimiters(s);
+  const localOpen = structural.open.filter((item) => item.index >= range.start && item.index <= range.end);
+  if (localOpen.length) {
+    const suffix = [...localOpen].reverse().map((item) => structural.pairs[item.ch]).join('');
+    add(s.slice(0, range.end) + suffix + s.slice(range.end), `chiusi delimitatori mancanti «${suffix}»`);
+  }
+  for (const item of structural.stray) {
+    if (item.index < range.start || item.index > range.end) continue;
+    add(s.slice(0, item.index) + '\\' + s.slice(item.index), `protetto delimitatore isolato «${item.ch}»`);
+  }
+
+  // Markup enfasi: trasformare `_testo_`/`*testo*` nelle funzioni esplicite
+  // elimina ambiguità senza cambiare il testo o lo stile visibile.
+  const explicit = range.text
+    .replace(/_([^_\n]+)_/g, '#emph[$1]')
+    .replace(/\*([^*\n]+)\*/g, '#strong[$1]');
+  if (explicit !== range.text) {
+    add(s.slice(0, range.start) + explicit + s.slice(range.end), 'enfasi resa esplicita (#emph/#strong)');
+  }
+
+  // Delimitatori inline che devono comparire in coppia. Per un numero dispari
+  // prova sia la chiusura a fine blocco sia la protezione di ciascun simbolo:
+  // sarà il compilatore, non l'euristica, a scegliere l'unica variante valida.
+  for (const delimiter of ['_', '*', '$', '`']) {
+    const positions = [];
+    for (let i = 0; i < range.text.length; i++) {
+      if (range.text[i] === delimiter && range.text[i - 1] !== '\\') positions.push(i);
+    }
+    if (positions.length % 2 === 0) continue;
+    add(
+      s.slice(0, range.end) + delimiter + s.slice(range.end),
+      `aggiunta chiusura «${delimiter}»`,
+    );
+    for (const relative of positions) {
+      const at = range.start + relative;
+      add(s.slice(0, at) + '\\' + s.slice(at), `protetto «${delimiter}» isolato`);
+    }
+  }
+
+  return candidates;
+}
+
 /**
  * @param {string} source
  * @returns {{ fixed: string, changes: string[] }}
