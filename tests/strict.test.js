@@ -78,6 +78,20 @@ test('ricompone due frammenti di parola validati dal dizionario', () => {
   assert.equal(repaired.changes[0].after, 'cercando');
 });
 
+test('ricompone le parole sillabate a fine riga nella stessa pagina', () => {
+  const source = 'Consideriamo produttivi alcuni principi, indi-\ncandoli finché non troviamo termini migliori.';
+  const repaired = repairBoundaryOverlaps(
+    source,
+    10,
+    (word) => word.toLowerCase() === 'indicandoli',
+  );
+  assert.equal(
+    repaired.text,
+    'Consideriamo produttivi alcuni principi, indicandoli finché non troviamo termini migliori.',
+  );
+  assert.equal(repaired.changes[0].type, 'line_word_split');
+});
+
 test('scarta il numero pagina e ricompone la parola che lo circonda', () => {
   const source = [
     '<!-- pagina 1 -->\nSiete stati convinti di ciò, che inconsciamente per-',
@@ -159,6 +173,17 @@ test('il renderer conserva testo, gerarchia, liste e didascalie', () => {
   assert.match(doc.body, /Figura originale/);
   assert.doesNotMatch(doc.body, /#figure/); // niente numerazione automatica aggiunta
   assert.match(sourcePlainText(source), /Figura originale/);
+});
+
+test('il renderer trasforma le note semantiche in vere footnote Typst', () => {
+  const source = 'Testo principale. <footnote>Nota con _titolo_ e volume 1.</footnote>\n\nTesto seguente.';
+  const doc = buildStrictDocument(source);
+  assert.match(doc.body, /Testo principale\. #footnote\[Nota con _titolo_ e volume 1\.\]/);
+  assert.doesNotMatch(doc.body, /<footnote>/);
+  assert.match(
+    sourcePlainText(source).replace(/\s+/g, ' '),
+    /Testo principale\. Nota con titolo e volume 1\./,
+  );
 });
 
 test('i marcatori pagina non diventano testo visibile', () => {

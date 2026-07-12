@@ -297,7 +297,8 @@ const OCR_PROMPT =
   'gerarchia (documento/parte, capitolo, sezione, sottosezione); non trasformare ' +
   'mai una testatina in titolo. Mantieni una riga vuota tra i paragrafi, ' +
   '_corsivo_ dove il testo è in corsivo, e le note a piè di pagina come testo ' +
-  'in fondo. NON tradurre, NON riassumere, NON correggere gli errori del ' +
+  'in fondo, racchiudendo ciascuna nota in `<footnote>testo della nota</footnote>` ' +
+  'senza inserirla come paragrafo del corpo. NON tradurre, NON riassumere, NON correggere gli errori del ' +
   'testo, NON aggiungere commenti o spiegazioni tue. Se una parola è ' +
   'illeggibile trascrivila come meglio puoi. Se una parola è tagliata dal bordo ' +
   'pagina, trascrivi soltanto il frammento realmente visibile e il suo eventuale ' +

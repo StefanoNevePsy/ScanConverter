@@ -38,6 +38,7 @@ export function isPlainProse(p) {
   if (/^[=+\-]/.test(s)) return false; // titoli, liste, righe speciali
   if (/^#/.test(s)) return false; // #set/#show/#let/#figure a inizio riga
   if (/#[a-zA-Z]/.test(s)) return false; // funzioni Typst inline (#footnote…)
+  if (/<\/?footnote>/i.test(s)) return false; // marcatore semantico OCR
   if (/\$[^$]*\$/.test(s)) return false; // matematica inline
   if (/<!--|-->/.test(s)) return false; // marcatori di pagina
   if (/!\[[^\]]*\]\([^)]*\)/.test(s)) return false; // figure Markdown residue

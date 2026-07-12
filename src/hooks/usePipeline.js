@@ -302,6 +302,9 @@ export function usePipeline(settings) {
       fileName: s.fileName,
       rawText: s.rawText,
       preamble: s.preamble,
+      // Snapshot esatto dell'editor: conserva correzioni locali, sostituzioni
+      // e fix di punteggiatura senza dover ricostruire i vecchi chunk.
+      editorCode: s.editorCode || null,
       styleHint: s.styleHint || null,
       chunks: s.chunks.map((c) => ({
         text: c.text,
@@ -318,6 +321,17 @@ export function usePipeline(settings) {
       status: allDone ? 'done' : 'paused',
     });
   }, []);
+
+  // L'editor è la fonte di verità: salva in modo differito anche modifiche
+  // manuali e correzioni locali. Prima mancava questo collegamento, quindi la
+  // riapertura della sessione ricostruiva il documento dai chunk precedenti.
+  useEffect(() => {
+    const s = sessionRef.current;
+    if (!s?.id || !typstCode.trim()) return undefined;
+    s.editorCode = typstCode;
+    const timer = setTimeout(() => persist(), 500);
+    return () => clearTimeout(timer);
+  }, [typstCode, persist]);
 
   // Salva lo stato della FASE OCR (avanzamento pagine + parti già estratte),
   // così un libro interrotto a metà estrazione riparte da dove era.
@@ -998,7 +1012,22 @@ export function usePipeline(settings) {
         verified: meta.verified === true,
       };
       setRawText(meta.rawText || '');
-      setTypstCode(combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || '')));
+      const restoredCode = meta.editorCode ||
+        combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || ''));
+      sessionRef.current.editorCode = restoredCode;
+      if (meta.editorCode) {
+        // Evita che runFormat ricostruisca subito il vecchio contenuto dai
+        // chunk e annulli lo snapshot appena ripristinato dall'editor.
+        const restored = splitPreamble(restoredCode);
+        sessionRef.current.preamble = restored.preamble;
+        sessionRef.current.chunks = [{
+          text: meta.rawText || '',
+          body: restored.body,
+          status: 'done',
+          fidelity: { coverage: 1, missing: [] },
+        }];
+      }
+      setTypstCode(restoredCode);
       setStrictReport(
         meta.workflow === 'strict'
           ? {
@@ -1325,10 +1354,23 @@ export function usePipeline(settings) {
     if (!changes.length) {
       return { ok: true, message: 'Spaziatura e punteggiatura già a posto.' };
     }
+    const s = sessionRef.current;
+    const previousCanonical = s?.workflow === 'strict' ? s.canonicalText : null;
+    if (previousCanonical) s.canonicalText = fixSpacing(previousCanonical).fixed;
+    if (s) s.editorCode = fixed;
     setTypstCode(fixed);
-    await recompile(fixed);
+    const compiled = await recompile(fixed);
+    if (!compiled) {
+      if (s) {
+        s.canonicalText = previousCanonical;
+        s.editorCode = typstCode;
+      }
+      setTypstCode(typstCode);
+      return { ok: false, message: 'Correzioni annullate: il documento modificato non supera la verifica.' };
+    }
+    await persist();
     return { ok: true, message: `Spaziatura sistemata: ${changes.join(' · ')}` };
-  }, [typstCode, recompile]);
+  }, [typstCode, recompile, persist]);
 
   /**
    * Correzione rapida di TUTTI i sospetti con un LLM veloce: invia solo

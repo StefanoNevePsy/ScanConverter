@@ -9,6 +9,7 @@ import { loadImage, cropToPng } from './figures.js';
 
 const PICTURE_TYPES = new Set(['Picture', 'Figure', 'Image']);
 const CAPTION_TYPES = new Set(['Caption']);
+const FOOTNOTE_TYPES = new Set(['Footnote', 'Footnote-text', 'FootnoteText']);
 // Arredo di pagina della scansione (testatine, numeri di pagina): non è
 // contenuto e sporca sia il prompt sia la verifica di fedeltà. Le vere note
 // a piè di pagina (Footnote) invece SONO contenuto e restano.
@@ -25,6 +26,13 @@ const ARABIC_PAGE_NUMBER_RE = /^(?:pagina\s+)?\d{1,3}$/i;
 const ROMAN_PAGE_NUMBER_RE = /^(?:PAGINA\s+)?[IVXLCDM]{1,10}$/;
 const isPageNumberText = (text) =>
   ARABIC_PAGE_NUMBER_RE.test(text) || ROMAN_PAGE_NUMBER_RE.test(text);
+
+function isFootnoteBlock(b) {
+  if (FOOTNOTE_TYPES.has(b?.type)) return true;
+  if (b?.type !== 'Text' || !b?.bbox || (b.bbox.ymin ?? 0) < 0.7) return false;
+  const text = String(b.text || '').trim();
+  return /^(?:[*†‡]\s+|[—–-]\s*(?:trad\.|traduzione\b))/iu.test(text);
+}
 
 const cy = (b) => ((b.bbox?.ymin ?? 0) + (b.bbox?.ymax ?? 0)) / 2;
 
@@ -70,6 +78,7 @@ export function isPageFurniture(b) {
   if (FURNITURE_TYPES.has(b?.type)) return true;
   if (!b?.bbox) return false;
   const text = (b.text || '').trim();
+  if (isFootnoteBlock(b)) return false;
   // I numeri di pagina sono spesso classificati semplicemente come Text e
   // collocati ben sopra il bordo fisico (ampio margine bianco): per loro usa
   // una fascia più larga e non dipendere dal tipo restituito dal modello.
@@ -127,6 +136,16 @@ export function headingMarkdown(b) {
     level = Math.min(6, prefix.split('.').filter(Boolean).length);
   }
   return `${'#'.repeat(level)} ${text}`;
+}
+
+/** Marcatura semantica privata, poi convertita localmente in #footnote[…]. */
+export function footnoteMarkdown(text) {
+  const note = String(text || '')
+    .trim()
+    // L'asterisco è normalmente il richiamo grafico, non parte della nota.
+    .replace(/^\s*[*†‡]\s*/, '')
+    .replace(/\s*\n\s*/g, ' ');
+  return note ? `<footnote>${note}</footnote>` : '';
 }
 
 /**
@@ -292,10 +311,27 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
 
   const figures = [];
   const lines = [];
+  const pendingFootnotes = [];
+  let lastProseIndex = -1;
 
   for (const b of sorted) {
     if (furniture.has(b)) continue; // testatine/numeri di pagina
-    if (PICTURE_TYPES.has(b.type) && b.bbox && img) {
+    if (isFootnoteBlock(b)) {
+      const note = footnoteMarkdown(b.text);
+      if (note) {
+        // «— Trad. inglese …» è spesso un secondo blocco OCR della stessa
+        // nota con asterisco, non una nuova nota autonoma.
+        if (/^<footnote>[—–-]\s*(?:trad\.|traduzione\b)/iu.test(note) && pendingFootnotes.length) {
+          pendingFootnotes[pendingFootnotes.length - 1] =
+            pendingFootnotes[pendingFootnotes.length - 1].replace(
+              /<\/footnote>$/i,
+              ` ${note.slice('<footnote>'.length)}`,
+            );
+        } else {
+          pendingFootnotes.push(note);
+        }
+      }
+    } else if (PICTURE_TYPES.has(b.type) && b.bbox && img) {
       const n = figureCounter.next();
       const path = `/figures/fig-${n}.png`;
       let bytes;
@@ -319,7 +355,17 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
       if (!b._used && b.text) lines.push(b.text);
     } else if (b.text) {
       lines.push(normalizeDialogue(headingMarkdown(b)));
+      if (!HEADING_LEVELS.has(b.type)) lastProseIndex = lines.length - 1;
     }
+  }
+
+  // Le note fisicamente in fondo pagina non sono paragrafi nel flusso:
+  // agganciale all'ultimo passaggio di prosa, così Typst colloca richiamo e
+  // testo a piè pagina senza interrompere il capitolo successivo.
+  if (pendingFootnotes.length) {
+    const notes = pendingFootnotes.join(' ');
+    if (lastProseIndex >= 0) lines[lastProseIndex] += ` ${notes}`;
+    else lines.push(notes);
   }
 
   return { markdown: lines.join('\n\n'), figures };

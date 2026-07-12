@@ -50,7 +50,14 @@ function comparisonUnits(text) {
 }
 
 function wordSpans(text) {
-  return [...String(text || '').matchAll(/\p{L}[\p{L}\p{M}'’]*/gu)].map((m) => ({
+  // Il contenuto delle note è semanticamente fuori dal flusso principale e
+  // non deve diventare la parola di confine della pagina. Mantieni però la
+  // stessa lunghezza per conservare gli indici nel testo originale.
+  const visible = String(text || '').replace(
+    /<footnote>[\s\S]*?<\/footnote>/gi,
+    (note) => ' '.repeat(note.length),
+  );
+  return [...visible.matchAll(/\p{L}[\p{L}\p{M}'’]*/gu)].map((m) => ({
     raw: m[0],
     normalized: canonicalTokens(m[0])[0] || '',
     index: m.index || 0,
@@ -212,6 +219,28 @@ function discardBoundaryPageNumbers(records, changes) {
 export function repairBoundaryOverlaps(markdown, maxOverlap = 10, isKnownWord = null) {
   const records = String(markdown || '').trim().split(/\n{2,}/).map(proseBoundaryBlock);
   const changes = [];
+  // Sillabazioni tipografiche DENTRO la stessa pagina/blocco OCR. Il trattino
+  // viene tolto solo se il dizionario conferma la parola ricomposta.
+  if (isKnownWord) {
+    for (const record of records) {
+      if (!record.prose) continue;
+      record.content = record.content.replace(
+        /(\p{L}{2,})[ \t]*-[ \t]*\n[ \t]*(\p{Ll}{2,})/gu,
+        (whole, left, right) => {
+          const joined = left + right;
+          if (!isKnownWord(joined)) return whole;
+          changes.push({
+            type: 'line_word_split',
+            before: `${left}-${right}`,
+            after: joined,
+            overlap: '',
+          });
+          return joined;
+        },
+      );
+      refreshBoundaryRecord(record);
+    }
+  }
   discardLeadingPageFurniture(records, changes);
   discardBoundaryPageNumbers(records, changes);
   attachEmptyPageMarkers(records);
@@ -482,6 +511,8 @@ export function inlineMarkdownToTypst(text) {
     return key;
   };
   let s = String(text || '');
+  s = s.replace(/<footnote>([\s\S]*?)<\/footnote>/gi, (_, x) =>
+    hold(`#footnote[${inlineMarkdownToTypst(x)}]`));
   s = s.replace(/<sup>([\s\S]*?)<\/sup>/gi, (_, x) => hold(`#super[${escapePlain(x)}]`));
   s = s.replace(/`([^`]+)`/g, (_, x) =>
     hold(`#raw("${x.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`));
@@ -643,6 +674,7 @@ export function sourcePlainText(markdown) {
     .replace(/<!--[^>]*-->/g, ' ')
     .replace(/!\[([^\]]*)\]\([^)]+\)/g, ' $1 ')
     .replace(/^#{1,6}\s+/gm, '')
+    .replace(/<\/?footnote>/gi, '')
     .replace(/<\/?sup>/gi, '')
     .replace(/\\begin\{tabular\}\{[^}]*\}|\\end\{tabular\}/g, ' ')
     .replace(/\\(?:hline|toprule|midrule|bottomrule)\b/g, ' ')
