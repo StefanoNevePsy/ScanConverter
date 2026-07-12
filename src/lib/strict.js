@@ -224,19 +224,27 @@ export function repairBoundaryOverlaps(markdown, maxOverlap = 10, isKnownWord = 
   if (isKnownWord) {
     for (const record of records) {
       if (!record.prose) continue;
-      record.content = record.content.replace(
-        /(\p{L}{2,})[ \t]*-[ \t]*\n[ \t]*(\p{Ll}{2,})/gu,
-        (whole, left, right) => {
+      const joinKnownHyphenation = (whole, left, right) => {
           const joined = left + right;
           if (!isKnownWord(joined)) return whole;
           changes.push({
             type: 'line_word_split',
-            before: `${left}-${right}`,
+            before: whole,
             after: joined,
             overlap: '',
           });
           return joined;
-        },
+        };
+      record.content = record.content.replace(
+        /(\p{L}{2,})[ \t]*-[ \t]*\n[ \t]*(\p{Ll}{2,})/gu,
+        joinKnownHyphenation,
+      );
+      // Alcuni OCR appiattiscono l'a-capo e lasciano «ipo - tesi» sulla
+      // stessa riga. Gli spazi su entrambi i lati distinguono questo caso dai
+      // normali composti; il dizionario resta il guardrail decisivo.
+      record.content = record.content.replace(
+        /(\p{L}{2,})[ \t]+-[ \t]+(\p{Ll}{2,})/gu,
+        joinKnownHyphenation,
       );
       refreshBoundaryRecord(record);
     }

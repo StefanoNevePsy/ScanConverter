@@ -301,6 +301,10 @@ export function fixSpacing(source) {
     apply(/(\p{Ll})\.(?=\p{Lu})/gu, '$1. ', 'spazi dopo il punto aggiunti');
     apply(/\([ \t]+/g, '(', 'spazi dopo parentesi aperta rimossi');
     apply(/[ \t]+\)/g, ')', 'spazi prima di parentesi chiusa rimossi');
+    // Virgolette italiane e tipografiche: lo spazio resta FUORI, mai dentro.
+    // Gestisce anche le varianti OCR ASCII <<testo>>.
+    apply(/([«“‘]|<<)[ \t\n]+/g, '$1', 'spazi dopo virgolette aperte rimossi');
+    apply(/[ \t\n]+([»”’]|>>)/g, '$1', 'spazi prima delle virgolette chiuse rimossi');
     // Trattino d'inciso con spazio da un solo lato → spazio su entrambi
     // (i composti «socio-politico», senza spazi, non vengono toccati).
     apply(/(\p{L})-[ \t]+(?=\p{L})/gu, '$1 - ', 'trattini d’inciso normalizzati');
@@ -312,5 +316,25 @@ export function fixSpacing(source) {
     apply(/(\S)[ \t]{2,}/g, '$1 ', 'spazi doppi collassati');
     return s;
   });
+  return { fixed, changes };
+}
+
+/**
+ * Ripara nel Typst già generato le sillabazioni OCR appiattite («ipo - tesi»),
+ * limitandosi alla prosa e accettando solo parole confermate dal dizionario.
+ */
+export function fixOcrHyphenation(source, speller) {
+  const changes = [];
+  if (!speller?.correct) return { fixed: source, changes };
+  const fixed = onProse(source, (s) =>
+    s.replace(
+      /(\p{L}{2,})[ \t]+-[ \t]+(\p{Ll}{2,})/gu,
+      (whole, left, right) => {
+        const joined = left + right;
+        if (!speller.correct(joined)) return whole;
+        changes.push(`${whole}→${joined}`);
+        return joined;
+      },
+    ));
   return { fixed, changes };
 }

@@ -26,6 +26,7 @@ import {
   requestSpellFixes,
   validateCorrections,
   applySpellFixes,
+  fixOcrHyphenation,
   fixSpacing,
 } from '../lib/spell.js';
 import { proofreadBody } from '../lib/proofread.js';
@@ -1350,13 +1351,34 @@ export function usePipeline(settings) {
    */
   const fixPunctuation = useCallback(async () => {
     if (!typstCode.trim()) return { ok: false, message: 'Nessun codice.' };
-    const { fixed, changes } = fixSpacing(typstCode);
+    let repaired = typstCode;
+    const changes = [];
+    let speller = null;
+    try {
+      speller = await loadSpeller();
+      const hyphenation = fixOcrHyphenation(repaired, speller);
+      repaired = hyphenation.fixed;
+      if (hyphenation.changes.length) {
+        changes.push(`${hyphenation.changes.length} parole sillabate ricomposte`);
+      }
+    } catch {
+      // La punteggiatura resta correggibile anche se il dizionario non carica.
+    }
+    const spacing = fixSpacing(repaired);
+    repaired = spacing.fixed;
+    changes.push(...spacing.changes);
     if (!changes.length) {
       return { ok: true, message: 'Spaziatura e punteggiatura già a posto.' };
     }
+    const fixed = repaired;
     const s = sessionRef.current;
     const previousCanonical = s?.workflow === 'strict' ? s.canonicalText : null;
-    if (previousCanonical) s.canonicalText = fixSpacing(previousCanonical).fixed;
+    if (previousCanonical) {
+      const canonicalHyphenation = speller
+        ? fixOcrHyphenation(previousCanonical, speller).fixed
+        : previousCanonical;
+      s.canonicalText = fixSpacing(canonicalHyphenation).fixed;
+    }
     if (s) s.editorCode = fixed;
     setTypstCode(fixed);
     const compiled = await recompile(fixed);

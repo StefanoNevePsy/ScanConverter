@@ -92,6 +92,22 @@ test('ricompone le parole sillabate a fine riga nella stessa pagina', () => {
   assert.equal(repaired.changes[0].type, 'line_word_split');
 });
 
+test('ricompone le sillabazioni OCR appiattite con spazi attorno al trattino', () => {
+  const source =
+    'Formulò un’ipo - tesi in qual - che modo. Con - formemente decise di ' +
+    'dedicare ascol - to e dedi - zione, poi iniziò a scom - porsi.';
+  const known = new Set([
+    'ipotesi', 'qualche', 'conformemente', 'ascolto', 'dedizione', 'scomporsi',
+  ]);
+  const repaired = repairBoundaryOverlaps(source, 10, (word) => known.has(word.toLowerCase()));
+  assert.equal(
+    repaired.text,
+    'Formulò un’ipotesi in qualche modo. Conformemente decise di dedicare ' +
+      'ascolto e dedizione, poi iniziò a scomporsi.',
+  );
+  assert.equal(repaired.changes.length, 6);
+});
+
 test('scarta il numero pagina e ricompone la parola che lo circonda', () => {
   const source = [
     '<!-- pagina 1 -->\nSiete stati convinti di ciò, che inconsciamente per-',
