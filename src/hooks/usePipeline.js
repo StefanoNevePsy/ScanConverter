@@ -603,6 +603,7 @@ export function usePipeline(settings) {
             // Non ripartire dal testo originale: altrimenti la rilettura
             // annulla silenziosamente le riparazioni tra pagine appena fatte.
             code: canonicalText,
+            speller,
             signal,
             onProgress: (done, total) => setDetail(`Correzione ${done}/${total} paragrafi…`),
           });
@@ -1536,11 +1537,11 @@ export function usePipeline(settings) {
   );
 
   /**
-   * Rilettura AI contestuale (italiano): ripristina gli accenti sugli omografi
-   * («è»/«e», «sì»/«si»), reinserisce le parole-funzione saltate dall'OCR e
-   * bilancia le caporali — la classe di errori che dizionario e fedeltà non
-   * possono vedere. Guard di sicurezza in `proofreadBody`: mai rimuovere o
-   * cambiare parole. Rete di sicurezza sulla compilazione come per l'ortografia.
+   * Rilettura AI contestuale (italiano): ripristina accenti, riunisce o separa
+   * frammenti OCR, corregge piccoli refusi usando la frase, reinserisce parole-
+   * funzione saltate e bilancia le caporali. I guard rifiutano sinonimi, cambi
+   * a parole già valide, omissioni, riordini e numeri alterati. Resta attiva la
+   * rete di sicurezza sulla compilazione come per l'ortografia.
    * @returns {Promise<{ok:boolean, message:string}>}
    */
   const proofreadAI = useCallback(async () => {
@@ -1562,7 +1563,7 @@ export function usePipeline(settings) {
           ok: true,
           message: skipped
             ? `Nessuna correzione applicata (${skipped} proposte scartate dal controllo di sicurezza).`
-            : 'Rilettura completata: nessun accento o parola da correggere.',
+            : 'Rilettura completata: nessun refuso contestuale da correggere.',
         };
       }
       // Rete di sicurezza: se compilava PRIMA ma non DOPO, si annulla tutto.
@@ -1614,8 +1615,9 @@ export function usePipeline(settings) {
       return {
         ok: true,
         message:
-          `Rilettura applicata a ${changed} paragrafi (accenti, parole saltate, ` +
-          `virgolette)` + (skipped ? ` · ${skipped} proposte scartate dal controllo` : '') + '.',
+          `Rilettura applicata a ${changed} paragrafi (refusi OCR, parole ` +
+          `spezzate o fuse, accenti e virgolette)` +
+          (skipped ? ` · ${skipped} proposte scartate dal controllo` : '') + '.',
       };
     } catch (e) {
       if (e?.name === 'AbortError') return { ok: false, message: 'Rilettura annullata.' };

@@ -177,7 +177,7 @@ export default function TypstEditor({
             <button
               onClick={onProofread}
               disabled={!value.trim() || proofreadBusy}
-              title="Rilettura AI (italiano): ripristina accenti «è/e», parole saltate e virgolette"
+              title="Rilettura AI: corregge refusi OCR nel contesto, parole spezzate o fuse, accenti e virgolette"
               aria-label="Rilettura AI"
               className="inline-flex items-center gap-1 rounded-lg bg-surface-2 px-2 py-1.5 text-ink transition-colors hover:bg-surface-3 disabled:opacity-50"
             >
