@@ -1378,6 +1378,10 @@ export function usePipeline(settings) {
     repaired = spacing.fixed;
     changes.push(...spacing.changes);
     if (!changes.length) {
+      if (speller) {
+        const ignore = new Set(loadSpellIgnore());
+        setSpellReport({ suspects: findSuspects(typstCode, speller, ignore) });
+      }
       return { ok: true, message: 'Spaziatura e punteggiatura già a posto.' };
     }
     const fixed = repaired;
@@ -1401,6 +1405,10 @@ export function usePipeline(settings) {
       return { ok: false, message: 'Correzioni annullate: il documento modificato non supera la verifica.' };
     }
     await persist();
+    if (speller) {
+      const ignore = new Set(loadSpellIgnore());
+      setSpellReport({ suspects: findSuspects(fixed, speller, ignore) });
+    }
     return { ok: true, message: `Spaziatura sistemata: ${changes.join(' · ')}` };
   }, [typstCode, recompile, persist]);
 
@@ -1437,7 +1445,17 @@ export function usePipeline(settings) {
         // Guardrail deterministici: parola singola, nota ai dizionari, e
         // SOLO tra quelle inviate (mai «correzioni» a parole non richieste).
         const allowed = new Set(suspects.map((s) => s.word));
-        const { ok: corrections, rejected } = validateCorrections(proposals, speller, allowed);
+        const acceptedFixes = new Set(
+          suspects
+            .filter((s) => s.suggestedFix)
+            .map((s) => s.suggestedFix.toLocaleLowerCase('it')),
+        );
+        const { ok: corrections, rejected } = validateCorrections(
+          proposals,
+          speller,
+          allowed,
+          acceptedFixes,
+        );
         const before = typstCode;
         const { code, applied } = applySpellFixes(before, corrections);
         if (!applied.length) {

@@ -98,10 +98,13 @@ export function extractProse(typst) {
 
 const WORD_RE = /\p{L}[\p{L}'’]{2,}/gu;
 const HYPHENATED_OCR_RE = /(\p{L}{2,})([ \t]*-[ \t]*)(\p{Ll}{2,})/gu;
-const SPACED_FRAGMENT_RE = /(?=(\p{L}{3,6})([ \t]+)(\p{Ll}{3,8})(?!\p{L}))/gu;
+const SPACED_FRAGMENT_RE = /(?<!\p{L})(?=(\p{L}{3,6})([ \t]+)(\p{Ll}{3,8})(?!\p{L}))/gu;
 const SEMANTIC_SHORT_COMPOUNDS = new Set([
   'nord-est', 'nord-ovest', 'sud-est', 'sud-ovest',
 ]);
+const FUSED_FUNCTION_WORDS = [
+  'della', 'delle', 'degli', 'stato', 'che', 'del', 'dei', 'una', 'uno',
+];
 
 function withInitialCase(word, model) {
   if (!/^\p{Lu}/u.test(model) || !word) return word;
@@ -145,6 +148,20 @@ export function suggestOcrWordRepair(left, separator, right, speller) {
   return '';
 }
 
+/** Separa fusioni OCR certe: «contareche» → «contare che». */
+export function suggestFusedWordRepair(word, speller) {
+  if (!word || !speller?.correct || speller.correct(word)) return '';
+  const lower = word.toLocaleLowerCase('it');
+  for (const suffix of FUSED_FUNCTION_WORDS) {
+    if (!lower.endsWith(suffix) || lower.length <= suffix.length + 2) continue;
+    const cut = word.length - suffix.length;
+    const left = word.slice(0, cut);
+    const right = word.slice(cut);
+    if (speller.correct(left) && speller.correct(right)) return `${left} ${right}`;
+  }
+  return '';
+}
+
 /**
  * Trova le parole sospette (ignote a entrambi i dizionari) nel codice Typst.
  * @param {string} typst
@@ -156,6 +173,13 @@ export function findSuspects(typst, speller, ignore = new Set()) {
   const prose = extractProse(typst);
   const seen = new Map(); // parola/span → {count, context, suggestedFix?}
   const covered = [];
+  // Lessico interno del documento: fondamentale per nomi propri/editori non
+  // presenti nei dizionari, ma già scritti correttamente altrove.
+  const observed = new Map();
+  for (const m of prose.matchAll(WORD_RE)) {
+    const key = m[0].toLocaleLowerCase('it');
+    if (!observed.has(key)) observed.set(key, m[0]);
+  }
   const add = (word, at, suggestedFix = '') => {
     if (ignore.has(word.toLowerCase())) return;
     const known = seen.get(word);
@@ -174,7 +198,11 @@ export function findSuspects(typst, speller, ignore = new Set()) {
   // l'AI riceve «comparta-mento», non due richieste isolate e incompatibili.
   for (const m of prose.matchAll(HYPHENATED_OCR_RE)) {
     const at = m.index ?? 0;
-    const suggestion = suggestOcrWordRepair(m[1], m[2], m[3], speller);
+    let suggestion = suggestOcrWordRepair(m[1], m[2], m[3], speller);
+    if (!suggestion) {
+      const joined = m[1] + m[3];
+      suggestion = observed.get(joined.toLocaleLowerCase('it')) || '';
+    }
     const suspicious = suggestion || !speller.correct(m[1]) || !speller.correct(m[3]);
     if (!suspicious) continue;
     add(m[0], at, suggestion);
@@ -197,7 +225,7 @@ export function findSuspects(typst, speller, ignore = new Set()) {
     if (/^\p{Lu}+$/u.test(word)) continue; // sigle/nomi parlanti in MAIUSCOLO
     if (ignore.has(word.toLowerCase())) continue; // dizionario personale
     if (speller.correct(word)) continue;
-    add(word, at);
+    add(word, at, suggestFusedWordRepair(word, speller));
   }
   return [...seen.entries()]
     .map(([word, v]) => ({
@@ -231,7 +259,9 @@ export async function requestSpellFixes({ settings, entries, signal }) {
     'OMETTILA dalla risposta. Correggi solo refusi evidenti: lettere ' +
     'scambiate/mancanti/spurie, accenti sbagliati. Se la voce contiene due ' +
     'frammenti separati da trattino o spazio, correggi l’INTERA sequenza in ' +
-    'una sola parola e riporta `word` IDENTICO alla voce ricevuta. Non cambiare mai il ' +
+    'una sola parola e riporta `word` IDENTICO alla voce ricevuta. Se invece ' +
+    'una voce contiene più parole fuse (es. `contareche`), separale nella ' +
+    'frase corretta (`contare che`). Non cambiare mai il ' +
     'significato.\n\nVOCI:\n' +
     entries
       .map((e, i) => `${i + 1}. "${e.word}" — contesto: «${e.context}»`)
@@ -285,12 +315,37 @@ export async function requestSpellFixes({ settings, entries, signal }) {
  * @param {Set<string>} [allowedWords] parole che erano state inviate al modello
  * @returns {{ok:{word:string,fix:string}[], rejected:{word:string,fix:string}[]}}
  */
-export function validateCorrections(corrections, speller, allowedWords = null) {
+export function validateCorrections(
+  corrections,
+  speller,
+  allowedWords = null,
+  acceptedFixes = new Set(),
+) {
+  const normalized = (text) => String(text || '')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}]/gu, '')
+    .toLocaleLowerCase('it');
+  const editDistance = (a, b) => {
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const next = [i];
+      for (let j = 1; j <= b.length; j++) {
+        next[j] = Math.min(
+          next[j - 1] + 1,
+          prev[j] + 1,
+          prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+        );
+      }
+      prev = next;
+    }
+    return prev[b.length];
+  };
   const ok = [];
   const rejected = [];
   for (const c of corrections || []) {
     const fix = (c.fix || '').trim();
-    if (!fix || /\s/.test(fix) || fix === c.word) {
+    if (!fix || fix === c.word) {
       rejected.push(c);
       continue;
     }
@@ -298,7 +353,15 @@ export function validateCorrections(corrections, speller, allowedWords = null) {
       rejected.push(c);
       continue;
     }
-    if (!speller.correct(fix)) {
+    const parts = fix.split(/\s+/).filter(Boolean);
+    const observedFix = acceptedFixes.has(fix.toLocaleLowerCase('it'));
+    const singleValid = parts.length === 1 && (speller.correct(fix) || observedFix);
+    const splitValid =
+      parts.length >= 2 &&
+      parts.length <= 3 &&
+      parts.every((part) => speller.correct(part)) &&
+      editDistance(normalized(c.word), normalized(parts.join(''))) <= 2;
+    if (!singleValid && !splitValid) {
       rejected.push(c);
       continue;
     }
@@ -429,6 +492,14 @@ export function fixOcrHyphenation(source, speller) {
       occupiedStart = edit.start;
       changes.push(`${edit.before}→${edit.repair}`);
     }
+    // Terzo passaggio: parole-funzione fuse, soltanto quando entrambe le parti
+    // sono note e la forma unita non lo è.
+    out = out.replace(WORD_RE, (word) => {
+      const repair = suggestFusedWordRepair(word, speller);
+      if (!repair) return word;
+      changes.push(`${word}→${repair}`);
+      return repair;
+    });
     return out;
   });
   return { fixed, changes };

@@ -5,6 +5,7 @@ import {
   findSuspects,
   fixOcrHyphenation,
   fixSpacing,
+  suggestFusedWordRepair,
   suggestOcrWordRepair,
   validateCorrections,
 } from '../src/lib/spell.js';
@@ -58,4 +59,66 @@ test('la correzione AI può sostituire l’intera sequenza spezzata', () => {
   const applied = applySpellFixes('Il comparta - mento osservato.', validated.ok);
   assert.equal(applied.code, 'Il comportamento osservato.');
   assert.equal(applied.applied[0].count, 1);
+});
+
+test('usa una grafia corretta già presente per ricomporre i nomi propri', () => {
+  const speller = { correct: () => false };
+  const suspects = findSuspects('Milano, Fel - trinelli, 1978. Milano, Feltrinelli, 1975.', speller);
+  const split = suspects.find((item) => item.word === 'Fel - trinelli');
+  assert.equal(split?.suggestedFix, 'Feltrinelli');
+  const validated = validateCorrections(
+    [{ word: split.word, fix: split.suggestedFix }],
+    speller,
+    new Set([split.word]),
+    new Set(['feltrinelli']),
+  );
+  assert.equal(validated.ok[0].fix, 'Feltrinelli');
+});
+
+test('consente all’AI di separare parole fuse senza riscriverle', () => {
+  const known = new Set(['contare', 'che', 'capacità', 'del']);
+  const speller = { correct: (word) => known.has(word.toLowerCase()) };
+  const proposals = [
+    { word: 'contareche', fix: 'contare che' },
+    { word: 'capacitatdel', fix: 'capacità del' },
+    { word: 'parolafalsa', fix: 'testo inventato' },
+  ];
+  const validated = validateCorrections(
+    proposals,
+    speller,
+    new Set(proposals.map((item) => item.word)),
+  );
+  assert.deepEqual(validated.ok, proposals.slice(0, 2));
+  assert.deepEqual(validated.rejected, proposals.slice(2));
+});
+
+test('separa localmente le parole-funzione fuse quando entrambe le parti sono note', () => {
+  const known = new Set([
+    'contare', 'che', 'accada', 'una', 'rapporti', 'sempre', 'stato', 'qualche',
+  ]);
+  const speller = { correct: (word) => known.has(word.toLowerCase()) };
+  assert.equal(suggestFusedWordRepair('contareche', speller), 'contare che');
+  assert.equal(suggestFusedWordRepair('accadauna', speller), 'accada una');
+  assert.equal(suggestFusedWordRepair('rapportiche', speller), 'rapporti che');
+  assert.equal(suggestFusedWordRepair('semprestato', speller), 'sempre stato');
+  assert.equal(suggestFusedWordRepair('qualche', speller), '');
+  const repaired = fixOcrHyphenation(
+    'Senza contareche accadauna cosa nei rapportiche è semprestato chiaro.',
+    speller,
+  );
+  assert.equal(
+    repaired.fixed,
+    'Senza contare che accada una cosa nei rapporti che è sempre stato chiaro.',
+  );
+});
+
+test('una parola già corretta non lascia frammenti obsoleti nel nuovo report', () => {
+  const known = new Set(['vacanze', 'contare', 'che', 'accada', 'una', 'rapporti', 'sempre', 'stato']);
+  const speller = { correct: (word) => known.has(word.toLowerCase()) };
+  const suspects = findSuspects(
+    'vacanze contare che accada una cosa nei rapporti che è sempre stato chiaro',
+    speller,
+  );
+  assert.ok(!suspects.some((item) => item.word === 'canze'));
+  assert.ok(!suspects.some((item) => ['are che', 'cada una', 'orti che', 'pre stato'].includes(item.word)));
 });
