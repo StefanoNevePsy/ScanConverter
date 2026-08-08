@@ -63,7 +63,7 @@ import {
   listSessions,
   deleteSession,
   savePages,
-  getPages,
+  getPage,
   deletePage,
   deletePagesFor,
   requestPersistentStorage,
@@ -727,16 +727,16 @@ export function usePipeline(settings) {
       const s = sessionRef.current;
       const total = s.ocr.total;
       const figCounter = makeFigureCounter(s.ocr.figCount || 0);
-      let pageMap = pagesInMemory;
-      if (!pageMap) {
-        const stored = await getPages(s.id);
-        pageMap = new Map(stored.map((p) => [p.index, p.dataUrl]));
-      }
+      // In ripresa le pagine si leggono UNA per volta dalla cache: caricarle
+      // tutte insieme terrebbe in RAM l'intero libro rasterizzato (centinaia
+      // di MB su un volume di 250 pagine) e fa uccidere la WebView.
+      const pageAt = (i) =>
+        pagesInMemory ? pagesInMemory.get(i) : getPage(s.id, i);
       for (let i = s.ocr.done; i < total; i++) {
         setOcrProgress({ done: i, total });
         const label = total > 1 ? `OCR pagina ${i + 1}/${total}` : 'Estrazione testo';
         setDetail(total > 1 ? `${label}…` : '');
-        const dataUrl = pageMap.get(i);
+        const dataUrl = await pageAt(i);
         if (!dataUrl) {
           s.lastError = `Immagine della pagina ${i + 1} non più disponibile.`;
           await persistOcr('ocr');

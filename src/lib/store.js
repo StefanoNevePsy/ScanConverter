@@ -63,6 +63,19 @@ export async function requestPersistentStorage() {
   return false;
 }
 
+/**
+ * Intervallo delle chiavi `${id}::…` di UNA sessione.
+ *
+ * Serve a non leggere mai l'intero object store: `getAll()` senza intervallo
+ * materializza in RAM le pagine e le figure di TUTTE le sessioni: su un libro
+ * di 250 pagine sono centinaia di MB di data URL, abbastanza da far uccidere
+ * la WebView su telefono. Gli id sono `${timestamp}-${random}` (lunghezza
+ * fissa), quindi nessun id è prefisso di un altro e l'intervallo è esatto.
+ */
+function idRange(id) {
+  return IDBKeyRange.bound(`${id}::`, `${id}::` + '\uffff');
+}
+
 function tx(store, mode, fn) {
   return openDB().then(
     (db) =>
@@ -124,19 +137,7 @@ export async function getResumableSession() {
 export async function deleteSession(id) {
   try {
     await tx('session', 'readwrite', (s) => s.delete(id));
-    const figs = await tx('figure', 'readonly', (s) => s.getAll());
-    await openDB().then(
-      (db) =>
-        new Promise((resolve, reject) => {
-          const t = db.transaction('figure', 'readwrite');
-          const os = t.objectStore('figure');
-          (figs || []).forEach((f) => {
-            if (f.id === id) os.delete(f.key);
-          });
-          t.oncomplete = () => resolve();
-          t.onerror = () => reject(t.error);
-        }),
-    );
+    await tx('figure', 'readwrite', (s) => s.delete(idRange(id)));
     await deletePagesFor(id);
   } catch {
     /* ignora */
@@ -171,9 +172,8 @@ export async function saveFigures(id, figures) {
 
 export async function getFigures(id) {
   try {
-    const all = (await tx('figure', 'readonly', (s) => s.getAll())) || [];
+    const all = (await tx('figure', 'readonly', (s) => s.getAll(idRange(id)))) || [];
     return all
-      .filter((f) => f.id === id)
       .map((f) => ({
         path: f.path,
         bytes: f.bytes instanceof Uint8Array ? f.bytes : new Uint8Array(f.bytes),
@@ -225,13 +225,44 @@ export async function savePages(id, dataUrls) {
 /** Ritorna le pagine ancora in cache per una sessione, ordinate per indice. */
 export async function getPages(id) {
   try {
-    const all = (await tx('page', 'readonly', (s) => s.getAll())) || [];
+    const all = (await tx('page', 'readonly', (s) => s.getAll(idRange(id)))) || [];
     return all
-      .filter((p) => p.id === id)
       .sort((a, b) => a.index - b.index)
       .map((p) => ({ index: p.index, dataUrl: p.dataUrl }));
   } catch {
     return [];
+  }
+}
+
+/**
+ * Indici delle pagine ancora in cache, senza leggerne le immagini: permette di
+ * sapere cosa resta da estrarre pagando solo le chiavi.
+ * @returns {Promise<number[]>} indici ordinati
+ */
+export async function getPageIndexes(id) {
+  try {
+    const keys = (await tx('page', 'readonly', (s) => s.getAllKeys(idRange(id)))) || [];
+    return keys
+      .map((k) => parseInt(String(k).slice(String(k).lastIndexOf('::') + 2), 10))
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * UNA pagina della cache. L'OCR procede una pagina per volta e la cancella
+ * subito dopo: caricarle tutte insieme significherebbe tenere in RAM l'intero
+ * libro rasterizzato.
+ * @returns {Promise<string|null>} data URL, oppure null se non più in cache
+ */
+export async function getPage(id, index) {
+  try {
+    const rec = await tx('page', 'readonly', (s) => s.get(`${id}::${index}`));
+    return rec?.dataUrl || null;
+  } catch {
+    return null;
   }
 }
 
@@ -247,17 +278,7 @@ export async function deletePage(id, index) {
 /** Cancella tutte le pagine in cache di una sessione (a OCR completato). */
 export async function deletePagesFor(id) {
   try {
-    const all = (await tx('page', 'readonly', (s) => s.getAll())) || [];
-    const db = await openDB();
-    await new Promise((resolve, reject) => {
-      const t = db.transaction('page', 'readwrite');
-      const os = t.objectStore('page');
-      all.forEach((p) => {
-        if (p.id === id) os.delete(p.key);
-      });
-      t.oncomplete = () => resolve();
-      t.onerror = () => reject(t.error);
-    });
+    await tx('page', 'readwrite', (s) => s.delete(idRange(id)));
   } catch {
     /* ignora */
   }
