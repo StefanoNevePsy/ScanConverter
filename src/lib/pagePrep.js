@@ -142,6 +142,38 @@ export async function transformPage(dataUrl, edit = {}) {
 }
 
 /**
+ * Miniatura per l'anteprima pagine.
+ *
+ * L'anteprima mostra un `<img>` per pagina: usare i data URL a piena
+ * risoluzione significa tenere nel DOM centinaia di MB di bitmap decodificate
+ * (un libro di 250 pagine a 2600px è ingestibile). La miniatura serve solo a
+ * giudicare rotazione e doppia pagina, quindi bastano poche centinaia di px.
+ * L'immagine a piena risoluzione resta quella usata per l'OCR.
+ *
+ * @param {string} dataUrl
+ * @param {number} [maxSide] lato lungo della miniatura in px
+ * @returns {Promise<string>} data URL JPEG leggero (l'originale se fallisce)
+ */
+export async function makeThumbnail(dataUrl, maxSide = 320) {
+  try {
+    const img = await loadImage(dataUrl);
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    const scale = Math.min(1, maxSide / Math.max(w, h));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    const ctx = canvas.getContext('2d', { alpha: false });
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.72);
+  } catch {
+    return dataUrl; // meglio l'originale che nessuna anteprima
+  }
+}
+
+/**
  * Applica le modifiche dell'anteprima a tutte le pagine, in ordine.
  * @param {string[]} dataUrls
  * @param {{rotate?:number, split?:boolean}[]} edits una voce per pagina

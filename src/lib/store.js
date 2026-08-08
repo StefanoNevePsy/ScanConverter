@@ -13,7 +13,7 @@
 */
 
 const DB_NAME = 'scanconverter';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbPromise = null;
 
@@ -37,12 +37,73 @@ function openDB() {
         if (!db.objectStoreNames.contains('page')) {
           db.createObjectStore('page', { keyPath: 'key' });
         }
+        // v3: il testo OCR di ogni pagina in un record a sé, e un riepilogo
+        // leggero per l'elenco sessioni. Prima l'intero array `ocr.parts`
+        // veniva riscritto dopo OGNI pagina (costo quadratico sui libri) e
+        // l'elenco in home deserializzava il testo completo di ogni documento.
+        if (!db.objectStoreNames.contains('part')) {
+          db.createObjectStore('part', { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains('summary')) {
+          db.createObjectStore('summary', { keyPath: 'id' });
+        }
+        if (req.transaction) migrateToV3(req.transaction);
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
   }
   return dbPromise;
+}
+
+/**
+ * Porta i dati esistenti alla forma v3, dentro la stessa transazione di
+ * upgrade: le sessioni già salvate mantengono testo e ripresa. Per ognuna
+ * scrive il riepilogo leggero e sposta `ocr.parts` nello store `part`,
+ * togliendolo dal record della sessione.
+ */
+function migrateToV3(tx) {
+  const sessions = tx.objectStore('session');
+  const parts = tx.objectStore('part');
+  const summaries = tx.objectStore('summary');
+  sessions.openCursor().onsuccess = (e) => {
+    const cursor = e.target.result;
+    if (!cursor) return;
+    const rec = cursor.value;
+    if (rec && rec.id) {
+      summaries.put(summaryOf(rec));
+      const list = rec.ocr?.parts;
+      if (Array.isArray(list)) {
+        list.forEach((text, index) => {
+          if (text) parts.put({ key: `${rec.id}::${index}`, id: rec.id, index, text });
+        });
+        const { parts: _dropped, ...ocr } = rec.ocr;
+        cursor.update({ ...rec, ocr });
+      }
+    }
+    cursor.continue();
+  };
+}
+
+/**
+ * Record leggero per l'elenco in home: solo ciò che la lista mostra davvero
+ * (nome, stato, avanzamento), MAI il testo del documento. `kind` distingue le
+ * sessioni ferme all'OCR da quelle in fase di formattazione, così l'avanzamento
+ * si legge da due soli numeri invece che dagli array completi.
+ */
+function summaryOf(meta) {
+  const isOcr = meta.status === 'ocr' && meta.ocr;
+  return {
+    id: meta.id,
+    fileName: meta.fileName || '',
+    status: meta.status || '',
+    updatedAt: meta.updatedAt || Date.now(),
+    kind: isOcr ? 'ocr' : 'format',
+    done: isOcr
+      ? (meta.ocr.done ?? 0)
+      : (meta.chunks?.filter((c) => c.status === 'done').length ?? 0),
+    total: isOcr ? (meta.ocr.total ?? 0) : (meta.chunks?.length ?? 0),
+  };
 }
 
 /**
@@ -102,9 +163,40 @@ export async function persistenceAvailable() {
 /** Salva/aggiorna i metadati di una sessione (senza figure). */
 export async function saveSession(meta) {
   try {
-    await tx('session', 'readwrite', (s) => s.put({ ...meta, updatedAt: Date.now() }));
+    const record = { ...meta, updatedAt: Date.now() };
+    await tx('session', 'readwrite', (s) => s.put(record));
+    await tx('summary', 'readwrite', (s) => s.put(summaryOf(record)));
   } catch {
     /* persistenza non disponibile: si procede in memoria */
+  }
+}
+
+/**
+ * Testo OCR di UNA pagina. Scrivere la singola parte invece dell'intero array
+ * rende il salvataggio costante: prima ogni pagina riscriveva tutte le
+ * precedenti (su 250 pagine sono decine di MB di scritture inutili).
+ */
+export async function savePart(id, index, text) {
+  try {
+    await tx('part', 'readwrite', (s) => s.put({ key: `${id}::${index}`, id, index, text }));
+  } catch {
+    /* ignora: la parte resta comunque in memoria per questa sessione */
+  }
+}
+
+/**
+ * Parti OCR salvate, come array indicizzato per pagina.
+ * @returns {Promise<Array<string|null>>}
+ */
+export async function getParts(id, total = 0) {
+  try {
+    const all = (await tx('part', 'readonly', (s) => s.getAll(idRange(id)))) || [];
+    const size = Math.max(total, ...all.map((p) => (p.index ?? -1) + 1), 0);
+    const out = new Array(size).fill(null);
+    for (const p of all) if (Number.isInteger(p.index)) out[p.index] = p.text;
+    return out;
+  } catch {
+    return new Array(total).fill(null);
   }
 }
 
@@ -118,7 +210,7 @@ export async function getSession(id) {
 
 export async function listSessions() {
   try {
-    return (await tx('session', 'readonly', (s) => s.getAll())) || [];
+    return (await tx('summary', 'readonly', (s) => s.getAll())) || [];
   } catch {
     return [];
   }
@@ -137,6 +229,8 @@ export async function getResumableSession() {
 export async function deleteSession(id) {
   try {
     await tx('session', 'readwrite', (s) => s.delete(id));
+    await tx('summary', 'readwrite', (s) => s.delete(id));
+    await tx('part', 'readwrite', (s) => s.delete(idRange(id)));
     await tx('figure', 'readwrite', (s) => s.delete(idRange(id)));
     await deletePagesFor(id);
   } catch {
@@ -204,19 +298,27 @@ export async function deleteFigures(id, paths) {
  * @param {string} id
  * @param {string[]} dataUrls una per pagina, in ordine
  */
-export async function savePages(id, dataUrls) {
+export async function savePages(id, dataUrls, onProgress) {
   if (!dataUrls?.length) return;
+  // A LOTTI: un'unica transazione per un libro intero significherebbe centinaia
+  // di MB in volo, e un errore a metà farebbe fallire tutto il salvataggio.
+  const BATCH = 10;
   try {
     const db = await openDB();
-    await new Promise((resolve, reject) => {
-      const t = db.transaction('page', 'readwrite');
-      const os = t.objectStore('page');
-      dataUrls.forEach((dataUrl, index) => {
-        os.put({ key: `${id}::${index}`, id, index, dataUrl });
+    for (let start = 0; start < dataUrls.length; start += BATCH) {
+      const end = Math.min(start + BATCH, dataUrls.length);
+      await new Promise((resolve, reject) => {
+        const t = db.transaction('page', 'readwrite');
+        const os = t.objectStore('page');
+        for (let index = start; index < end; index++) {
+          os.put({ key: `${id}::${index}`, id, index, dataUrl: dataUrls[index] });
+        }
+        t.oncomplete = () => resolve();
+        t.onerror = () => reject(t.error);
+        t.onabort = () => reject(t.error);
       });
-      t.oncomplete = () => resolve();
-      t.onerror = () => reject(t.error);
-    });
+      onProgress?.(end, dataUrls.length);
+    }
   } catch {
     /* persistenza non disponibile: l'OCR resta comunque in memoria */
   }

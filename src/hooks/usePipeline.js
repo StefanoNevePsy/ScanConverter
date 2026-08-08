@@ -8,7 +8,7 @@ import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assemble.js';
 import { refinePageTables } from '../lib/segments.js';
 import { extractPdfText } from '../lib/pdftext.js';
-import { isSpreadLike, preparePages } from '../lib/pagePrep.js';
+import { isSpreadLike, preparePages, makeThumbnail } from '../lib/pagePrep.js';
 import {
   chunkDocument,
   splitPreamble,
@@ -64,6 +64,9 @@ import {
   deleteSession,
   savePages,
   getPage,
+  savePart,
+  getParts,
+  getSession,
   deletePage,
   deletePagesFor,
   requestPersistentStorage,
@@ -379,7 +382,6 @@ export function usePipeline(settings) {
       ocr: {
         total: s.ocr.total,
         done: s.ocr.done,
-        parts: s.ocr.parts,
         figCount: s.ocr.figCount,
         source: s.ocr.source || 'ocr',
         comparisons: s.ocr.comparisons || [],
@@ -856,6 +858,9 @@ export function usePipeline(settings) {
           figuresRef.current.push(...page.figures);
           await saveFigures(s.id, page.figures);
           s.ocr.done = i + 1;
+          // Solo la parte appena estratta: il record di sessione porta ormai i
+          // soli contatori, quindi il salvataggio è costante per pagina.
+          await savePart(s.id, i, s.ocr.parts[i]);
           await persistOcr('ocr');
           await deletePage(s.id, i);
         } catch (e) {
@@ -953,10 +958,15 @@ export function usePipeline(settings) {
         lastError: '',
       };
       if (pageImages.length > 1) setDetail('Preparazione ripresa…');
-      await savePages(id, pageImages);
+      await savePages(id, pageImages, (n, t) => {
+        if (t > 1) setDetail(`Preparazione ripresa… ${n}/${t}`);
+      });
       await persistOcr('ocr');
-      const pageMap = new Map(pageImages.map((d, i) => [i, d]));
-      await runOcrPhase(signal, pageMap);
+      // Le pagine sono ora su IndexedDB: liberare l'array evita di tenere in
+      // RAM l'intero libro rasterizzato mentre l'OCR procede pagina per pagina
+      // (le rilegge una alla volta, che è l'unico modo in cui le usa).
+      pageImages.length = 0;
+      await runOcrPhase(signal);
     },
     [persistOcr, runOcrPhase],
   );
@@ -1020,8 +1030,11 @@ export function usePipeline(settings) {
 
   /** Riprende una sessione salvata su IndexedDB (dopo chiusura dell'app). */
   const openSession = useCallback(
-    async (meta) => {
-      if (!meta) return null;
+    async (summary) => {
+      if (!summary) return null;
+      // L'elenco in home porta ora solo il riepilogo (niente testo dei
+      // documenti): il record completo si legge qui, all'apertura.
+      const meta = (await getSession(summary.id)) || summary;
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -1039,7 +1052,7 @@ export function usePipeline(settings) {
           ocr: {
             total: meta.ocr.total,
             done: meta.ocr.done,
-            parts: meta.ocr.parts || new Array(meta.ocr.total).fill(null),
+            parts: await getParts(meta.id, meta.ocr.total),
             figCount: meta.ocr.figCount || 0,
             source: meta.ocr.source || 'ocr',
             comparisons: meta.ocr.comparisons || new Array(meta.ocr.total).fill(null),
@@ -2101,14 +2114,21 @@ export function usePipeline(settings) {
         // pagine ruotate si raddrizzano col tasto ↻. La pipeline resta in
         // pausa finché l'utente non conferma.
         pendingPagesRef.current = { pageImages, fileName: file.name };
-        setPageReview(
-          pageImages.map((d, i) => ({
+        // L'anteprima usa MINIATURE: un `<img>` per pagina a piena risoluzione
+        // riempirebbe il DOM di bitmap decodificate (centinaia di MB su un
+        // libro). Le immagini vere restano in pendingPagesRef per l'OCR.
+        setDetail('Preparazione anteprima…');
+        const thumbs = [];
+        for (let i = 0; i < pageImages.length; i++) {
+          thumbs.push({
             index: i,
-            url: d,
+            url: await makeThumbnail(pageImages[i]),
             rotate: 0,
-            split: isSpreadLike(d),
-          })),
-        );
+            split: isSpreadLike(pageImages[i]),
+          });
+          if (signal.aborted) return;
+        }
+        setPageReview(thumbs);
         setActiveStep(null);
         setDetail('Controlla rotazione e doppie pagine, poi avvia l’estrazione.');
         setPhase('pages');

@@ -32,11 +32,11 @@ export default function SessionsList({ sessions, onOpen, onDelete }) {
       </header>
       <ul className="divide-y divide-border">
         {sessions.map((s) => {
-          const isOcr = s.status === 'ocr' && s.ocr;
-          const done = isOcr
-            ? s.ocr.done
-            : (s.chunks?.filter((c) => c.status === 'done').length ?? 0);
-          const total = isOcr ? s.ocr.total : (s.chunks?.length ?? 0);
+          // L'elenco riceve il riepilogo leggero salvato da `saveSession`:
+          // avanzamento già calcolato, nessun testo del documento da caricare.
+          const isOcr = s.kind === 'ocr';
+          const done = s.done ?? 0;
+          const total = s.total ?? 0;
           const complete = s.status === 'done';
           const label = isOcr
             ? `Estrazione OCR · ${done}/${total} pagine`
