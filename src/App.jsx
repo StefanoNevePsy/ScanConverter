@@ -304,59 +304,68 @@ function TopBar({ keysReady, onOpenSettings, onDashboard, status, running }) {
 /* ---------------------------------------------------------------- Landing */
 
 function Landing({ keysReady, onFile, onOpenSettings, sessions, onOpenSession, onDeleteSession }) {
+  // Chi torna ha già letto la spiegazione: quando c'è lavoro in sospeso la
+  // pagina guida alla ripresa, e «riprendi» e «nuovo documento» stanno
+  // affiancate come azioni di pari grado invece che impilate.
+  const hasSessions = sessions?.length > 0;
+
   return (
-    <div className="mx-auto grid w-full max-w-3xl flex-1 place-items-center py-6">
-      <div className="w-full">
-        <div className="mb-8 text-center">
-          <h2 className="text-balance text-2xl font-semibold tracking-tight text-ink sm:text-[28px]">
-            Ridà vita ai documenti accademici
-          </h2>
+    <div
+      className={`mx-auto flex w-full flex-1 flex-col ${
+        // Con del lavoro in sospeso la pagina si ancora in alto: centrare due
+        // colonne in un viewport alto lascia il contenuto a galleggiare nel
+        // vuoto. Al primo avvio, invece, il blocco è compatto e il centro regge.
+        hasSessions ? 'max-w-5xl justify-start pt-4 sm:pt-8' : 'max-w-2xl justify-center py-6'
+      }`}
+    >
+      <header className={hasSessions ? 'mb-6' : 'mb-10 text-center'}>
+        <h2 className="text-balance text-2xl font-semibold tracking-tight text-ink sm:text-[28px]">
+          {hasSessions ? 'Riprendi o inizia un documento' : 'Ridà vita ai documenti accademici'}
+        </h2>
+        {!hasSessions && (
           <p className="mx-auto mt-3 max-w-xl text-pretty text-[15px] leading-relaxed text-muted">
             Carica una pagina scansionata: la estraiamo con Nemotron-Parse, la
             re-impaginiamo in Typst con Gemini e la compiliamo in un PDF
             vettoriale pulito — con margini ampi pronti per le tue annotazioni.
           </p>
-        </div>
+        )}
+      </header>
 
-        {sessions?.length > 0 && (
+      {!keysReady && (
+        <button
+          onClick={onOpenSettings}
+          className="mb-6 flex w-full items-center gap-3 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-left transition-colors hover:bg-warning/15"
+        >
+          <IconAlert width={18} height={18} className="shrink-0 text-warning" />
+          <span className="text-sm text-ink">
+            <span className="font-medium">Configura le chiavi API</span> — servono
+            NVIDIA e Google per avviare l’elaborazione.
+          </span>
+        </button>
+      )}
+
+      <div className={hasSessions ? 'grid gap-5 lg:grid-cols-[1.15fr_1fr] lg:items-start' : ''}>
+        {hasSessions && (
           <SessionsList
             sessions={sessions}
             onOpen={onOpenSession}
             onDelete={onDeleteSession}
           />
         )}
-
-        {!keysReady && (
-          <button
-            onClick={onOpenSettings}
-            className="mb-4 flex w-full items-center gap-3 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-left transition-colors hover:bg-warning/15"
-          >
-            <IconAlert width={18} height={18} className="shrink-0 text-warning" />
-            <span className="text-sm text-ink">
-              <span className="font-medium">Configura le chiavi API</span> —
-              servono NVIDIA e Google per avviare l’elaborazione.
-            </span>
-          </button>
-        )}
-
         <Dropzone onFile={onFile} />
-
-        <ol className="mt-8 grid gap-3 sm:grid-cols-3">
-          {[
-            ['Estrazione', 'NVIDIA Nemotron-Parse legge titoli, note e tabelle dalla scansione.'],
-            ['Formattazione', 'Gemini riscrive il testo in Typst con margini per le annotazioni.'],
-            ['Compilazione', 'Il compilatore Typst WASM genera il PDF, tutto nel tuo browser.'],
-          ].map(([title, body], i) => (
-            <li key={title} className="rounded-xl border border-border bg-surface/60 p-4">
-              <div className="mb-2 flex size-7 items-center justify-center rounded-full bg-primary-soft text-sm font-semibold text-primary tabular-nums">
-                {i + 1}
-              </div>
-              <div className="text-sm font-medium text-ink">{title}</div>
-              <p className="mt-1 text-[13px] leading-snug text-muted">{body}</p>
-            </li>
-          ))}
-        </ol>
       </div>
+
+      {/* La sequenza si spiega una volta sola, a chi non ha ancora documenti:
+          per gli altri è già nella barra in alto. Una riga di testo, non tre
+          schede identiche che ripetono la stessa forma. */}
+      {!hasSessions && (
+        <p className="mt-8 text-center text-[13px] leading-relaxed text-faint">
+          <span className="text-muted">Nemotron-Parse</span> legge titoli, note e
+          tabelle · <span className="text-muted">Gemini</span> ricostruisce
+          l’impaginazione in Typst · <span className="text-muted">Typst WASM</span>{' '}
+          compila il PDF, tutto nel tuo browser
+        </p>
+      )}
     </div>
   );
 }
@@ -473,6 +482,19 @@ function Workspace({
         </div>
 
         <div className="flex items-center gap-2">
+          <label className="mr-1 flex cursor-pointer items-center gap-2 text-xs text-muted">
+            <span className="hidden sm:inline">Anteprima live</span>
+            <span className="relative inline-flex">
+              <input
+                type="checkbox"
+                checked={livePreview}
+                onChange={onToggleLive}
+                className="peer sr-only"
+              />
+              <span className="h-5 w-9 rounded-full bg-surface-3 transition-colors peer-checked:bg-primary" />
+              <span className="absolute left-0.5 top-0.5 size-4 rounded-full bg-ink transition-transform peer-checked:translate-x-4" />
+            </span>
+          </label>
           <button
             onClick={onStartOver}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-ink"
@@ -552,19 +574,22 @@ function Workspace({
         />
       )}
 
-      {pipe.rawText && !pipe.figureReview && (
-        <RestylePanel
-          onRestyle={pipe.strictReport ? null : (hint) => pipe.restyle(hint)}
-          onApplyLocal={(sel) => pipe.applyLocalStyle(sel)}
-          onHintChange={setStyleHint}
-          busy={pipe.phase === 'running'}
-          disabled={pipe.phase === 'running'}
-          strict={!!pipe.strictReport}
-        />
-      )}
-
+      {/* Strumenti secondari affiancati: due fisarmoniche chiuse impilate
+          rubavano due righe intere allo spazio dell'editor, che è il lavoro. */}
       {pipe.rawText && (
-        <OcrTextPanel text={pipe.rawText} styleHint={styleHint} fixTypos={fixTypos} />
+        <div className="grid gap-3 lg:grid-cols-2">
+          {!pipe.figureReview && (
+            <RestylePanel
+              onRestyle={pipe.strictReport ? null : (hint) => pipe.restyle(hint)}
+              onApplyLocal={(sel) => pipe.applyLocalStyle(sel)}
+              onHintChange={setStyleHint}
+              busy={pipe.phase === 'running'}
+              disabled={pipe.phase === 'running'}
+              strict={!!pipe.strictReport}
+            />
+          )}
+          <OcrTextPanel text={pipe.rawText} styleHint={styleHint} fixTypos={fixTypos} />
+        </div>
       )}
 
       {/* Selettore a schede (solo mobile/tablet stretto) */}
@@ -587,21 +612,6 @@ function Workspace({
               {autofixMsg}
             </div>
           )}
-          <div className="mb-2 flex items-center justify-end">
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
-              <span>Anteprima live</span>
-              <span className="relative inline-flex">
-                <input
-                  type="checkbox"
-                  checked={livePreview}
-                  onChange={onToggleLive}
-                  className="peer sr-only"
-                />
-                <span className="h-5 w-9 rounded-full bg-surface-3 transition-colors peer-checked:bg-primary" />
-                <span className="absolute left-0.5 top-0.5 size-4 rounded-full bg-ink transition-transform peer-checked:translate-x-4" />
-              </span>
-            </label>
-          </div>
           <TypstEditor
             value={pipe.typstCode}
             onChange={pipe.setTypstCode}
@@ -623,7 +633,6 @@ function Workspace({
         </div>
 
         <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'pdf' ? 'flex' : 'hidden'} lg:flex`}>
-          <div className="mb-2 hidden h-[26px] lg:block" aria-hidden="true" />
           <PdfPreview
             svg={pipe.previewSvg}
             compiling={pipe.compiling || pipe.status.compile === 'active'}

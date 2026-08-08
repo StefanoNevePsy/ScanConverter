@@ -108,7 +108,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
       <form
         ref={dialogRef}
         onSubmit={submit}
-        className="card relative flex max-h-[90vh] w-full max-w-lg flex-col p-6 shadow-2xl"
+        className="card relative flex max-h-[90vh] w-full max-w-2xl flex-col p-6 shadow-2xl sm:p-7"
         style={{ zIndex: 'var(--z-modal)' }}
       >
         <div className="flex items-start justify-between gap-4">
@@ -118,9 +118,9 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             </span>
             <div>
               <h2 id="settings-title" className="text-lg font-semibold text-ink">
-                Configurazione API
+                Impostazioni
               </h2>
-              <p className="text-sm text-muted">Salvate solo nel tuo browser.</p>
+              <p className="text-sm text-muted">Motori, qualità e chiavi.</p>
             </div>
           </div>
           <button
@@ -133,56 +133,63 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
           </button>
         </div>
 
-        <div className="mt-6 space-y-5 overflow-y-auto pr-1">
-          <Field
-            label="NVIDIA_API_KEY"
-            hint="Per l'estrazione OCR con Nemotron-Parse (e, in opzione, per il Typst)."
-            ref={firstFieldRef}
-            type={showNvidia ? 'text' : 'password'}
-            value={form.nvidiaApiKey}
-            onChange={update('nvidiaApiKey')}
-            onBlur={(e) => fetchNvidia(e.target.value, form.nvidiaEndpoint)}
-            placeholder="nvapi-…"
-            reveal={showNvidia}
-            onToggle={() => setShowNvidia((v) => !v)}
-            autoComplete="off"
-          />
-
-          <div>
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Workflow di formattazione
-            </span>
-            <span className="mb-2 block text-xs text-faint">
-              Il workflow ad alta fedeltà conserva il testo OCR come fonte
-              canonica e genera il layout senza farlo riscrivere al modello.
-            </span>
-            <div className="grid grid-cols-2 gap-2">
-              <EngineButton
-                active={form.formatWorkflow !== 'strict'}
-                onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'legacy' }))}
-                title="Attuale"
-                sub="layout generato dal modello"
+        <div className="mt-7 space-y-8 overflow-y-auto pr-1">
+          {/* Le due chiavi stanno insieme: sono la stessa decisione, e prima
+              erano separate da un'impostazione che non c'entra. */}
+          <Section title="Chiavi API" note="Restano solo in questo browser.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="NVIDIA_API_KEY"
+                hint="OCR con Nemotron-Parse."
+                ref={firstFieldRef}
+                type={showNvidia ? 'text' : 'password'}
+                value={form.nvidiaApiKey}
+                onChange={update('nvidiaApiKey')}
+                onBlur={(e) => fetchNvidia(e.target.value, form.nvidiaEndpoint)}
+                placeholder="nvapi-…"
+                reveal={showNvidia}
+                onToggle={() => setShowNvidia((v) => !v)}
+                autoComplete="off"
               />
-              <EngineButton
-                active={form.formatWorkflow === 'strict'}
-                onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'strict' }))}
-                title="Fedeltà massima"
-                sub="testo immutabile e verificato"
+              <Field
+                label="GOOGLE_API_KEY"
+                hint="Gemini: OCR e conversione in Typst."
+                type={showGoogle ? 'text' : 'password'}
+                value={form.googleApiKey}
+                onChange={update('googleApiKey')}
+                onBlur={(e) => fetchGemini(e.target.value)}
+                placeholder="AIza…"
+                reveal={showGoogle}
+                onToggle={() => setShowGoogle((v) => !v)}
+                autoComplete="off"
               />
             </div>
-          </div>
-          <Field
-            label="GOOGLE_API_KEY"
-            hint="Per la conversione del testo in codice Typst con Gemini."
-            type={showGoogle ? 'text' : 'password'}
-            value={form.googleApiKey}
-            onChange={update('googleApiKey')}
-            onBlur={(e) => fetchGemini(e.target.value)}
-            placeholder="AIza…"
-            reveal={showGoogle}
-            onToggle={() => setShowGoogle((v) => !v)}
-            autoComplete="off"
-          />
+          </Section>
+
+          <Section title="Come viene ricostruito il documento">
+            <div>
+              <span className="mb-1.5 block text-sm font-medium text-ink">
+                Workflow di formattazione
+              </span>
+              <span className="mb-2 block text-xs text-faint">
+                Il workflow ad alta fedeltà conserva il testo OCR come fonte
+                canonica e genera il layout senza farlo riscrivere al modello.
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                <EngineButton
+                  active={form.formatWorkflow !== 'strict'}
+                  onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'legacy' }))}
+                  title="Attuale"
+                  sub="layout generato dal modello"
+                />
+                <EngineButton
+                  active={form.formatWorkflow === 'strict'}
+                  onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'strict' }))}
+                  title="Fedeltà massima"
+                  sub="testo immutabile e verificato"
+                />
+              </div>
+            </div>
 
           {/* Motore OCR (fase 1: immagine → testo). */}
           <div>
@@ -224,7 +231,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             )}
             {form.formatWorkflow === 'strict' && (
               <div className="mt-3">
-                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+                <label className="flex cursor-pointer items-start gap-3 py-0.5">
                   <input
                     type="checkbox"
                     checked={!!form.compareOcr}
@@ -248,7 +255,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             )}
             {form.ocrEngine !== 'gemini' && (
               <div className="mt-3">
-                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+                <label className="flex cursor-pointer items-start gap-3 py-0.5">
                   <input
                     type="checkbox"
                     checked={!!form.refineTables}
@@ -262,10 +269,9 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                       Ricostruisci le tabelle dall’immagine
                     </span>
                     <span className="block text-xs text-faint">
-                      Ritaglia ogni tabella rilevata e la rimanda a Gemini:
-                      righe e colonne si recuperano solo dall’immagine, non dal
+                      Righe e colonne si recuperano solo dall’immagine, non dal
                       testo appiattito dall’OCR. Una cella inventata viene
-                      scartata e si tiene l’originale. Richiede la chiave Google.
+                      scartata. Richiede la chiave Google.
                     </span>
                   </span>
                 </label>
@@ -360,12 +366,13 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
               />
             </div>
           </div>
+          </Section>
 
-          <details className="group rounded-lg border border-border bg-surface-2/60">
-            <summary className="cursor-pointer select-none px-3.5 py-2.5 text-sm font-medium text-muted hover:text-ink transition-colors">
+          <details className="group border-t border-border pt-5">
+            <summary className="cursor-pointer select-none text-sm font-medium text-muted hover:text-ink transition-colors">
               Opzioni avanzate
             </summary>
-            <div className="space-y-4 px-3.5 pb-4 pt-1">
+            <div className="space-y-5 pt-4">
               <Field
                 label="Endpoint NVIDIA NIM"
                 value={form.nvidiaEndpoint}
@@ -542,6 +549,25 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
         </div>
       </form>
     </div>
+  );
+}
+
+/**
+ * Gruppo di impostazioni affini. Prima il modale era una lista piatta di
+ * quindici controlli in cui le due chiavi API erano separate da opzioni che
+ * non c'entravano: il titolo di sezione, più lo spazio generoso fra gruppi
+ * contro quello stretto al loro interno, fa il lavoro che facevano i riquadri
+ * annidati senza mettere una scatola dentro un'altra.
+ */
+function Section({ title, note, children }) {
+  return (
+    <section>
+      <div className="mb-3 flex items-baseline justify-between gap-3 border-b border-border/70 pb-2">
+        <h3 className="text-sm font-semibold text-ink">{title}</h3>
+        {note && <span className="shrink-0 text-xs text-faint">{note}</span>}
+      </div>
+      <div className="space-y-5">{children}</div>
+    </section>
   );
 }
 

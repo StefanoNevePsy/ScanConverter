@@ -23,7 +23,7 @@ export default function SessionsList({ sessions, onOpen, onDelete }) {
   const [confirmId, setConfirmId] = useState(null);
 
   return (
-    <section className="mb-4 overflow-hidden rounded-xl border border-border bg-surface/60">
+    <section className="overflow-hidden rounded-xl border border-border bg-surface/60">
       <header className="border-b border-border px-4 py-2.5">
         <h3 className="text-sm font-medium text-ink">
           Sessioni salvate{' '}
