@@ -35,6 +35,18 @@ function dataUrlToBytes(dataUrl) {
  * @returns {Uint8Array}
  */
 export function cropToPng(img, bbox, pad = 0.006) {
+  return dataUrlToBytes(cropToDataUrl(img, bbox, pad));
+}
+
+/**
+ * Come `cropToPng`, ma restituisce un data URL: serve per rimandare la
+ * regione ritagliata a un modello multimodale (riparsing di tabelle/formule).
+ * @param {HTMLImageElement} img
+ * @param {{xmin:number,ymin:number,xmax:number,ymax:number}} bbox
+ * @param {number} pad margine extra normalizzato attorno al ritaglio
+ * @returns {string} data URL PNG
+ */
+export function cropToDataUrl(img, bbox, pad = 0.006) {
   const W = img.naturalWidth || img.width;
   const H = img.naturalHeight || img.height;
   const x = Math.max(0, (bbox.xmin - pad) * W);
@@ -47,5 +59,5 @@ export function cropToPng(img, bbox, pad = 0.006) {
   canvas.height = Math.max(1, Math.round(h));
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, x, y, w, h, 0, 0, canvas.width, canvas.height);
-  return dataUrlToBytes(canvas.toDataURL('image/png'));
+  return canvas.toDataURL('image/png');
 }

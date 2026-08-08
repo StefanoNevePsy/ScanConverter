@@ -25,6 +25,7 @@ const KEYS = {
   ocrLongSide: 'sc.ocrLongSide',
   formatWorkflow: 'sc.formatWorkflow',
   compareOcr: 'sc.compareOcr',
+  refineTables: 'sc.refineTables',
 };
 
 export const DEFAULTS = {
@@ -64,6 +65,10 @@ export const DEFAULTS = {
   // renderer Typst deterministico e verifiche bloccanti.
   formatWorkflow: 'legacy',
   compareOcr: false,
+  // Riparsing delle tabelle ritagliandole e rimandandole al modello vision:
+  // la struttura righe/colonne si recupera solo dall'immagine. Richiede bbox
+  // (motore OCR NVIDIA) e la chiave Google.
+  refineTables: false,
 };
 
 // Valori ammessi per il motore Typst.
@@ -145,6 +150,7 @@ export function loadSettings() {
       ? read(KEYS.formatWorkflow, DEFAULTS.formatWorkflow)
       : DEFAULTS.formatWorkflow,
     compareOcr: readBool(KEYS.compareOcr, DEFAULTS.compareOcr),
+    refineTables: readBool(KEYS.refineTables, DEFAULTS.refineTables),
   };
 }
 
@@ -210,4 +216,5 @@ export function saveSettings(s) {
     FORMAT_WORKFLOWS.includes(s.formatWorkflow) ? s.formatWorkflow : DEFAULTS.formatWorkflow,
   );
   write(KEYS.compareOcr, s.compareOcr ? '1' : '0');
+  write(KEYS.refineTables, s.refineTables ? '1' : '0');
 }

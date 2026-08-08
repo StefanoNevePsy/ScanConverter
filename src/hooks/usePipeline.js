@@ -6,6 +6,7 @@ import { savePdf, sharePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assemble.js';
+import { refinePageTables } from '../lib/segments.js';
 import { extractPdfText } from '../lib/pdftext.js';
 import { isSpreadLike, preparePages } from '../lib/pagePrep.js';
 import {
@@ -778,7 +779,23 @@ export function usePipeline(settings) {
                   onWait,
                 );
           if (signal.aborted) return 'aborted';
-          const page = await assemblePage(blocks, dataUrl, figCounter);
+          // Riparsing delle tabelle a livello di regione: righe e colonne
+          // esistono solo nell'IMMAGINE, non nel testo linearizzato dall'OCR.
+          // È un raffinamento: qualunque errore lascia il blocco com'era.
+          let pageBlocks = blocks;
+          if (settings.refineTables) {
+            const res = await refinePageTables({
+              blocks,
+              pageDataUrl: dataUrl,
+              settings,
+              signal,
+              onProgress: (n, tot) => setDetail(`${label} · tabella ${n}/${tot}…`),
+            });
+            pageBlocks = res.blocks;
+            if (res.refined) s.ocr.tablesRefined = (s.ocr.tablesRefined || 0) + res.refined;
+          }
+          if (signal.aborted) return 'aborted';
+          const page = await assemblePage(pageBlocks, dataUrl, figCounter);
           if (settings.formatWorkflow === 'strict' && settings.compareOcr) {
             if (!Array.isArray(s.ocr.comparisons)) s.ocr.comparisons = [];
             setDetail(`${label} · confronto con il secondo motore…`);

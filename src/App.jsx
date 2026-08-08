@@ -44,6 +44,7 @@ export default function App() {
     settings.ocrEngine === 'gemini' ||
     settings.typstEngine !== 'nvidia' ||
     (settings.formatWorkflow === 'strict' && settings.compareOcr) ||
+    (settings.ocrEngine !== 'gemini' && settings.refineTables) ||
     (settings.formatWorkflow === 'strict' && settings.fixTypos && settings.fixEngine === 'gemini');
   const needsNvidia =
     settings.ocrEngine !== 'gemini' ||
@@ -93,6 +94,7 @@ export default function App() {
         next.ocrEngine === 'gemini' ||
         next.typstEngine !== 'nvidia' ||
         (next.formatWorkflow === 'strict' && next.compareOcr) ||
+        (next.ocrEngine !== 'gemini' && next.refineTables) ||
         (next.formatWorkflow === 'strict' && next.fixTypos && next.fixEngine === 'gemini');
       const nextNeedsNvidia =
         next.ocrEngine !== 'gemini' ||

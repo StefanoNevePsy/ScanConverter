@@ -246,6 +246,31 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 </label>
               </div>
             )}
+            {form.ocrEngine !== 'gemini' && (
+              <div className="mt-3">
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={!!form.refineTables}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, refineTables: e.target.checked }))
+                    }
+                    className="mt-0.5 accent-primary"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-ink">
+                      Ricostruisci le tabelle dall’immagine
+                    </span>
+                    <span className="block text-xs text-faint">
+                      Ritaglia ogni tabella rilevata e la rimanda a Gemini:
+                      righe e colonne si recuperano solo dall’immagine, non dal
+                      testo appiattito dall’OCR. Una cella inventata viene
+                      scartata e si tiene l’originale. Richiede la chiave Google.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
           </div>
 
           {/* Motore per la strutturazione Typst (fase 2). */}

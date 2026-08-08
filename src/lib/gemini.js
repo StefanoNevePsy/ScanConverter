@@ -319,6 +319,23 @@ const OCR_PROMPT =
  * @returns {Promise<string>} testo trascritto (Markdown)
  */
 export async function ocrImageGemini({ apiKey, model, imageDataUrl, signal }) {
+  return geminiVision({ apiKey, model, imageDataUrl, prompt: OCR_PROMPT, signal });
+}
+
+/**
+ * Chiamata multimodale generica: invia UNA immagine con un prompt libero e
+ * restituisce il testo. Usata dall'OCR di pagina intera e dal riparsing dei
+ * singoli segmenti (tabelle, formule) ritagliati dalla pagina.
+ * @param {object} p
+ * @param {string} p.apiKey
+ * @param {string} p.model         modello vision (es. "gemini-flash-latest")
+ * @param {string} p.imageDataUrl  data URL dell'immagine
+ * @param {string} p.prompt        istruzione da applicare all'immagine
+ * @param {number} [p.maxTokens]
+ * @param {AbortSignal} [p.signal]
+ * @returns {Promise<string>} testo restituito dal modello
+ */
+export async function geminiVision({ apiKey, model, imageDataUrl, prompt, maxTokens = 8192, signal }) {
   if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
   if (!imageDataUrl) throw new Error('Nessuna immagine da analizzare.');
 
@@ -334,11 +351,11 @@ export async function ocrImageGemini({ apiKey, model, imageDataUrl, signal }) {
         role: 'user',
         parts: [
           { inline_data: { mime_type: mimeType, data: dataB64 } },
-          { text: OCR_PROMPT },
+          { text: prompt },
         ],
       },
     ],
-    generationConfig: { temperature: 0, maxOutputTokens: 8192 },
+    generationConfig: { temperature: 0, maxOutputTokens: maxTokens },
   };
 
   let res;
