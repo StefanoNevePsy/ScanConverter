@@ -230,7 +230,6 @@ export default function App() {
             onDownload={download}
             onStartOver={startOver}
             onRetry={() => pipe.runPipeline(file)}
-            fixTypos={settings.fixTypos}
           />
         )}
       </main>
@@ -375,7 +374,6 @@ function Workspace({
   onDownload,
   onStartOver,
   onRetry,
-  fixTypos,
 }) {
   const doneCount = useMemo(
     () => Object.values(pipe.status).filter((s) => s === 'done').length,
