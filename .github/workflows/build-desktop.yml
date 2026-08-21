@@ -36,6 +36,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # `npm test` è volutamente senza percorsi. Un glob (`tests/*.test.js`) lo
+      # espande la shell, e cmd.exe non lo fa: è così che questo passo si era
+      # rotto sul runner Windows. Ma passare la cartella non è la soluzione —
+      # verificato su entrambe le versioni:
+      #
+      #   forma                          Node 20    Node 22
+      #   nessun argomento                 ok         ok
+      #   `tests` (cartella)               ok       fallisce
+      #   `tests/*.test.js` non espanso  fallisce     ok
+      #
+      # Node 22 ha sostituito il supporto alla cartella con l'espansione dei
+      # glob. Senza argomenti il test runner cerca da sé i file dalla cartella
+      # corrente, ed è l'unica forma che regge ovunque.
       - name: Test JavaScript
         run: npm test
 
