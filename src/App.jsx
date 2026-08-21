@@ -110,6 +110,12 @@ export default function App() {
     [keysReady, pipe],
   );
 
+  // La traduzione sostituisce il documento nel workspace: `file` è ciò che
+  // dà il nome all'intestazione e al PDF scaricato, e va seguito.
+  const renameDocument = useCallback((name) => {
+    setFile({ name, size: 0, type: '' });
+  }, []);
+
   // Le lingue si scelgono dove si traduce, non nelle impostazioni: restano
   // comunque impostazioni salvate, così il documento successivo le ritrova.
   const changeLanguages = useCallback(
@@ -294,6 +300,7 @@ export default function App() {
             sourceLang={settings.sourceLang}
             targetLang={settings.targetLang}
             onLanguageChange={changeLanguages}
+            onDocumentRenamed={renameDocument}
             livePreview={livePreview}
             onToggleLive={() => setLivePreview((v) => !v)}
             onCompile={manualCompile}
@@ -480,6 +487,7 @@ function Workspace({
   sourceLang,
   targetLang,
   onLanguageChange,
+  onDocumentRenamed,
   livePreview,
   onToggleLive,
   onCompile,
@@ -554,9 +562,12 @@ function Workspace({
 
   const handleTranslate = useCallback(async () => {
     const res = await pipe.translateSession();
+    // Da qui in poi il workspace mostra la traduzione: l'intestazione e il
+    // nome del PDF devono seguirla, non restare sull'originale.
+    if (res?.ok && res.fileName) onDocumentRenamed(res.fileName);
     setAutofixMsg(res?.message || null);
     setTimeout(() => setAutofixMsg(null), 20000);
-  }, [pipe]);
+  }, [pipe, onDocumentRenamed]);
 
   // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
   const locateWord = useCallback((suspect) => {

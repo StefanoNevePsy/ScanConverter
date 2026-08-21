@@ -1966,6 +1966,10 @@ export function usePipeline(settings) {
       }
       return {
         ok: true,
+        // Il chiamante usa `fileName` per aggiornare l'intestazione e il nome
+        // del PDF scaricato: da qui in poi si lavora sulla traduzione, e
+        // continuare a mostrare il nome dell'originale sarebbe una bugia.
+        fileName,
         message:
           `Traduzione in ${label} completata: «${fileName}» è un documento a sé, ` +
           `l’originale resta invariato${notes.length ? ` · ${notes.join(' · ')}` : ''}.`,
