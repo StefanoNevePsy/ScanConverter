@@ -16,6 +16,28 @@ import { nvidiaChat, buildTypstUser } from './nvidia.js';
 import { geminiGenerate, SYSTEM_PROMPT, unwrapCodeBlock } from './gemini.js';
 import { localChat, DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL } from './local.js';
 
+/**
+ * Blocco di contesto da anteporre ai prompt.
+ *
+ * Senza, i modelli trattano il lessico specialistico come refuso: «parenti-
+ * ficazione», «ipercircolarità», «cibernetica di secondo ordine» somigliano a
+ * errori di scansione, e la correzione automatica rischia di appiattirli su
+ * parole comuni. Dichiarare il dominio in una frase li rende attesi.
+ *
+ * @param {object} settings
+ * @returns {string} blocco pronto da concatenare, o stringa vuota
+ */
+export function contextBlock(settings) {
+  const note = (settings?.docContext || '').trim();
+  if (!note) return '';
+  return (
+    'CONTESTO DEL DOCUMENTO (usalo per riconoscere il lessico specialistico e ' +
+    'NON scambiarlo per un refuso; non aggiunge nulla al testo, serve solo a ' +
+    'capirlo): ' +
+    note.slice(0, 600)
+  );
+}
+
 /** Motori ammessi per le fasi testuali. */
 export const TEXT_ENGINES = ['gemini', 'nvidia', 'local'];
 
@@ -116,7 +138,14 @@ export async function toTypstLocal({
     endpoint: settings.localEndpoint?.trim() || DEFAULT_LOCAL_ENDPOINT,
     model: settings.localModel?.trim() || DEFAULT_LOCAL_MODEL,
     system: SYSTEM_PROMPT,
-    user: buildTypstUser({ rawText, styleHint, continuation, fidelityNote, fixTypos }),
+    user: buildTypstUser({
+      rawText,
+      styleHint,
+      continuation,
+      fidelityNote,
+      fixTypos,
+      docContext: settings.docContext,
+    }),
     temperature: 0.2,
     maxTokens: 8192,
     signal,

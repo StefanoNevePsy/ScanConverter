@@ -8,13 +8,14 @@ restituisce i blocchi NELLO STESSO FORMATO di Nemotron-Parse, così tutto il
 resto della pipeline dell'app — ordine di lettura, figure, assemblaggio,
 verifica di fedeltà — continua a funzionare senza modifiche.
 
-Attenzione a cosa fa e cosa non fa il modello:
-  Nemotron OCR v2 (~84M parametri) è un riconoscitore di glifi in tre stadi
-  (detector, recognizer, modello relazionale). Restituisce riquadri e testo,
-  NON classi semantiche né Markdown. I titoli qui vengono dedotti da
-  un'euristica di altezza della riga, che è un'approssimazione: la gerarchia
-  esatta che dà Nemotron-Parse non è ricostruibile da questo modello.
-  Gli accenti mancanti li rimette il modello linguistico locale, a valle.
+Cosa fa e cosa non fa il modello:
+  Nemotron OCR v2 (~84M parametri) è un riconoscitore di glifi in tre stadi.
+  Restituisce riquadri e testo, NON classi semantiche né Markdown. Quelle
+  informazioni però non sono perse: stanno nella geometria della pagina, e
+  `layout.py` le ricostruisce con analisi d'immagine deterministica — titoli
+  per rango delle altezze, figure come inchiostro fuori dal testo, tabelle da
+  righelli e colonne allineate. Gli accenti mancanti li rimette il modello
+  linguistico locale, a valle.
 
 Requisiti (dalla scheda modello NVIDIA):
   - Linux amd64 con GPU NVIDIA (Ampere / Lovelace / Hopper / Blackwell)
@@ -36,6 +37,8 @@ import io
 import json
 import logging
 import re
+
+from layout import find_figures_excluding, find_tables, heading_levels
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -71,16 +74,15 @@ def decode_data_url(data_url: str):
     return Image.open(io.BytesIO(raw)).convert("RGB")
 
 
-def to_blocks(regions, width: int, height: int) -> list[dict]:
+def to_blocks(regions, width: int, height: int, page_gray=None) -> list[dict]:
     """
     Converte le regioni del modello nei blocchi attesi dall'app.
 
     Il modello dà coordinate in pixel; l'app lavora con bbox normalizzate 0–1
-    (le usa per ritagliare le figure e per l'ordine di lettura XY-cut).
+    (le usa per ritagliare le figure e per l'ordine di lettura XY-cut). I tipi
+    semantici — titoli, figure, tabelle — li ricava `layout.py` dalla geometria.
     """
-    blocks: list[dict] = []
-    heights: list[float] = []
-
+    prepared = []
     for region in regions:
         text = (region.get("text") or "").strip()
         if not text:
@@ -88,34 +90,44 @@ def to_blocks(regions, width: int, height: int) -> list[dict]:
         x0, y0, x1, y1 = _corners(region.get("bbox") or region.get("box") or [])
         if x1 <= x0 or y1 <= y0:
             continue
-        heights.append(y1 - y0)
+        prepared.append({"text": text, "bbox": (x0, y0, x1, y1)})
+
+    types = heading_levels(prepared) if prepared else []
+
+    blocks: list[dict] = []
+    for region, kind in zip(prepared, types):
+        x0, y0, x1, y1 = region["bbox"]
         blocks.append(
             {
-                "text": text,
-                "_px": (x0, y0, x1, y1),
-                "bbox": {
-                    "xmin": x0 / width,
-                    "ymin": y0 / height,
-                    "xmax": x1 / width,
-                    "ymax": y1 / height,
-                },
+                "type": kind,
+                "text": region["text"],
+                "bbox": _norm(x0, y0, x1, y1, width, height),
             }
         )
 
-    # Euristica dei titoli: una riga molto più alta della mediana è quasi
-    # sempre un'intestazione. È un'approssimazione dichiarata, non una
-    # classificazione semantica: il modello non ne fornisce.
-    median = sorted(heights)[len(heights) // 2] if heights else 0.0
-    for block in blocks:
-        _, y0, _, y1 = block.pop("_px")
-        line_height = y1 - y0
-        if median and line_height >= median * 1.6:
-            block["type"] = "Title"
-        elif median and line_height >= median * 1.25:
-            block["type"] = "Section-header"
-        else:
-            block["type"] = "Text"
+    # Figure e tabelle richiedono l'immagine: senza, si restituisce il testo.
+    if page_gray is None:
+        return blocks
+
+    text_boxes = [r["bbox"] for r in prepared]
+    tables = find_tables(page_gray, text_boxes)
+    for x0, y0, x1, y1 in tables:
+        blocks.append({"type": "Table", "text": "", "bbox": _norm(x0, y0, x1, y1, width, height)})
+    # Le tabelle sono già rese come tabelle: escluderle evita che tornino anche
+    # come immagini ritagliate.
+    for x0, y0, x1, y1 in find_figures_excluding(page_gray, text_boxes, tables):
+        blocks.append({"type": "Picture", "text": "", "bbox": _norm(x0, y0, x1, y1, width, height)})
     return blocks
+
+
+def _norm(x0, y0, x1, y1, width: int, height: int) -> dict:
+    """Coordinate pixel → frazioni di pagina, come le attende l'app."""
+    return {
+        "xmin": max(0.0, min(1.0, x0 / width)),
+        "ymin": max(0.0, min(1.0, y0 / height)),
+        "xmax": max(0.0, min(1.0, x1 / width)),
+        "ymax": max(0.0, min(1.0, y1 / height)),
+    }
 
 
 def _corners(box) -> tuple[float, float, float, float]:
@@ -164,7 +176,10 @@ class Handler(BaseHTTPRequestHandler):
             image = decode_data_url(payload.get("image") or "")
             model = load_model(self.variant)
             regions = model.predict(image)
-            blocks = to_blocks(regions, image.width, image.height)
+            import numpy as np
+
+            gray = np.asarray(image.convert("L"))
+            blocks = to_blocks(regions, image.width, image.height, page_gray=gray)
             log.info("Pagina elaborata: %d blocchi", len(blocks))
             self._send(200, {"blocks": blocks})
         except Exception as exc:  # noqa: BLE001 — l'errore va restituito all'app

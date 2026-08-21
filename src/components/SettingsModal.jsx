@@ -166,6 +166,25 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             </div>
           </Section>
 
+          <Section title="Contesto del documento" note="Facoltativo, ma cambia molto.">
+            <label className="block">
+              <span className="mb-2 block text-xs leading-relaxed text-faint">
+                Una frase su cosa stai digitalizzando. Senza, i modelli
+                trattano il lessico specialistico come un refuso: «parenti&shy;ficazione»
+                o «ipercircolarità» somigliano a errori di scansione e
+                rischiano di essere “corretti”. Dichiarare il dominio li rende
+                attesi — e vale per l’ortografia, la rilettura e la conversione.
+              </span>
+              <textarea
+                value={form.docContext || ''}
+                onChange={update('docContext')}
+                rows={2}
+                placeholder="Es. Libro di psicoterapia sistemica (scuola di Milano): cibernetica di secondo ordine, parentificazione, doppio legame, ipotizzazione."
+                className="w-full resize-y rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-ink placeholder:text-faint transition-colors focus:border-primary focus:outline-none"
+              />
+            </label>
+          </Section>
+
           <Section title="Come viene ricostruito il documento">
             <div>
               <span className="mb-1.5 block text-sm font-medium text-ink">

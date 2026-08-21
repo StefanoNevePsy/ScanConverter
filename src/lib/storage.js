@@ -29,6 +29,7 @@ const KEYS = {
   localEndpoint: 'sc.localEndpoint',
   localModel: 'sc.localModel',
   localOcrEndpoint: 'sc.localOcrEndpoint',
+  docContext: 'sc.docContext',
 };
 
 export const DEFAULTS = {
@@ -78,6 +79,10 @@ export const DEFAULTS = {
   localEndpoint: 'http://localhost:11434/v1/chat/completions',
   localModel: 'qwen3:8b',
   localOcrEndpoint: 'http://localhost:8000/ocr',
+  // Contesto del documento in una frase (dominio, autori, termini ricorrenti).
+  // Serve ai modelli per NON "correggere" il lessico specialistico: senza,
+  // «parentificazione» o «ipercircolarità» sembrano refusi da aggiustare.
+  docContext: '',
 };
 
 // Valori ammessi per il motore Typst.
@@ -163,6 +168,7 @@ export function loadSettings() {
     localEndpoint: read(KEYS.localEndpoint, DEFAULTS.localEndpoint),
     localModel: read(KEYS.localModel, DEFAULTS.localModel),
     localOcrEndpoint: read(KEYS.localOcrEndpoint, DEFAULTS.localOcrEndpoint),
+    docContext: read(KEYS.docContext, DEFAULTS.docContext),
   };
 }
 
@@ -232,4 +238,5 @@ export function saveSettings(s) {
   write(KEYS.localEndpoint, s.localEndpoint?.trim() || DEFAULTS.localEndpoint);
   write(KEYS.localModel, s.localModel?.trim() || DEFAULTS.localModel);
   write(KEYS.localOcrEndpoint, s.localOcrEndpoint?.trim() || DEFAULTS.localOcrEndpoint);
+  write(KEYS.docContext, s.docContext?.trim() || '');
 }

@@ -443,6 +443,7 @@ export function usePipeline(settings) {
               continuation: args.continuation,
               fidelityNote: args.fidelityNote,
               fixTypos: settings.fixTypos,
+              docContext: settings.docContext,
               signal,
             })
           : nvidia
@@ -455,6 +456,7 @@ export function usePipeline(settings) {
               continuation: args.continuation,
               fidelityNote: args.fidelityNote,
               fixTypos: settings.fixTypos,
+              docContext: settings.docContext,
               signal,
             })
           : toTypst({
@@ -465,6 +467,7 @@ export function usePipeline(settings) {
               continuation: args.continuation,
               fidelityNote: args.fidelityNote,
               fixTypos: settings.fixTypos,
+              docContext: settings.docContext,
               signal,
             });
       return withRetry(call, signal, (secs) =>

@@ -196,9 +196,9 @@ export async function nvidiaChat({ apiKey, endpoint, model, system, user, temper
  * Costruisce il messaggio utente della fase Typst. Estratto a parte perché è
  * identico per ogni motore: cambiando il modello non deve cambiare il prompt.
  */
-export function buildTypstUser({ rawText, styleHint, continuation, fidelityNote, fixTypos }) {
+export function buildTypstUser({ rawText, styleHint, continuation, fidelityNote, fixTypos, docContext }) {
   const guidance =
-    buildGuidance(styleHint, { fixTypos }) +
+    buildGuidance(styleHint, { fixTypos, docContext }) +
     (continuation
       ? '\n\nCONTINUAZIONE DI DOCUMENTO: il documento è GIÀ iniziato. Il ' +
         'preambolo Typst è già definito, NON ripeterlo e NON usare #set / ' +

@@ -19,9 +19,15 @@
   vengono saltati e lasciati identici.
 */
 
-import { engineChat, modelFor } from './engines.js';
+import { engineChat, modelFor, contextBlock } from './engines.js';
 import { extractJson } from './aifix.js';
 import { loadSpeller } from './spell.js';
+
+/** Aggiunge il contesto del documento al messaggio di sistema, se presente. */
+function withContext(system, settings) {
+  const block = contextBlock(settings);
+  return block ? `${system}\n\n${block}` : system;
+}
 
 const SYSTEM =
   'Sei un correttore di bozze madrelingua italiano, esperto di testi ' +
@@ -242,7 +248,7 @@ export async function requestProofread({ settings, paragraphs, signal }) {
     settings,
     engine: settings.fixEngine,
     model: modelFor(settings, settings.fixEngine, settings.fixModel),
-    system: SYSTEM,
+    system: withContext(SYSTEM, settings),
     user,
     temperature: 0,
     maxTokens: 8192,
@@ -278,7 +284,7 @@ export async function requestCorrectionReview({ settings, before, after, context
     settings,
     engine: settings.fixEngine,
     model: modelFor(settings, settings.fixEngine, settings.fixModel),
-    system: SYSTEM,
+    system: withContext(SYSTEM, settings),
     user,
     temperature: 0,
     maxTokens: 2048,

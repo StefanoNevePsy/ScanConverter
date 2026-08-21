@@ -51,6 +51,12 @@ export const TYPO_FIX_DIRECTIVE =
  */
 export function buildGuidance(styleHint, opts = {}) {
   return (
+    (opts.docContext
+      ? 'CONTESTO DEL DOCUMENTO (per riconoscere il lessico specialistico e ' +
+        'non scambiarlo per un refuso): ' +
+        String(opts.docContext).trim().slice(0, 600) +
+        '\n\n'
+      : '') +
     'Font disponibili nel compilatore (usa SOLO questi nomi ESATTI): serif ' +
     '"Libertinus Serif", "New Computer Modern", "PT Serif"; sans-serif ' +
     '"DejaVu Sans", "PT Sans"; monospazio "DejaVu Sans Mono". NON usare altri ' +
@@ -121,7 +127,7 @@ export function buildGuidance(styleHint, opts = {}) {
  * @param {AbortSignal} [params.signal]
  * @returns {Promise<string>} codice Typst
  */
-export async function toTypst({ apiKey, model, rawText, styleHint, continuation, fidelityNote, fixTypos, signal }) {
+export async function toTypst({ apiKey, model, rawText, styleHint, continuation, fidelityNote, fixTypos, docContext, signal }) {
   if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
   if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
 
@@ -136,7 +142,7 @@ export async function toTypst({ apiKey, model, rawText, styleHint, continuation,
   const endpoint = `${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   const guidance =
-    buildGuidance(styleHint, { fixTypos }) +
+    buildGuidance(styleHint, { fixTypos, docContext }) +
     (continuation
       ? '\n\nCONTINUAZIONE DI DOCUMENTO: il documento è GIÀ iniziato. Il ' +
         'preambolo Typst è già definito, NON ripeterlo e NON usare #set / ' +

@@ -11,7 +11,7 @@
   contesto (requestSpellFixes): mai il documento intero.
 */
 
-import { engineChat } from './engines.js';
+import { engineChat, contextBlock } from './engines.js';
 import { extractJson } from './aifix.js';
 
 // Token Typst/tecnici che non sono refusi anche se ignoti ai dizionari.
@@ -282,10 +282,12 @@ export function findSuspects(typst, speller, ignore = new Set()) {
  * @returns {Promise<{word:string,fix:string}[]>} solo le voci da cambiare
  */
 export async function requestSpellFixes({ settings, entries, signal }) {
+  const context = contextBlock(settings);
   const system =
     'Sei un correttore di bozze esperto. Il testo proviene dall’OCR di un ' +
     'documento accademico in italiano (con possibili citazioni inglesi). ' +
-    'Rispondi SOLTANTO con JSON valido.';
+    'Rispondi SOLTANTO con JSON valido.' +
+    (context ? '\n\n' + context : '');
   const user =
     'Per ogni parola o SEQUENZA sospetta (con il suo contesto) indica la correzione del ' +
     'refuso OCR. Se la parola è in realtà corretta (nome proprio, termine ' +

@@ -129,3 +129,35 @@ test('modelFor sceglie il campo giusto per ciascun motore', () => {
   assert.equal(modelFor(settings, 'nvidia'), 'meta/llama-3.3-70b-instruct');
   assert.deepEqual(TEXT_ENGINES, ['gemini', 'nvidia', 'local']);
 });
+
+/* ------------------------------------------- contesto del documento */
+
+test('senza contesto i prompt restano invariati', async () => {
+  const { contextBlock } = await import('../src/lib/engines.js');
+  assert.equal(contextBlock({}), '');
+  assert.equal(contextBlock({ docContext: '   ' }), '');
+});
+
+test('il contesto dichiara il lessico specialistico come atteso', async () => {
+  const { contextBlock } = await import('../src/lib/engines.js');
+  const block = contextBlock({ docContext: 'Psicoterapia sistemica: parentificazione, doppio legame.' });
+  assert.match(block, /CONTESTO DEL DOCUMENTO/);
+  assert.match(block, /NON scambiarlo per un refuso/);
+  assert.match(block, /parentificazione/);
+});
+
+test('un contesto lunghissimo viene troncato, non spedito intero', async () => {
+  const { contextBlock } = await import('../src/lib/engines.js');
+  const block = contextBlock({ docContext: 'x'.repeat(5000) });
+  assert.ok(block.length < 900, `troppo lungo: ${block.length}`);
+});
+
+test('il contesto arriva nella guida della fase Typst', async () => {
+  const { buildGuidance } = await import('../src/lib/gemini.js');
+  const senza = buildGuidance('', {});
+  const con = buildGuidance('', { docContext: 'Psicoterapia sistemica.' });
+  assert.ok(!senza.includes('CONTESTO DEL DOCUMENTO'));
+  assert.match(con, /CONTESTO DEL DOCUMENTO.*Psicoterapia sistemica/s);
+  // Deve stare PRIMA delle istruzioni tecniche, non in coda.
+  assert.ok(con.indexOf('CONTESTO') < con.indexOf('Font disponibili'));
+});
