@@ -337,6 +337,20 @@ export function preservesMarkdownDelimiters(original, translated) {
   return [...keys].every((key) => before.get(key) === after.get(key));
 }
 
+/** Tag, link e marker devono mantenere lo stesso scheletro fra le due lingue. */
+export function preservesMarkdownStructure(original, translated) {
+  if (!preservesMarkdownDelimiters(original, translated)) return false;
+  const tags = (value) => [...String(value || '').matchAll(/<\/?([a-z][\w-]*)\b[^>]*>/giu)]
+    .map((match) => `${match[0].startsWith('</') ? '/' : ''}${match[1].toLowerCase()}`);
+  const destinations = (value) => [
+    ...String(value || '').matchAll(/!?\[[^\]\n]*\]\(([^)\n]+)\)/gu),
+  ].map((match) => match[1]);
+  return (
+    JSON.stringify(tags(original)) === JSON.stringify(tags(translated)) &&
+    JSON.stringify(destinations(original)) === JSON.stringify(destinations(translated))
+  );
+}
+
 /**
  * Traduce un documento Markdown, restituendo un Markdown della stessa forma.
  *
@@ -395,7 +409,7 @@ export async function translateDocument({ settings, markdown, onProgress, signal
       const value = parsed.get(block.id);
       if (value) {
         const restored = restoreFigurePaths(block.text, value);
-        if (preservesMarkdownDelimiters(block.text, restored)) {
+        if (preservesMarkdownStructure(block.text, restored)) {
           pieces.set(block.id, restored);
           continue;
         }
@@ -423,7 +437,7 @@ export async function translateDocument({ settings, markdown, onProgress, signal
         const body = one || single.replace(MARK_RE, '').trim();
         if (!body) throw new Error('risposta vuota');
         const restored = restoreFigurePaths(block.text, body);
-        if (!preservesMarkdownDelimiters(block.text, restored)) {
+        if (!preservesMarkdownStructure(block.text, restored)) {
           throw new Error('sintassi Markdown alterata');
         }
         pieces.set(block.id, restored);

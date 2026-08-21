@@ -103,3 +103,29 @@ test('il motore iterativo supera il vecchio limite di quattro errori', async () 
   assert.doesNotMatch(repaired.fixed, /#newpage/);
   assert.equal((repaired.fixed.match(/#pagebreak/g) || []).length, 9);
 });
+
+test('preferisce una compilazione pulita a una patch valida con warning', async () => {
+  const source = 'Prima _termine senza chiusura.';
+  const diagnose = async (code) => {
+    if (code === source) {
+      return {
+        ok: false,
+        diagnostics: [{ severity: 'error', message: 'unclosed delimiter', line: 1 }],
+      };
+    }
+    if (code === 'Prima termine senza chiusura.') {
+      return { ok: true, diagnostics: [{ severity: 'warning', message: 'stile perso' }] };
+    }
+    if (code === 'Prima _termine senza chiusura._') {
+      return { ok: true, diagnostics: [] };
+    }
+    return {
+      ok: false,
+      diagnostics: [{ severity: 'error', message: 'unclosed delimiter', line: 1 }],
+    };
+  };
+  const repaired = await repairTypstDeterministically({ source, diagnose });
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.fixed, 'Prima _termine senza chiusura._');
+  assert.deepEqual(repaired.diagnostics, []);
+});

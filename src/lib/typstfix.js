@@ -544,6 +544,17 @@ function errorCount(result) {
   return result?.diagnostics?.filter((diag) => diag.severity === 'error').length || 0;
 }
 
+function warningCount(result) {
+  return result?.diagnostics?.filter((diag) => diag.severity === 'warning').length || 0;
+}
+
+// Per gli errori di delimitatore una patch può cambiare soltanto sintassi:
+// parentesi, marker inline ed escape. Se cambia qualunque altro carattere,
+// non è più una riparazione conservativa e non viene nemmeno compilata.
+function delimiterTextFingerprint(source) {
+  return String(source || '').replace(/[\\_*\$`[\]{}()]/g, '');
+}
+
 function errorFamily(message) {
   const text = String(message || '').toLowerCase();
   if (/delimiter|unclosed|unterminated|closing/.test(text)) return 'delimiter';
@@ -703,18 +714,45 @@ export async function repairTypstDeterministically({
     const diagnostic = primaryError(result) || {};
     const candidates = typstRepairCandidates(code, diagnostic, maxCandidates);
     let progressed = null;
+    let warningFallback = null;
+    const delimiterFingerprint = errorFamily(diagnostic.message) === 'delimiter'
+      ? delimiterTextFingerprint(code)
+      : null;
     for (const candidate of candidates) {
       abortIfNeeded();
       if (attempts >= maxAttempts) break;
+      if (
+        delimiterFingerprint != null &&
+        delimiterTextFingerprint(candidate.fixed) !== delimiterFingerprint
+      ) continue;
       if (visited.has(candidate.fixed)) continue;
       visited.add(candidate.fixed);
       attempts++;
       const checked = await diagnose(candidate.fixed);
       if (diagnosticProgress(result, checked)) {
-        progressed = { ...candidate, checked };
-        break;
+        const choice = { ...candidate, checked };
+        if (checked?.ok) {
+          const warnings = warningCount(checked);
+          if (!warnings) {
+            progressed = choice;
+            break;
+          }
+          if (!warningFallback || warnings < warningCount(warningFallback.checked)) {
+            warningFallback = choice;
+          }
+          // Un risultato valido ma con warning non chiude subito la ricerca:
+          // prova gli altri candidati locali per trovare una compilazione pulita.
+          continue;
+        }
+        // Conserva il comportamento veloce per gli avanzamenti intermedi:
+        // al prossimo round il compilatore indicherà il nuovo errore primario.
+        if (!warningFallback) {
+          progressed = choice;
+          break;
+        }
       }
     }
+    if (!progressed) progressed = warningFallback;
     if (!progressed) break;
     code = progressed.fixed;
     result = progressed.checked;

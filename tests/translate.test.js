@@ -11,6 +11,7 @@ import {
   parseMarked,
   planTranslation,
   preservesMarkdownDelimiters,
+  preservesMarkdownStructure,
   renderMarked,
   restoreFigurePaths,
   splitBlocks,
@@ -135,6 +136,21 @@ test('rileva delimitatori Markdown persi o riaperti dai backslash', () => {
     false,
   );
   assert.equal(preservesMarkdownDelimiters('_termine_', '_termine tradotto_'), true);
+});
+
+test('rileva tag e destinazioni alterati durante la traduzione', () => {
+  assert.equal(
+    preservesMarkdownStructure('<footnote>Nota.</footnote>', '<footnote>Nota tradotta.'),
+    false,
+  );
+  assert.equal(
+    preservesMarkdownStructure('[fonte](https://example.test/a)', '[source](https://example.test/b)'),
+    false,
+  );
+  assert.equal(
+    preservesMarkdownStructure('<footnote>Nota.</footnote>', '<footnote>Nota tradotta.</footnote>'),
+    true,
+  );
 });
 
 test('senza testo il piano è vuoto', () => {
