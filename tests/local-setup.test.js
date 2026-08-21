@@ -35,6 +35,12 @@ test('il sidecar usa Python 3.12 anche sulle nuove Ubuntu con Python 3.14', () =
   assert.doesNotMatch(script, /python3 -m venv/);
 });
 
+test('il virtualenv OCR resta nel filesystem Linux che supporta i symlink', () => {
+  const script = readFileSync(windowsScript, 'utf8');
+  assert.match(script, /SC_VENV=.*HOME\/\.venvs\/scanconverter-ocr/);
+  assert.doesNotMatch(script, /linuxRoot\/sidecar\/\.venv/);
+});
+
 test('Windows PowerShell 5.1 riesce a leggere tutto lo script', {
   skip: process.platform !== 'win32',
 }, () => {

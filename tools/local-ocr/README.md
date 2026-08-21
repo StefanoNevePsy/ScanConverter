@@ -196,7 +196,9 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
 
    ```bash
    export SC_ROOT=/mnt/d/ScanConverter
+   export SC_VENV="$HOME/.venvs/scanconverter-ocr"
    mkdir -p "$SC_ROOT/sidecar"
+   mkdir -p "$(dirname "$SC_VENV")"
    export HF_HOME="$SC_ROOT/hf-cache"
 
    git clone --branch claude/pipeline-locale --single-branch \
@@ -209,8 +211,8 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
 
    curl -LsSf https://astral.sh/uv/install.sh | sh
    "$HOME/.local/bin/uv" python install 3.12
-   "$HOME/.local/bin/uv" venv --python 3.12 --seed "$SC_ROOT/sidecar/.venv"
-   source "$SC_ROOT/sidecar/.venv/bin/activate"
+   "$HOME/.local/bin/uv" venv --python 3.12 --seed "$SC_VENV"
+   source "$SC_VENV/bin/activate"
    python --version
    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
    pip install hatchling editables setuptools ninja
@@ -222,6 +224,12 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
    cd "$SC_ROOT/sidecar/ScanConverter/tools/local-ocr"
    python server.py
    ```
+
+   Il virtualenv deve stare nel filesystem Linux, non sotto `/mnt/d` o
+   `/mnt/f`: i volumi Windows possono rifiutare i symlink usati da Python.
+   Se la distribuzione Ubuntu è stata installata con `wsl --location` sul
+   disco esterno, anche la home Linux e questo virtualenv sono fisicamente su
+   quel disco.
 
    Le esportazioni di `HF_HOME`, `CUDA_HOME`, `PATH` e
    `NEMOTRON_OCR_MODEL_ROOT` possono essere aggiunte a `~/.bashrc` per gli

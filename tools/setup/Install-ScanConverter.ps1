@@ -253,14 +253,16 @@ function Install-Sidecar {
     Write-Host '    export CUDA_HOME=/usr/local/cuda-12.8' -ForegroundColor White
     Write-Host '    export PATH="$CUDA_HOME/bin:$PATH"' -ForegroundColor White
     Write-Host "    export SC_ROOT=$linuxRoot" -ForegroundColor White
+    Write-Host '    export SC_VENV="$HOME/.venvs/scanconverter-ocr"' -ForegroundColor White
     Write-Host "    export HF_HOME=$linuxRoot/hf-cache" -ForegroundColor White
     Write-Host "    git clone --branch claude/pipeline-locale --single-branch https://github.com/StefanoNevePsy/ScanConverter.git $linuxRoot/sidecar/ScanConverter" -ForegroundColor White
     Write-Host '    git lfs install' -ForegroundColor White
     Write-Host "    git clone https://huggingface.co/nvidia/nemotron-ocr-v2 $linuxRoot/sidecar/nemotron-ocr-v2" -ForegroundColor White
     Write-Host '    curl -LsSf https://astral.sh/uv/install.sh | sh' -ForegroundColor White
     Write-Host '    "$HOME/.local/bin/uv" python install 3.12' -ForegroundColor White
-    Write-Host "    `"`$HOME/.local/bin/uv`" venv --python 3.12 --seed $linuxRoot/sidecar/.venv" -ForegroundColor White
-    Write-Host "    source $linuxRoot/sidecar/.venv/bin/activate" -ForegroundColor White
+    Write-Host '    mkdir -p "$(dirname "$SC_VENV")"' -ForegroundColor White
+    Write-Host '    "$HOME/.local/bin/uv" venv --python 3.12 --seed "$SC_VENV"' -ForegroundColor White
+    Write-Host '    source "$SC_VENV/bin/activate"' -ForegroundColor White
     Write-Host '    python --version' -ForegroundColor White
     Write-Host '    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128' -ForegroundColor White
     Write-Host '    pip install hatchling editables setuptools ninja' -ForegroundColor White
