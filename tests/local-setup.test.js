@@ -7,8 +7,36 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { buildCommand, healthUrl, modelsUrl, suggestedRoot } from '../src/lib/localSetup.js';
+
+const windowsScript = fileURLToPath(
+  new URL('../tools/setup/Install-ScanConverter.ps1', import.meta.url),
+);
+
+test('lo script usa UTF-8 con BOM per Windows PowerShell 5.1', () => {
+  const bytes = readFileSync(windowsScript);
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+});
+
+test('Windows PowerShell 5.1 riesce a leggere tutto lo script', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const path = windowsScript.replaceAll("'", "''");
+  const command = [
+    '$parseErrors = $null',
+    '$parseTokens = $null',
+    `[System.Management.Automation.Language.Parser]::ParseFile('${path}', [ref]$parseTokens, [ref]$parseErrors) | Out-Null`,
+    'if ($parseErrors.Count) { $parseErrors | Format-List; exit 1 }',
+  ].join('; ');
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', command], {
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
 
 test('su Windows il comando è PowerShell e cita il percorso', () => {
   const { shell, command } = buildCommand({

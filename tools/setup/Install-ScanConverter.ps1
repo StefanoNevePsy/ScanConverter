@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Installa gli accessori locali di ScanConverter dove decidi tu.
 
@@ -146,11 +146,11 @@ function Install-Ollama {
     elseif ($PSCmdlet.ShouldProcess($programDir, 'Installa Ollama')) {
         $installer = Join-Path $env:TEMP 'OllamaSetup.exe'
         Get-Download -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile $installer
-        Write-Host '       installo (l’installer chiede conferma)…'
+        Write-Host "       installo (l'installer chiede conferma)..."
         Start-Process -FilePath $installer -ArgumentList "/DIR=`"$programDir`"" -Wait
         Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $exe) { Write-Ok "Ollama installato in $programDir" }
-        else { Write-Warn2 "Ollama non risulta in $programDir: controlla la destinazione scelta nell’installer." }
+        else { Write-Warn2 "Ollama non risulta in ${programDir}: controlla la destinazione scelta nell'installer." }
     }
 
     if ($SkipModel) { Write-Warn2 'Modello non scaricato (-SkipModel).'; return }
@@ -191,7 +191,7 @@ function Install-Typst {
         $staging = Join-Path $env:TEMP "typst-staging-$(Get-Random)"
         Expand-Archive -LiteralPath $zip -DestinationPath $staging -Force
         $found = Get-ChildItem -Path $staging -Filter 'typst.exe' -Recurse | Select-Object -First 1
-        if (-not $found) { throw "L’archivio Typst non contiene typst.exe." }
+        if (-not $found) { throw "L'archivio Typst non contiene typst.exe." }
         Copy-Item -LiteralPath $found.FullName -Destination $exe -Force
         foreach ($extra in @('LICENSE', 'NOTICE', 'README.md')) {
             $file = Join-Path $found.Directory.FullName $extra
@@ -285,7 +285,7 @@ if ($Components -contains 'sidecar') { Install-Sidecar -Root $Root }
 Write-Manifest -Root $Root -Installed $Components
 
 Write-Step 'Fatto'
-Write-Host @"
+$finalMessage = @"
   Nell'app: Impostazioni -> Motori per fase -> scegli «Locale» dove vuoi.
   Gli indirizzi predefiniti (Ollama su 11434, sidecar su 8000) vanno già bene.
 
@@ -294,4 +294,5 @@ Write-Host @"
 
   Disco esterno: se un domani cambia lettera, rilancia questo script con la
   nuova (-Root E:\...). Non riscarica nulla, rimette solo a posto i percorsi.
-"@ -ForegroundColor DarkGray
+"@
+Write-Host $finalMessage -ForegroundColor DarkGray
