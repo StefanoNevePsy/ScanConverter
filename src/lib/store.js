@@ -13,7 +13,7 @@
 */
 
 const DB_NAME = 'scanconverter';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 let dbPromise = null;
 
@@ -46,6 +46,11 @@ function openDB() {
         }
         if (!db.objectStoreNames.contains('summary')) {
           db.createObjectStore('summary', { keyPath: 'id' });
+        }
+        // v4: checkpoint incrementali della traduzione. Un libro interrotto
+        // riparte dall'ultimo gruppo valido invece di rifare ore di lavoro.
+        if (!db.objectStoreNames.contains('translation')) {
+          db.createObjectStore('translation', { keyPath: 'key' });
         }
         if (req.transaction) migrateToV3(req.transaction);
       };
@@ -255,6 +260,7 @@ export async function deleteSession(id) {
     await tx('summary', 'readwrite', (s) => s.delete(id));
     await tx('part', 'readwrite', (s) => s.delete(idRange(id)));
     await tx('figure', 'readwrite', (s) => s.delete(idRange(id)));
+    await tx('translation', 'readwrite', (s) => s.delete(idRange(id)));
     await deletePagesFor(id);
   } catch {
     /* ignora */
@@ -344,6 +350,54 @@ export async function savePages(id, dataUrls, onProgress) {
     }
   } catch {
     /* persistenza non disponibile: l'OCR resta comunque in memoria */
+  }
+}
+
+export async function saveTranslationGroup(id, jobKey, checkpoint) {
+  try {
+    const index = Number(checkpoint?.index);
+    if (!Number.isInteger(index) || index < 0) return;
+    await tx('translation', 'readwrite', (s) => s.put({
+      ...checkpoint,
+      key: `${id}::${jobKey}::${String(index).padStart(8, '0')}`,
+      id,
+      jobKey,
+      index,
+      updatedAt: Date.now(),
+    }));
+  } catch {
+    /* la traduzione continua anche se lo storage è indisponibile */
+  }
+}
+
+export async function getTranslationGroups(id, jobKey) {
+  try {
+    const all = (await tx('translation', 'readonly', (s) => s.getAll(idRange(id)))) || [];
+    return all.filter((item) => item.jobKey === jobKey).sort((a, b) => a.index - b.index);
+  } catch {
+    return [];
+  }
+}
+
+export async function deleteTranslationJob(id, jobKey) {
+  try {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const t = db.transaction('translation', 'readwrite');
+      const os = t.objectStore('translation');
+      const request = os.openCursor(idRange(id));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        if (cursor.value?.jobKey === jobKey) cursor.delete();
+        cursor.continue();
+      };
+      t.oncomplete = resolve;
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error);
+    });
+  } catch {
+    /* ignora */
   }
 }
 

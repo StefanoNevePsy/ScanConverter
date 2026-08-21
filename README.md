@@ -341,7 +341,7 @@ scaricare il PDF), e ognuna si può **eliminare**.
 **Configurabile** (Impostazioni → Opzioni avanzate):
 
 - **Max pagine PDF** per singolo caricamento (default 20, fino a 2000);
-- **Dimensione chunk** in caratteri per richiesta a Gemini (default 5000):
+- **Dimensione chunk** in caratteri per richiesta di struttura o traduzione (default 5000):
   più piccola = più richieste ma più tolleranza ai rate limit.
 
 ## Tabelle, gerarchia, figure e testo OCR

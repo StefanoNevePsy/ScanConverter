@@ -59,6 +59,7 @@ export const TEXT_ENGINES = ['gemini', 'nvidia', 'local'];
  * @param {number} [p.temperature]
  * @param {number} [p.maxTokens]
  * @param {boolean} [p.json]      chiede JSON quando il motore lo supporta
+ * @param {'none'|'low'|'medium'|'high'} [p.reasoningEffort]
  * @param {AbortSignal} [p.signal]
  * @returns {Promise<string>} testo della risposta
  */
@@ -72,6 +73,7 @@ export async function engineChat({
   temperature = 0.1,
   maxTokens = 4096,
   json = false,
+  reasoningEffort,
   signal,
 }) {
   const configured = phase ? phaseConfig(settings, phase) : null;
@@ -94,6 +96,7 @@ export async function engineChat({
       temperature,
       maxTokens,
       json,
+      reasoningEffort,
       signal,
     });
   }
@@ -153,6 +156,7 @@ export async function toTypstLocal({
     }),
     temperature: 0.2,
     maxTokens: 8192,
+    reasoningEffort: 'none',
     signal,
   });
   return unwrapCodeBlock(text);

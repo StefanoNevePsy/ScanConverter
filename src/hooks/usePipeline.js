@@ -10,7 +10,11 @@ import { refinePageTables } from '../lib/segments.js';
 import { localOcrBlocks } from '../lib/local.js';
 import { toTypstLocal } from '../lib/engines.js';
 import { phaseConfig } from '../lib/phases.js';
-import { translateDocument as translateMarkdown, languageLabel } from '../lib/translate.js';
+import {
+  translateDocument as translateMarkdown,
+  languageLabel,
+  translationJobKey,
+} from '../lib/translate.js';
 import { extractPdfText } from '../lib/pdftext.js';
 import { hasPdfData, releaseDesktopPdf } from '../lib/desktop.js';
 import { isSpreadLike, preparePages, makeThumbnail } from '../lib/pagePrep.js';
@@ -88,6 +92,9 @@ import {
   deletePage,
   deletePagesFor,
   requestPersistentStorage,
+  saveTranslationGroup,
+  getTranslationGroups,
+  deleteTranslationJob,
 } from '../lib/store.js';
 
 // Pausa interrompibile (per il backoff sui rate limit).
@@ -1930,11 +1937,19 @@ export function usePipeline(settings) {
     setTranslateBusy(true);
     setTranslateDetail('');
     try {
+      const sourceId = source?.id || 'unsaved';
+      const translateModel = phaseConfig(settings, 'translate').model;
+      const jobKey = translationJobKey({ markdown, settings, model: translateModel });
+      const checkpoints = await getTranslationGroups(sourceId, jobKey);
       const result = await translateMarkdown({
         settings,
         markdown,
         signal: controller.signal,
-        onProgress: (done, total) => setTranslateDetail(`${done}/${total} passaggi`),
+        resumeGroups: checkpoints,
+        onCheckpoint: (checkpoint) => saveTranslationGroup(sourceId, jobKey, checkpoint),
+        onProgress: (done, total, resumed) => setTranslateDetail(
+          `${done}/${total} passaggi${resumed ? ' · ripresa salvata' : ''}`,
+        ),
       });
       if (controller.signal.aborted) return { ok: false, message: 'Traduzione annullata.' };
 
@@ -1957,6 +1972,7 @@ export function usePipeline(settings) {
       setStatus({ ...emptyStatus, ocr: 'done' });
       setPhase('running');
       await startFormat(result.markdown, fileName, controller.signal);
+      await deleteTranslationJob(sourceId, jobKey);
       await refreshSessions();
 
       const notes = [];

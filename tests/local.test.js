@@ -48,11 +48,13 @@ test('localChat parla la forma OpenAI e toglie il ragionamento', async () => {
     model: 'qwen3:8b',
     system: 'sistema',
     user: 'utente',
+    reasoningEffort: 'none',
   });
   assert.equal(text, 'Risposta pulita.');
   assert.equal(sent.body.model, 'qwen3:8b');
   assert.equal(sent.body.messages[0].role, 'system');
   assert.equal(sent.body.stream, false);
+  assert.equal(sent.body.reasoning_effort, 'none');
   // Nessuna chiave API deve finire in una richiesta locale.
   assert.ok(!('Authorization' in sent.headers));
 });

@@ -74,7 +74,7 @@ export const PHASE_DEFAULTS = {
   },
   translate: {
     engine: 'gemini',
-    models: { nvidia: 'z-ai/glm-5.2', gemini: 'gemini-flash-lite-latest', local: 'qwen3:8b' },
+    models: { nvidia: 'z-ai/glm-5.2', gemini: 'gemini-flash-lite-latest', local: 'translategemma:4b' },
   },
   proof: {
     engine: 'nvidia',

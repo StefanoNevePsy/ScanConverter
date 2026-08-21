@@ -22,7 +22,7 @@ export const COMPONENTS = [
   {
     id: 'ollama',
     label: 'Modello linguistico (Ollama)',
-    note: 'Rilettura, struttura e traduzione in locale. ~5 GB con qwen3:8b.',
+    note: 'Qwen per struttura/rilettura + TranslateGemma per traduzione. ~8,5 GB su disco.',
     default: true,
   },
   {

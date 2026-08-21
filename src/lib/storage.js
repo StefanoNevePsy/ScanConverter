@@ -57,7 +57,7 @@ export const DEFAULTS = {
   //  'ocr'  → rasterizza sempre e passa da Nemotron-Parse (per estrarre figure).
   pdfTextMode: 'auto',
   maxPages: 20, // pagine PDF per singolo caricamento
-  chunkSize: 5000, // caratteri per chunk inviato a Gemini
+  chunkSize: 5000, // caratteri per richiesta di struttura o traduzione
   // Correzione conservativa dei refusi OCR (accenti, parole saltate,
   // virgolette) durante la strutturazione in Typst. Attiva di default: usa il
   // contesto di frase che il dizionario per-parola non ha.
@@ -168,7 +168,9 @@ function migratedPhases() {
       engine: read(LEGACY.fixEngine, ''),
       models: { nvidia: read(LEGACY.fixModel, ''), gemini: geminiFallback, local: localFallback },
     },
-    translate: { engine: '', models: { local: localFallback } },
+    // La traduzione non esisteva nelle vecchie versioni: non deve ereditare
+    // per caso il modello generalista usato per Typst e rilettura.
+    translate: { engine: '', models: {} },
   };
 
   const out = {};
@@ -200,7 +202,14 @@ function loadPhases() {
     const models = { ...base.models };
     for (const engine of ENGINES) {
       const value = String(saved?.models?.[engine] || '').trim();
-      if (value) models[engine] = value;
+      if (value) {
+        // qwen3:8b era il precedente default della sola traduzione. Chi aveva
+        // scelto un modello diverso conserva la scelta; il vecchio default
+        // viene aggiornato al modello dedicato più rapido.
+        models[engine] = phase === 'translate' && engine === 'local' && value === 'qwen3:8b'
+          ? base.models.local
+          : value;
+      }
     }
     out[phase] = { engine: normalizeEngine(phase, saved?.engine || base.engine), models };
   }

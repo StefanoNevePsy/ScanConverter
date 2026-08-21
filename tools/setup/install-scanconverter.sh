@@ -17,6 +17,7 @@ set -eu
 TYPST_VERSION='0.15.1'
 ROOT=''
 MODEL='qwen3:8b'
+TRANSLATION_MODEL='translategemma:4b'
 COMPONENTS='ollama typst'
 SKIP_MODEL=0
 
@@ -34,6 +35,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --root)       ROOT="${2:?--root richiede un percorso}"; shift 2 ;;
     --model)      MODEL="${2:?--model richiede un nome}"; shift 2 ;;
+    --translation-model) TRANSLATION_MODEL="${2:?--translation-model richiede un nome}"; shift 2 ;;
     --components) COMPONENTS="$(echo "${2:?}" | tr ',' ' ')"; shift 2 ;;
     --skip-model) SKIP_MODEL=1; shift ;;
     -h|--help)    usage 0 ;;
@@ -100,9 +102,11 @@ install_ollama() {
   fi
 
   [ "$SKIP_MODEL" -eq 1 ] && { warn 'Modello non scaricato (--skip-model).'; return; }
-  cyan "Modello $MODEL"
-  if ollama pull "$MODEL"; then ok "$MODEL pronto in $ROOT/models"
-  else warn "«ollama pull $MODEL» non è riuscito."; fi
+  cyan "Modelli $MODEL e $TRANSLATION_MODEL"
+  for model_name in "$MODEL" "$TRANSLATION_MODEL"; do
+    if ollama pull "$model_name"; then ok "$model_name pronto in $ROOT/models"
+    else warn "«ollama pull $model_name» non è riuscito."; fi
+  done
 }
 
 install_typst() {
@@ -170,7 +174,11 @@ write_manifest() {
   typst_path=''
   wants typst && [ -x "$ROOT/typst/typst" ] && typst_path="$ROOT/typst/typst"
   model=''
-  [ "$SKIP_MODEL" -eq 0 ] && model="$MODEL"
+  translation_model=''
+  if [ "$SKIP_MODEL" -eq 0 ]; then
+    model="$MODEL"
+    translation_model="$TRANSLATION_MODEL"
+  fi
   cat > "$dir/local-setup.json" <<JSON
 {
   "schemaVersion": 1,
@@ -178,6 +186,7 @@ write_manifest() {
   "root": "$ROOT",
   "components": "$COMPONENTS",
   "model": "$model",
+  "translationModel": "$translation_model",
   "localEndpoint": "http://localhost:11434/v1/chat/completions",
   "localOcrEndpoint": "http://localhost:8000/ocr",
   "typstPath": "$typst_path"

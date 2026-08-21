@@ -40,6 +40,7 @@ let mainWindow = null;
 let typstEngine = null;
 let typstEngineSpawn = null;
 let typstWorkRoot = null;
+let typstPdfCacheRoot = null;
 const typstRequests = new Map();
 const nativePdfs = new Map();
 
@@ -110,11 +111,21 @@ async function startTypstEngine() {
     if (!typstWorkRoot) {
       typstWorkRoot = fs.mkdtempSync(path.join(app.getPath('temp'), 'scanconverter-typst-'));
     }
+    if (!typstPdfCacheRoot) {
+      const setup = readLocalSetup();
+      // Se l'utente ha scelto un disco esterno per il motore locale, anche i
+      // PDF potenzialmente grandi restano lì; altrimenti si usa userData.
+      typstPdfCacheRoot = setup.found && setup.rootAvailable
+        ? path.join(setup.root, 'cache', 'typst-pdf')
+        : path.join(app.getPath('userData'), 'typst-pdf-cache');
+    }
     const config = Buffer.from(JSON.stringify({
       typstPath: executable,
       workRoot: typstWorkRoot,
       fontsDir: bundledFontsPath(),
       packageCachePath: path.join(app.getPath('userData'), 'typst-packages'),
+      pdfCacheRoot: typstPdfCacheRoot,
+      cacheVersion: 'typst-0.15.1-v1',
     }), 'utf8').toString('base64');
     const engineModule = typstEngineModulePath();
     let child;
@@ -192,13 +203,20 @@ async function requestTypstEngine(request) {
   });
 }
 
-function registerNativePdf(pdfPath, size) {
+function registerNativePdf(pdfPath, size, persistent = false) {
   const resolved = path.resolve(pdfPath);
-  if (!typstWorkRoot || !resolved.startsWith(`${path.resolve(typstWorkRoot)}${path.sep}`)) {
+  const inWorkRoot = typstWorkRoot && resolved.startsWith(`${path.resolve(typstWorkRoot)}${path.sep}`);
+  const inCacheRoot = typstPdfCacheRoot && resolved.startsWith(`${path.resolve(typstPdfCacheRoot)}${path.sep}`);
+  if (!inWorkRoot && !inCacheRoot) {
     throw new Error('Il motore Typst ha restituito un percorso PDF non sicuro.');
   }
   const id = crypto.randomUUID();
-  nativePdfs.set(id, { path: resolved, size: Number(size) || 0, releaseTimer: null });
+  nativePdfs.set(id, {
+    path: resolved,
+    size: Number(size) || 0,
+    persistent: Boolean(persistent && inCacheRoot),
+    releaseTimer: null,
+  });
   return {
     kind: 'desktop-pdf',
     id,
@@ -293,6 +311,7 @@ function readLocalSetup() {
         path: candidate,
         root: String(parsed.root || ''),
         model: String(parsed.model || ''),
+        translationModel: String(parsed.translationModel || ''),
         components: String(parsed.components || ''),
         localEndpoint: String(parsed.localEndpoint || ''),
         localOcrEndpoint: String(parsed.localOcrEndpoint || ''),
@@ -342,7 +361,7 @@ function registerDesktopIpc() {
     const result = await requestTypstEngine(request);
     if (!result.ok || !result.pdfPath) return result;
     try {
-      const artifact = registerNativePdf(result.pdfPath, result.size);
+      const artifact = registerNativePdf(result.pdfPath, result.size, result.persistent);
       const { pdfPath: _privatePath, ...safeResult } = result;
       return { ...safeResult, artifact };
     } catch (error) {
@@ -377,7 +396,7 @@ function registerDesktopIpc() {
     if (!artifact.releaseTimer) {
       artifact.releaseTimer = setTimeout(() => {
         nativePdfs.delete(id);
-        fs.promises.rm(artifact.path, { force: true }).catch(() => {});
+        if (!artifact.persistent) fs.promises.rm(artifact.path, { force: true }).catch(() => {});
       }, 30_000);
       artifact.releaseTimer.unref?.();
     }

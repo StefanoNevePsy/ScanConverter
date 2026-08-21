@@ -94,6 +94,24 @@ test('un blocco saltato dal modello viene ritentato da solo, non perso', async (
   assert.ok(blocks[1].includes('Secondo blocco'), blocks[1]);
 });
 
+test('riprende i gruppi salvati senza richiamare il modello', async () => {
+  const calls = fakeModel();
+  const checkpoints = [];
+  const markdown = Array.from({ length: 12 }, (_, i) =>
+    `Paragrafo ${i} abbastanza lungo da produrre più gruppi di traduzione.`,
+  ).join('\n\n');
+  const settings = { ...SETTINGS, chunkSize: 240 };
+  const first = await translateDocument({
+    settings,
+    markdown,
+    onCheckpoint: (checkpoint) => checkpoints.push(checkpoint),
+  });
+  const callsAfterFirst = calls.length;
+  const resumed = await translateDocument({ settings, markdown, resumeGroups: checkpoints });
+  assert.equal(calls.length, callsAfterFirst, 'nessuna richiesta duplicata');
+  assert.equal(resumed.markdown, first.markdown);
+});
+
 test('un delimitatore perso dal modello fa ritentare il blocco', async () => {
   fakeModel({
     sabotage: (content, _marks, call) => (

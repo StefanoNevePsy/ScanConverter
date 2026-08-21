@@ -60,7 +60,7 @@ function seedV2() {
   });
 }
 
-test('la migrazione V2→V3 conserva le sessioni e alleggerisce l’elenco', async () => {
+test('la migrazione V2→V4 conserva le sessioni e alleggerisce l’elenco', async () => {
   await seedV2();
   // L'import avviene DOPO il seed: store.js apre il database (e migra) da sé.
   const store = await import('../src/lib/store.js');
@@ -103,6 +103,20 @@ test('la migrazione V2→V3 conserva le sessioni e alleggerisce l’elenco', asy
   assert.equal(fullB.rawText, 'testo completo');
   assert.equal(fullB.chunks.length, 2);
   assert.match(fullB.preamble, /margin/);
+});
+
+test('i checkpoint di traduzione sono isolati per documento e lavoro', async () => {
+  const store = await import('../src/lib/store.js');
+  await store.saveTranslationGroup('1752230000000-aaaaa', 'job-a', {
+    index: 0, signature: 'sig-a', pieces: [[0, 'tradotto']], retried: 0, failed: 0,
+  });
+  await store.saveTranslationGroup('1752230000000-aaaaa', 'job-b', {
+    index: 0, signature: 'sig-b', pieces: [[0, 'altro']], retried: 0, failed: 0,
+  });
+  assert.equal((await store.getTranslationGroups('1752230000000-aaaaa', 'job-a')).length, 1);
+  await store.deleteTranslationJob('1752230000000-aaaaa', 'job-a');
+  assert.equal((await store.getTranslationGroups('1752230000000-aaaaa', 'job-a')).length, 0);
+  assert.equal((await store.getTranslationGroups('1752230000000-aaaaa', 'job-b')).length, 1);
 });
 
 test('le letture restano confinate alla singola sessione', async () => {

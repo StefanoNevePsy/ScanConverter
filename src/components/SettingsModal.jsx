@@ -470,7 +470,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 />
                 <Field
                   label="Dimensione chunk"
-                  hint="Caratteri per richiesta (1000–30000)."
+                  hint="Caratteri per richiesta. In traduzione il valore è usato per intero (TranslateGemma: massimo 5000)."
                   type="number"
                   min={1000}
                   max={30000}

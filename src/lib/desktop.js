@@ -10,13 +10,31 @@ function bridge() {
 
 function figureSetFor(figures) {
   const collection = Array.isArray(figures) ? figures : EMPTY_FIGURES;
-  let id = figureSets.get(collection);
-  if (!id) {
-    id = globalThis.crypto?.randomUUID?.()
-      || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    figureSets.set(collection, id);
+  let value = figureSets.get(collection);
+  if (!value) {
+    // Impronta stabile anche dopo il riavvio. Si campionano uniformemente i
+    // byte, evitando di scandire centinaia di MB nel thread dell'interfaccia.
+    let hash = 0x811c9dc5;
+    const add = (number) => {
+      hash ^= Number(number) & 0xff;
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    };
+    for (const figure of collection) {
+      const path = String(figure?.path || '');
+      for (let i = 0; i < path.length; i++) add(path.charCodeAt(i));
+      const bytes = figure?.bytes instanceof Uint8Array
+        ? figure.bytes
+        : new Uint8Array(figure?.bytes || []);
+      for (const shift of [0, 8, 16, 24]) add(bytes.length >>> shift);
+      const step = Math.max(1, Math.floor(bytes.length / 4096));
+      for (let i = 0; i < bytes.length; i += step) add(bytes[i]);
+      if (bytes.length) add(bytes[bytes.length - 1]);
+    }
+    const digest = `${collection.length.toString(36)}-${hash.toString(16).padStart(8, '0')}`;
+    value = { id: `fig-${digest}`, digest };
+    figureSets.set(collection, value);
   }
-  return { id, collection };
+  return { ...value, collection };
 }
 
 function serializedFigure(figure) {
@@ -71,19 +89,23 @@ export async function compileWithNativeTypst(source, figures, diagnoseOnly = fal
   const figureSet = figureSetFor(figures);
 
   try {
-    if (!uploadedFigureSets.has(figureSet.id)) {
+    const request = {
+      source,
+      diagnoseOnly,
+      figureSetId: figureSet.id,
+      figureDigest: figureSet.digest,
+    };
+    // Prima si tenta la cache persistente: alla riapertura di un libro evita
+    // sia Typst sia il trasferimento IPC di tutte le figure. Soltanto un miss
+    // chiede di registrare il progetto e ripete la compilazione.
+    let result = await api.compileTypst(request);
+    if (result?.code === 'UNKNOWN_FIGURE_SET') {
       const prepared = await uploadFigureSet(api, figureSet);
       if (prepared?.infrastructure || !prepared?.ok) {
         nativeEngineDisabled = true;
         console.warn('Impossibile registrare le figure nel motore nativo:', prepared?.error);
         return null;
       }
-    }
-    const request = { source, diagnoseOnly, figureSetId: figureSet.id };
-    let result = await api.compileTypst(request);
-    if (result?.code === 'UNKNOWN_FIGURE_SET') {
-      const prepared = await uploadFigureSet(api, figureSet);
-      if (!prepared?.ok) return null;
       result = await api.compileTypst(request);
     }
     if (result?.figureSetReady) uploadedFigureSets.add(figureSet.id);

@@ -26,6 +26,7 @@
 */
 
 import { engineChat, contextBlock } from './engines.js';
+import { phaseConfig } from './phases.js';
 
 /** Lingue offerte nell'interfaccia. `auto` vale solo come lingua di partenza. */
 export const LANGUAGES = [
@@ -261,13 +262,43 @@ const SYSTEM =
   'Traduci con precisione terminologica, mantenendo il registro dell’autore ' +
   'e senza aggiungere, omettere o riassumere nulla.';
 
-function buildUser({ group, sourceLang, targetLang, settings }) {
+export function isTranslateGemma(model) {
+  return /(?:^|[/:])translategemma(?::|$)/i.test(String(model || ''));
+}
+
+/** Hash stabile e leggero: identifica un lavoro/checkpoint, non protegge segreti. */
+export function stableTextHash(value) {
+  let hash = 0x811c9dc5;
+  const source = String(value || '');
+  for (let i = 0; i < source.length; i++) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${source.length.toString(36)}-${hash.toString(16).padStart(8, '0')}`;
+}
+
+export function translationJobKey({ markdown, settings, model }) {
+  return stableTextHash(JSON.stringify({
+    markdown,
+    sourceLang: settings?.sourceLang || 'auto',
+    targetLang: settings?.targetLang || 'en',
+    chunkSize: settings?.chunkSize || 5000,
+    overlap: settings?.translateOverlap ?? 2,
+    docContext: settings?.docContext || '',
+    model: model || '',
+  }));
+}
+
+function buildUser({ group, sourceLang, targetLang, settings, specialized = false }) {
   const from = sourceLang && sourceLang !== 'auto'
     ? `dalla lingua «${languageLabel(sourceLang)}» `
     : '';
   const context = contextBlock(settings);
   return (
-    `Traduci ${from}verso «${languageLabel(targetLang)}».\n\n` +
+    (specialized
+      ? `Sei un traduttore professionale ${from}verso «${languageLabel(targetLang)}». ` +
+        'Traduci il brano completo con precisione editoriale, usando il contesto per mantenere coerente il lessico tecnico.\n\n'
+      : `Traduci ${from}verso «${languageLabel(targetLang)}».\n\n`) +
     (context ? `${context}\n\n` : '') +
     (group.before
       ? 'CONTESTO PRECEDENTE (NON tradurlo, non ripeterlo in risposta: serve ' +
@@ -361,9 +392,20 @@ export function preservesMarkdownStructure(original, translated) {
  * @param {AbortSignal} [p.signal]
  * @returns {Promise<{markdown:string, blocks:number, retried:number, failed:number}>}
  */
-export async function translateDocument({ settings, markdown, onProgress, signal }) {
+export async function translateDocument({
+  settings,
+  markdown,
+  onProgress,
+  signal,
+  resumeGroups = [],
+  onCheckpoint,
+}) {
+  const configured = phaseConfig(settings, 'translate');
+  const specialized = configured.engine === 'local' && isTranslateGemma(configured.model);
   const groups = planTranslation(markdown, {
-    maxChars: Math.min(4000, Math.max(800, Math.round((settings.chunkSize || 5000) / 2))),
+    // Prima veniva usata, senza mostrarlo, soltanto metà della dimensione
+    // scelta: un libro generava quasi il doppio delle chiamate necessarie.
+    maxChars: Math.min(specialized ? 5000 : 6000, Math.max(800, settings.chunkSize || 5000)),
     overlap: settings.translateOverlap ?? 2,
   });
   if (!groups.length) throw new Error('Non c’è testo da tradurre.');
@@ -373,16 +415,37 @@ export async function translateDocument({ settings, markdown, onProgress, signal
   const pieces = new Map();
   let retried = 0;
   let failed = 0;
+  const resumed = new Map((resumeGroups || []).map((item) => [item.index, item]));
 
   for (const group of groups) {
     if (signal?.aborted) throw new DOMException('Traduzione annullata.', 'AbortError');
-    onProgress?.(group.index, groups.length);
+    const signature = stableTextHash(renderMarked(group.blocks));
+    const checkpoint = resumed.get(group.index);
+    if (checkpoint?.signature === signature && Array.isArray(checkpoint.pieces)) {
+      for (const [id, text] of checkpoint.pieces) pieces.set(Number(id), text);
+      retried += Number(checkpoint.retried) || 0;
+      failed += Number(checkpoint.failed) || 0;
+      onProgress?.(group.index + 1, groups.length, true);
+      continue;
+    }
+    onProgress?.(group.index, groups.length, false);
+    const retriedBefore = retried;
+    const failedBefore = failed;
 
     const translatable = group.blocks.filter((b) => b.translate);
     for (const block of group.blocks) {
       if (!block.translate) pieces.set(block.id, block.text);
     }
-    if (!translatable.length) continue;
+    if (!translatable.length) {
+      await onCheckpoint?.({
+        index: group.index,
+        signature,
+        pieces: group.blocks.map((block) => [block.id, pieces.get(block.id)]),
+        retried: 0,
+        failed: 0,
+      });
+      continue;
+    }
 
     // Un gruppo che fallisce non deve buttare via il documento: si ripiega
     // sui blocchi singoli, che è già la strada per i blocchi mancanti. Su un
@@ -392,12 +455,17 @@ export async function translateDocument({ settings, markdown, onProgress, signal
       const answer = await engineChat({
         settings,
         phase: 'translate',
-        system: SYSTEM,
-        user: buildUser({ group: { ...group, blocks: translatable }, sourceLang, targetLang, settings }),
+        // TranslateGemma segue il proprio template User/Assistant e rende
+        // meglio se l'istruzione professionale vive nello stesso messaggio.
+        system: specialized ? undefined : SYSTEM,
+        user: buildUser({
+          group: { ...group, blocks: translatable }, sourceLang, targetLang, settings, specialized,
+        }),
         // Zero: una traduzione non guadagna nulla dalla varianza, e la
         // ripetibilità permette di riprendere un documento interrotto.
         temperature: 0,
-        maxTokens: 8192,
+        maxTokens: 4096,
+        reasoningEffort: 'none',
         signal,
       });
       parsed = parseMarked(answer);
@@ -420,15 +488,17 @@ export async function translateDocument({ settings, markdown, onProgress, signal
         const single = await engineChat({
           settings,
           phase: 'translate',
-          system: SYSTEM,
+          system: specialized ? undefined : SYSTEM,
           user: buildUser({
             group: { ...group, blocks: [block] },
             sourceLang,
             targetLang,
             settings,
+            specialized,
           }),
           temperature: 0,
-          maxTokens: 4096,
+          maxTokens: 3072,
+          reasoningEffort: 'none',
           signal,
         });
         const one = parseMarked(single).get(block.id);
@@ -449,6 +519,13 @@ export async function translateDocument({ settings, markdown, onProgress, signal
         pieces.set(block.id, block.text);
       }
     }
+    await onCheckpoint?.({
+      index: group.index,
+      signature,
+      pieces: group.blocks.map((block) => [block.id, pieces.get(block.id)]),
+      retried: retried - retriedBefore,
+      failed: failed - failedBefore,
+    });
   }
   onProgress?.(groups.length, groups.length);
 

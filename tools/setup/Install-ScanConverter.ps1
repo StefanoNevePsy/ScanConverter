@@ -31,6 +31,10 @@
     Modello linguistico da scaricare. Default qwen3:8b (~5 GB): multilingue,
     la resa migliore sull'italiano fra quelli che entrano in 10 GB di VRAM.
 
+.PARAMETER TranslationModel
+    Modello locale dedicato alla traduzione. Default translategemma:4b
+    (~3,3 GB), addestrato per tradurre brani completi in 55 lingue.
+
 .PARAMETER Components
     Cosa installare: ollama, typst, sidecar. Default: ollama e typst — cioè
     tutto quello che non richiede WSL2.
@@ -52,6 +56,8 @@ param(
     [string] $Root,
 
     [string] $Model = 'qwen3:8b',
+
+    [string] $TranslationModel = 'translategemma:4b',
 
     [ValidateSet('ollama', 'typst', 'sidecar')]
     [string[]] $Components = @('ollama', 'typst'),
@@ -161,18 +167,20 @@ function Install-Ollama {
 
     if ($SkipModel) { Write-Warn2 'Modello non scaricato (-SkipModel).'; return }
 
-    Write-Step "Modello $Model"
+    Write-Step "Modelli $Model e $TranslationModel"
     $ollama = if (Test-Path -LiteralPath $exe) { $exe } elseif (Test-Command 'ollama') { 'ollama' } else { $null }
     if (-not $ollama) {
-        Write-Warn2 "Ollama non trovato: apri un terminale nuovo e lancia «ollama pull $Model»."
+        Write-Warn2 "Ollama non trovato: apri un terminale nuovo e lancia «ollama pull $Model» e «ollama pull $TranslationModel»."
         return
     }
     # `ollama list` non fa distinzione fra "assente" e "server spento": si
     # tenta il pull comunque, che è idempotente e riprende i download parziali.
-    if ($PSCmdlet.ShouldProcess($Model, 'Scarica modello')) {
-        & $ollama pull $Model
-        if ($LASTEXITCODE -eq 0) { Write-Ok "$Model pronto in $modelsDir" }
-        else { Write-Warn2 "«ollama pull $Model» è uscito con codice $LASTEXITCODE." }
+    foreach ($modelName in @($Model, $TranslationModel) | Select-Object -Unique) {
+      if ($PSCmdlet.ShouldProcess($modelName, 'Scarica modello')) {
+        & $ollama pull $modelName
+        if ($LASTEXITCODE -eq 0) { Write-Ok "$modelName pronto in $modelsDir" }
+        else { Write-Warn2 "«ollama pull $modelName» è uscito con codice $LASTEXITCODE." }
+      }
     }
 }
 
@@ -304,6 +312,7 @@ function Write-Manifest {
         root             = $Root
         components       = $Installed
         model            = if ($SkipModel) { '' } else { $Model }
+        translationModel = if ($SkipModel) { '' } else { $TranslationModel }
         localEndpoint    = 'http://localhost:11434/v1/chat/completions'
         localOcrEndpoint = 'http://localhost:8000/ocr'
         typstPath        = if ($Installed -contains 'typst') { Join-Path $Root 'typst\typst.exe' } else { '' }

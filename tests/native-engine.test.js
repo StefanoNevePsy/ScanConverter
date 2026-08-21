@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { figureRelativePath, shortDiagnostics } = require('../electron/typst-runner.cjs');
+const { figureRelativePath, pdfCacheKey, shortDiagnostics } = require('../electron/typst-runner.cjs');
 
 test('il motore nativo accetta soltanto figure confinate alla cartella dedicata', () => {
   assert.equal(figureRelativePath('/figures/fig-1.png'), path.join('figures', 'fig-1.png'));
@@ -22,4 +22,12 @@ test('estrae le diagnostiche brevi Typst conservando path, riga e colonna', () =
     String.raw`C:\progetto\main.typ:42:7: error: unknown variable: foo`,
     '/tmp/main.typ:9:2-9:5: warning: font mancante',
   ]);
+});
+
+test('la cache PDF dipende da sorgente, figure e versione Typst', () => {
+  const a = pdfCacheKey('= Libro', 'figure-a', 'v1');
+  assert.equal(a, pdfCacheKey('= Libro', 'figure-a', 'v1'));
+  assert.notEqual(a, pdfCacheKey('= Libro modificato', 'figure-a', 'v1'));
+  assert.notEqual(a, pdfCacheKey('= Libro', 'figure-b', 'v1'));
+  assert.notEqual(a, pdfCacheKey('= Libro', 'figure-a', 'v2'));
 });

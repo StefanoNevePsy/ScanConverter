@@ -66,6 +66,7 @@ function unreachable(endpoint, detail) {
  * @param {number} [p.temperature]
  * @param {number} [p.maxTokens]
  * @param {boolean} [p.json]   chiede una risposta in JSON, quando supportata
+ * @param {'none'|'low'|'medium'|'high'} [p.reasoningEffort]
  * @param {AbortSignal} [p.signal]
  * @returns {Promise<string>}
  */
@@ -77,6 +78,7 @@ export async function localChat({
   temperature = 0.1,
   maxTokens = 4096,
   json = false,
+  reasoningEffort,
   signal,
 }) {
   const body = {
@@ -88,6 +90,7 @@ export async function localChat({
     temperature,
     max_tokens: maxTokens,
     stream: false,
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     ...(json ? { response_format: { type: 'json_object' } } : {}),
   };
 
