@@ -312,6 +312,32 @@ export function restoreFigurePaths(original, translated) {
 }
 
 /**
+ * Verifica che la traduzione non abbia aperto/chiuso markup inline diverso
+ * dal sorgente. Conta separatamente marcatori attivi e letterali: così anche
+ * `\*` → `\\*` viene rilevato, perché con due backslash l'asterisco torna
+ * attivo in Markdown/Typst. Le parole possono cambiare; la struttura no.
+ */
+export function preservesMarkdownDelimiters(original, translated) {
+  const signature = (value) => {
+    const counts = new Map();
+    const source = String(value || '');
+    for (let i = 0; i < source.length; i++) {
+      const marker = source[i];
+      if (!['*', '_', '$', '`'].includes(marker)) continue;
+      let slashes = 0;
+      for (let j = i - 1; j >= 0 && source[j] === '\\'; j--) slashes++;
+      const key = `${marker}:${slashes % 2 ? 'escaped' : 'active'}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return counts;
+  };
+  const before = signature(original);
+  const after = signature(translated);
+  const keys = new Set([...before.keys(), ...after.keys()]);
+  return [...keys].every((key) => before.get(key) === after.get(key));
+}
+
+/**
  * Traduce un documento Markdown, restituendo un Markdown della stessa forma.
  *
  * @param {object} p
@@ -368,8 +394,11 @@ export async function translateDocument({ settings, markdown, onProgress, signal
     for (const block of translatable) {
       const value = parsed.get(block.id);
       if (value) {
-        pieces.set(block.id, restoreFigurePaths(block.text, value));
-        continue;
+        const restored = restoreFigurePaths(block.text, value);
+        if (preservesMarkdownDelimiters(block.text, restored)) {
+          pieces.set(block.id, restored);
+          continue;
+        }
       }
       // Blocco saltato: si ritenta da solo, dove non può perdersi fra gli altri.
       retried++;
@@ -393,7 +422,11 @@ export async function translateDocument({ settings, markdown, onProgress, signal
         // in una richiesta con un blocco solo non c'è ambiguità su cosa sia.
         const body = one || single.replace(MARK_RE, '').trim();
         if (!body) throw new Error('risposta vuota');
-        pieces.set(block.id, restoreFigurePaths(block.text, body));
+        const restored = restoreFigurePaths(block.text, body);
+        if (!preservesMarkdownDelimiters(block.text, restored)) {
+          throw new Error('sintassi Markdown alterata');
+        }
+        pieces.set(block.id, restored);
       } catch (error) {
         if (signal?.aborted || error?.name === 'AbortError') throw error;
         // Un blocco perso non deve far perdere il documento: resta in lingua

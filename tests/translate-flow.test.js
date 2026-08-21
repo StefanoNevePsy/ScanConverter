@@ -94,6 +94,21 @@ test('un blocco saltato dal modello viene ritentato da solo, non perso', async (
   assert.ok(blocks[1].includes('Secondo blocco'), blocks[1]);
 });
 
+test('un delimitatore perso dal modello fa ritentare il blocco', async () => {
+  fakeModel({
+    sabotage: (content, _marks, call) => (
+      call === 1 ? content.replace('_termine_', '_termine') : content
+    ),
+  });
+  const out = await translateDocument({
+    settings: SETTINGS,
+    markdown: 'Il _termine_ deve restare enfatizzato.',
+  });
+  assert.equal(out.retried, 1);
+  assert.equal(out.failed, 0);
+  assert.match(out.markdown, /_termine_/);
+});
+
 test('se il ritentativo risponde senza etichetta la risposta vale lo stesso', async () => {
   let call = 0;
   globalThis.fetch = async (_url, init) => {

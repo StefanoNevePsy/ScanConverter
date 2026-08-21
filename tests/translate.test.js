@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
   parseMarked,
   planTranslation,
+  preservesMarkdownDelimiters,
   renderMarked,
   restoreFigurePaths,
   splitBlocks,
@@ -125,6 +126,15 @@ test('i percorsi delle figure vengono ripristinati se il modello li altera', () 
   const restored = restoreFigurePaths(original, translated);
   assert.ok(restored.includes('![Figure 1](figure/fig-1.png)'));
   assert.ok(restored.includes('![Figure 2](figure/fig-2.png)'));
+});
+
+test('rileva delimitatori Markdown persi o riaperti dai backslash', () => {
+  assert.equal(preservesMarkdownDelimiters('_termine_', '_termine'), false);
+  assert.equal(
+    preservesMarkdownDelimiters(String.raw`Nota \*testo`, String.raw`Nota \\*testo`),
+    false,
+  );
+  assert.equal(preservesMarkdownDelimiters('_termine_', '_termine tradotto_'), true);
 });
 
 test('senza testo il piano è vuoto', () => {

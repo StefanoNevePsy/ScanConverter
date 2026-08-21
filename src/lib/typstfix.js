@@ -421,9 +421,52 @@ export function delimiterRepairCandidates(source, line = 1, maxCandidates = 24) 
   for (const delimiter of ['_', '*', '$', '`']) {
     const positions = [];
     for (let i = 0; i < range.text.length; i++) {
-      if (range.text[i] === delimiter && range.text[i - 1] !== '\\') positions.push(i);
+      if (range.text[i] !== delimiter) continue;
+      let slashes = 0;
+      for (let j = i - 1; j >= 0 && range.text[j] === '\\'; j--) slashes++;
+
+      // Un LLM può raddoppiare l'escape di un marcatore letterale:
+      // `\\*` non protegge l'asterisco in Typst, perché i due backslash si
+      // proteggono fra loro e `*` torna ad aprire il grassetto. Prova prima
+      // la riparazione semanticamente conservativa `\*`; il compilatore la
+      // convalida come ogni altro candidato.
+      if (slashes >= 2 && slashes % 2 === 0) {
+        const at = range.start + i;
+        add(
+          s.slice(0, at - 1) + s.slice(at),
+          `normalizzato escape raddoppiato prima di «${delimiter}»`,
+        );
+      }
+
+      // Conta il marcatore come attivo solo con un numero pari di backslash.
+      // Il vecchio controllo guardava unicamente il carattere precedente e
+      // scambiava proprio `\\*` per un asterisco già protetto.
+      if (slashes % 2 === 0) positions.push(i);
     }
     if (positions.length % 2 === 0) continue;
+
+    // Un marcatore isolato sul bordo del blocco è quasi sempre un richiamo
+    // letterale (per esempio l'asterisco di una nota dopo un titolo). Chiuderlo
+    // sullo stesso bordo produrrebbe `**`/`__`: compila, ma crea markup vuoto
+    // e può lasciare un warning. La protezione conserva invece il carattere.
+    for (const relative of positions) {
+      if (relative !== 0 && relative !== range.text.length - 1) continue;
+      const at = range.start + relative;
+      add(s.slice(0, at) + '\\' + s.slice(at), `protetto «${delimiter}» isolato sul bordo`);
+    }
+
+    // Se il marcatore è in mezzo alla prosa ma non ha una coppia, rimuoverlo
+    // conserva tutte le parole e rinuncia soltanto a uno stile ormai
+    // indeterminabile. È più prudente che enfatizzare fino alla fine di un
+    // paragrafo potenzialmente molto lungo.
+    for (const relative of positions) {
+      if (relative === 0 || relative === range.text.length - 1) continue;
+      const at = range.start + relative;
+      add(
+        s.slice(0, at) + s.slice(at + 1),
+        `rimosso «${delimiter}» senza coppia`,
+      );
+    }
     add(
       s.slice(0, range.end) + delimiter + s.slice(range.end),
       `aggiunta chiusura «${delimiter}»`,

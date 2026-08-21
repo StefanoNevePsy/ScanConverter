@@ -25,8 +25,27 @@ test('rende esplicita l’enfasi senza cambiare le parole', () => {
 test('propone sia chiusura sia protezione per un delimitatore inline isolato', () => {
   const source = 'Un testo con _enfasi non chiusa.';
   const candidates = delimiterRepairCandidates(source, 1);
+  assert.equal(candidates[0].fixed, 'Un testo con enfasi non chiusa.');
+  assert.match(candidates[0].description, /senza coppia/);
   assert.ok(candidates.some((candidate) => candidate.fixed.endsWith('._')));
   assert.ok(candidates.some((candidate) => candidate.fixed.includes('con \\_enfasi')));
+});
+
+test('normalizza un escape raddoppiato che riapre un delimitatore Typst', () => {
+  const source = 'Nota #footnote[\\\\*Testo della nota.]';
+  const candidates = delimiterRepairCandidates(source, 1);
+  const normalized = candidates.find((candidate) =>
+    candidate.description.includes('escape raddoppiato'),
+  );
+  assert.ok(normalized);
+  assert.equal(normalized.fixed, 'Nota #footnote[\\*Testo della nota.]');
+});
+
+test('protegge prima di chiudere un asterisco isolato in fondo a un titolo', () => {
+  const source = '= Titolo con richiamo*';
+  const candidates = delimiterRepairCandidates(source, 1);
+  assert.equal(candidates[0].fixed, '= Titolo con richiamo\\*');
+  assert.match(candidates[0].description, /sul bordo/);
 });
 
 test('corregge una parentesi di tipo sbagliato nel blocco localizzato', () => {
