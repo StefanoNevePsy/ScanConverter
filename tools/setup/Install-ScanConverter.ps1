@@ -246,12 +246,14 @@ function Install-Sidecar {
     Write-Host '  Dopo il primo avvio di Ubuntu, installa toolkit, codice e modello:' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '    sudo apt update' -ForegroundColor White
-    Write-Host '    sudo apt install -y curl wget git git-lfs build-essential' -ForegroundColor White
+    Write-Host '    sudo apt install -y curl wget git git-lfs build-essential gcc-13 g++-13' -ForegroundColor White
     Write-Host '    wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb' -ForegroundColor White
     Write-Host '    sudo dpkg -i cuda-keyring_1.1-1_all.deb' -ForegroundColor White
     Write-Host '    sudo apt update && sudo apt install -y cuda-toolkit-12-8' -ForegroundColor White
     Write-Host '    export CUDA_HOME=/usr/local/cuda-12.8' -ForegroundColor White
     Write-Host '    export PATH="$CUDA_HOME/bin:$PATH"' -ForegroundColor White
+    Write-Host '    export CC=/usr/bin/gcc-13' -ForegroundColor White
+    Write-Host '    export CXX=/usr/bin/g++-13' -ForegroundColor White
     Write-Host "    export SC_ROOT=$linuxRoot" -ForegroundColor White
     Write-Host '    export SC_VENV="$HOME/.venvs/scanconverter-ocr"' -ForegroundColor White
     Write-Host "    export HF_HOME=$linuxRoot/hf-cache" -ForegroundColor White
@@ -266,7 +268,9 @@ function Install-Sidecar {
     Write-Host '    python --version' -ForegroundColor White
     Write-Host '    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128' -ForegroundColor White
     Write-Host '    pip install hatchling editables setuptools ninja' -ForegroundColor White
-    Write-Host "    pip install --no-build-isolation -v $linuxRoot/sidecar/nemotron-ocr-v2/nemotron-ocr" -ForegroundColor White
+    Write-Host '    export OCR_BUILD_ROOT="$(mktemp -d)"' -ForegroundColor White
+    Write-Host "    cp -a $linuxRoot/sidecar/nemotron-ocr-v2/nemotron-ocr `"`$OCR_BUILD_ROOT/`"" -ForegroundColor White
+    Write-Host '    pip install --no-build-isolation -v "$OCR_BUILD_ROOT/nemotron-ocr"' -ForegroundColor White
     Write-Host "    pip install -r $linuxRoot/sidecar/ScanConverter/tools/local-ocr/requirements.txt" -ForegroundColor White
     Write-Host "    export NEMOTRON_OCR_MODEL_ROOT=$linuxRoot/sidecar/nemotron-ocr-v2" -ForegroundColor White
     Write-Host "    cd $linuxRoot/sidecar/ScanConverter/tools/local-ocr" -ForegroundColor White

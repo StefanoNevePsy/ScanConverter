@@ -179,13 +179,15 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
 
    ```bash
    sudo apt update
-   sudo apt install -y curl wget git git-lfs build-essential
+   sudo apt install -y curl wget git git-lfs build-essential gcc-13 g++-13
    wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
    sudo dpkg -i cuda-keyring_1.1-1_all.deb
    sudo apt update
    sudo apt install -y cuda-toolkit-12-8
    export CUDA_HOME=/usr/local/cuda-12.8
    export PATH="$CUDA_HOME/bin:$PATH"
+   export CC=/usr/bin/gcc-13
+   export CXX=/usr/bin/g++-13
    ```
 
 4. **Codice, ambiente Python 3.12 e modello.** Ubuntu 26.04 include Python
@@ -216,8 +218,9 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
    python --version
    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
    pip install hatchling editables setuptools ninja
-   pip install --no-build-isolation -v \
-     "$SC_ROOT/sidecar/nemotron-ocr-v2/nemotron-ocr"
+   export OCR_BUILD_ROOT="$(mktemp -d)"
+   cp -a "$SC_ROOT/sidecar/nemotron-ocr-v2/nemotron-ocr" "$OCR_BUILD_ROOT/"
+   pip install --no-build-isolation -v "$OCR_BUILD_ROOT/nemotron-ocr"
    pip install -r "$SC_ROOT/sidecar/ScanConverter/tools/local-ocr/requirements.txt"
 
    export NEMOTRON_OCR_MODEL_ROOT="$SC_ROOT/sidecar/nemotron-ocr-v2"

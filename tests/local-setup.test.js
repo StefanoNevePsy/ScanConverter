@@ -41,6 +41,14 @@ test('il virtualenv OCR resta nel filesystem Linux che supporta i symlink', () =
   assert.doesNotMatch(script, /linuxRoot\/sidecar\/\.venv/);
 });
 
+test('Nemotron viene compilato con un GCC accettato da CUDA 12.8', () => {
+  const script = readFileSync(windowsScript, 'utf8');
+  assert.match(script, /gcc-13 g\+\+-13/);
+  assert.match(script, /CC=\/usr\/bin\/gcc-13/);
+  assert.match(script, /CXX=\/usr\/bin\/g\+\+-13/);
+  assert.match(script, /OCR_BUILD_ROOT=.*mktemp -d/);
+});
+
 test('Windows PowerShell 5.1 riesce a leggere tutto lo script', {
   skip: process.platform !== 'win32',
 }, () => {
