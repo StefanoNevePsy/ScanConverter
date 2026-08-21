@@ -238,14 +238,34 @@ function Install-Sidecar {
 
     Write-Host ''
     Write-Host '  Il sidecar richiede Linux con CUDA: si completa dentro Ubuntu (WSL2).' -ForegroundColor DarkGray
-    Write-Host '  Le cartelle sono pronte; da un terminale Ubuntu:' -ForegroundColor DarkGray
+    Write-Host '  Se Ubuntu non è installato, da PowerShell come amministratore:' -ForegroundColor DarkGray
     Write-Host ''
+    Write-Host "    wsl --update" -ForegroundColor White
+    Write-Host "    wsl --install -d Ubuntu --location '$Root\wsl\Ubuntu'" -ForegroundColor White
+    Write-Host ''
+    Write-Host '  Dopo il primo avvio di Ubuntu, installa toolkit, codice e modello:' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host '    sudo apt update' -ForegroundColor White
+    Write-Host '    sudo apt install -y wget git git-lfs build-essential python3-venv python3-pip' -ForegroundColor White
+    Write-Host '    wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb' -ForegroundColor White
+    Write-Host '    sudo dpkg -i cuda-keyring_1.1-1_all.deb' -ForegroundColor White
+    Write-Host '    sudo apt update && sudo apt install -y cuda-toolkit-12-8' -ForegroundColor White
+    Write-Host '    export CUDA_HOME=/usr/local/cuda-12.8' -ForegroundColor White
+    Write-Host '    export PATH="$CUDA_HOME/bin:$PATH"' -ForegroundColor White
+    Write-Host "    export SC_ROOT=$linuxRoot" -ForegroundColor White
     Write-Host "    export HF_HOME=$linuxRoot/hf-cache" -ForegroundColor White
-    Write-Host "    echo 'export HF_HOME=$linuxRoot/hf-cache' >> ~/.bashrc" -ForegroundColor White
-    Write-Host "    git clone https://github.com/StefanoNevePsy/ScanConverter.git $linuxRoot/sidecar/ScanConverter" -ForegroundColor White
+    Write-Host "    git clone --branch claude/pipeline-locale --single-branch https://github.com/StefanoNevePsy/ScanConverter.git $linuxRoot/sidecar/ScanConverter" -ForegroundColor White
+    Write-Host '    git lfs install' -ForegroundColor White
+    Write-Host "    git clone https://huggingface.co/nvidia/nemotron-ocr-v2 $linuxRoot/sidecar/nemotron-ocr-v2" -ForegroundColor White
+    Write-Host "    python3 -m venv --copies $linuxRoot/sidecar/.venv" -ForegroundColor White
+    Write-Host "    source $linuxRoot/sidecar/.venv/bin/activate" -ForegroundColor White
+    Write-Host '    python -m pip install --upgrade pip' -ForegroundColor White
+    Write-Host '    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128' -ForegroundColor White
+    Write-Host '    pip install hatchling editables setuptools ninja' -ForegroundColor White
+    Write-Host "    pip install --no-build-isolation -v $linuxRoot/sidecar/nemotron-ocr-v2/nemotron-ocr" -ForegroundColor White
+    Write-Host "    pip install -r $linuxRoot/sidecar/ScanConverter/tools/local-ocr/requirements.txt" -ForegroundColor White
+    Write-Host "    export NEMOTRON_OCR_MODEL_ROOT=$linuxRoot/sidecar/nemotron-ocr-v2" -ForegroundColor White
     Write-Host "    cd $linuxRoot/sidecar/ScanConverter/tools/local-ocr" -ForegroundColor White
-    Write-Host '    pip install torch --index-url https://download.pytorch.org/whl/cu124' -ForegroundColor White
-    Write-Host '    pip install -r requirements.txt' -ForegroundColor White
     Write-Host '    python server.py' -ForegroundColor White
 }
 

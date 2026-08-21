@@ -36,6 +36,7 @@ import base64
 import io
 import json
 import logging
+import os
 import re
 
 from layout import (
@@ -64,9 +65,16 @@ def load_model(variant: str):
         log.info("Carico nemotron-ocr-v2 (%s)…", variant)
         # L'import sta qui dentro così il file resta importabile (e testabile)
         # anche su una macchina senza torch né GPU.
-        from nemotron_ocr import NemotronOCR  # type: ignore
+        from nemotron_ocr.inference.pipeline_v2 import NemotronOCRV2  # type: ignore
 
-        _MODEL = NemotronOCR.from_pretrained("nvidia/nemotron-ocr-v2", lang=variant)
+        # Se il setup ha già clonato i pesi con Git LFS, usali direttamente:
+        # evita di scaricarli una seconda volta nella cache Hugging Face.
+        model_root = os.environ.get("NEMOTRON_OCR_MODEL_ROOT", "").strip()
+        if model_root:
+            folder = "v2_english" if variant == "english" else "v2_multilingual"
+            _MODEL = NemotronOCRV2(model_dir=os.path.join(model_root, folder))
+        else:
+            _MODEL = NemotronOCRV2(lang="en" if variant == "english" else "multi")
         log.info("Modello pronto.")
     return _MODEL
 
@@ -94,7 +102,7 @@ def to_blocks(regions, width: int, height: int, page_gray=None) -> list[dict]:
         text = (region.get("text") or "").strip()
         if not text:
             continue
-        x0, y0, x1, y1 = _corners(region.get("bbox") or region.get("box") or [])
+        x0, y0, x1, y1 = _region_corners(region, width, height)
         if x1 <= x0 or y1 <= y0:
             continue
         prepared.append({"text": text, "bbox": (x0, y0, x1, y1)})
@@ -139,6 +147,22 @@ def to_blocks(regions, width: int, height: int, page_gray=None) -> list[dict]:
     ):
         blocks.append({"type": "Picture", "text": "", "bbox": _norm(x0, y0, x1, y1, width, height)})
     return blocks
+
+
+def _region_corners(region, width: int, height: int) -> tuple[float, float, float, float]:
+    """Accetta sia il vecchio bbox pixel sia l'output normalizzato ufficiale v2."""
+    names = ("left", "upper", "right", "lower")
+    if all(region.get(name) is not None for name in names):
+        left, upper, right, lower = (float(region[name]) for name in names)
+        # NemotronOCRV2 restituisce coordinate 0–1. La tolleranza lascia
+        # funzionare anche un eventuale backend che restituisca già pixel.
+        if max(abs(left), abs(upper), abs(right), abs(lower)) <= 1.5:
+            left *= width
+            right *= width
+            upper *= height
+            lower *= height
+        return _corners([left, upper, right, lower])
+    return _corners(region.get("bbox") or region.get("box") or [])
 
 
 def _norm(x0, y0, x1, y1, width: int, height: int) -> dict:
@@ -195,10 +219,12 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
             payload = json.loads(self.rfile.read(length) or b"{}")
             image = decode_data_url(payload.get("image") or "")
-            model = load_model(self.variant)
-            regions = model.predict(image)
             import numpy as np
 
+            model = load_model(self.variant)
+            # L'API ufficiale v2 accetta ndarray/bytes/path ed è invocabile;
+            # `predict(PIL.Image)` apparteneva alla vecchia API.
+            regions = model(np.asarray(image), merge_level="sentence")
             gray = np.asarray(image.convert("L"))
             blocks = to_blocks(regions, image.width, image.height, page_gray=gray)
             log.info("Pagina elaborata: %d blocchi", len(blocks))

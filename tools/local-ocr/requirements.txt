@@ -1,6 +1,5 @@
-# Nemotron OCR v2 richiede una GPU NVIDIA (Ampere o successive) e il CUDA
-# toolkit. Installare PRIMA il torch adatto alla propria versione di CUDA,
-# seguendo https://pytorch.org/get-started/locally/
-torch>=2.4
-pillow>=10.0
-nemotron-ocr
+# Dipendenze del sidecar. PyTorch e `nemotron-ocr` vanno installati PRIMA:
+# il pacchetto ufficiale contiene un'estensione C++/CUDA e deve essere
+# compilato dal repository NVIDIA contro il PyTorch e il toolkit locali.
+numpy>=1.26
+pillow>=12.0

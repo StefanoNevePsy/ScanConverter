@@ -153,13 +153,17 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
 
 ### Installazione
 
-1. **Attiva WSL2.** Prompt dei comandi *come amministratore*:
+1. **Installa Ubuntu in WSL2.** PowerShell *come amministratore*. Con
+   `--location` anche il disco virtuale Linux (Python, CUDA e librerie) resta
+   sul disco esterno:
 
-   ```
-   wsl --install
+   ```powershell
+   wsl --update
+   wsl --install -d Ubuntu --location 'D:\ScanConverter\wsl\Ubuntu'
    ```
 
-   Riavvia quando te lo chiede. Ti verrà creato un Ubuntu.
+   Riavvia quando richiesto e, al primo avvio di Ubuntu, crea nome utente e
+   password Linux.
 2. **Driver NVIDIA.** Sul lato Windows serve un driver recente
    ([nvidia.com/drivers](https://www.nvidia.com/drivers)). Dentro WSL **non**
    installare driver: li vede da Windows. Verifica dentro Ubuntu:
@@ -169,20 +173,56 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
    ```
 
    Se vedi la tua 3080, sei a posto.
-3. **Il sidecar.** Sempre dentro Ubuntu:
+3. **Toolkit CUDA 12.8.** Nemotron contiene un'estensione C++/CUDA da
+   compilare. Dentro Ubuntu installa soltanto il toolkit WSL, mai un driver
+   NVIDIA Linux:
 
+   ```bash
+   sudo apt update
+   sudo apt install -y wget git git-lfs build-essential python3-venv python3-pip
+   wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
+   sudo dpkg -i cuda-keyring_1.1-1_all.deb
+   sudo apt update
+   sudo apt install -y cuda-toolkit-12-8
+   export CUDA_HOME=/usr/local/cuda-12.8
+   export PATH="$CUDA_HOME/bin:$PATH"
    ```
-   git clone https://github.com/StefanoNevePsy/ScanConverter.git
-   cd ScanConverter/tools/local-ocr
-   pip install torch --index-url https://download.pytorch.org/whl/cu124
-   pip install -r requirements.txt
+
+4. **Codice, ambiente Python 3.12 e modello.** Sempre dentro Ubuntu; cambia
+   `/mnt/d/ScanConverter` se hai scelto un'altra unità o cartella:
+
+   ```bash
+   export SC_ROOT=/mnt/d/ScanConverter
+   mkdir -p "$SC_ROOT/sidecar"
+   export HF_HOME="$SC_ROOT/hf-cache"
+
+   git clone --branch claude/pipeline-locale --single-branch \
+     https://github.com/StefanoNevePsy/ScanConverter.git \
+     "$SC_ROOT/sidecar/ScanConverter"
+
+   git lfs install
+   git clone https://huggingface.co/nvidia/nemotron-ocr-v2 \
+     "$SC_ROOT/sidecar/nemotron-ocr-v2"
+
+   python3 -m venv --copies "$SC_ROOT/sidecar/.venv"
+   source "$SC_ROOT/sidecar/.venv/bin/activate"
+   python -m pip install --upgrade pip
+   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+   pip install hatchling editables setuptools ninja
+   pip install --no-build-isolation -v \
+     "$SC_ROOT/sidecar/nemotron-ocr-v2/nemotron-ocr"
+   pip install -r "$SC_ROOT/sidecar/ScanConverter/tools/local-ocr/requirements.txt"
+
+   export NEMOTRON_OCR_MODEL_ROOT="$SC_ROOT/sidecar/nemotron-ocr-v2"
+   cd "$SC_ROOT/sidecar/ScanConverter/tools/local-ocr"
    python server.py
    ```
 
-   Il modello (poche centinaia di MB) si scarica al primo avvio in
-   `~/.cache/huggingface`.
+   Le esportazioni di `HF_HOME`, `CUDA_HOME`, `PATH` e
+   `NEMOTRON_OCR_MODEL_ROOT` possono essere aggiunte a `~/.bashrc` per gli
+   avvii successivi. Il clone Git LFS scarica i pesi una volta sola.
 
-4. Nell'app: Impostazioni → **Motori per fase** → riga «Lettura (OCR)» → **Locale**.
+5. Nell'app: Impostazioni → **Motori per fase** → riga «Lettura (OCR)» → **Locale**.
 
 ### Verifica
 

@@ -223,6 +223,33 @@ def test_full_page_integration() -> None:
         )
 
 
+def test_official_v2_normalized_regions() -> None:
+    """L'output left/upper/right/lower di NemotronOCRV2 resta normalizzato."""
+    from server import to_blocks
+
+    blocks = to_blocks(
+        [{
+            "text": "Riga riconosciuta",
+            "left": 0.10,
+            "upper": 0.25,
+            "right": 0.90,
+            "lower": 0.20,
+            "confidence": 0.98,
+        }],
+        800,
+        1000,
+    )
+    box = blocks[0]["bbox"]
+    check(
+        "coordinate ufficiali Nemotron OCR v2",
+        abs(box["xmin"] - 0.10) < 1e-6
+        and abs(box["xmax"] - 0.90) < 1e-6
+        and abs(box["ymin"] - 0.20) < 1e-6
+        and abs(box["ymax"] - 0.25) < 1e-6,
+        str(box),
+    )
+
+
 def main() -> int:
     for fn in [
         test_heading_by_rank,
@@ -236,6 +263,7 @@ def main() -> int:
         test_borderless_table_by_alignment,
         test_prose_is_not_a_table,
         test_full_page_integration,
+        test_official_v2_normalized_regions,
     ]:
         fn()
 
