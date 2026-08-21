@@ -11,6 +11,7 @@
 // es. Map#getOrInsertComputed, non ancora disponibili ovunque).
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
+import { isDesktopPdfArtifact } from './desktop.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -35,6 +36,23 @@ export function copyBytes(data) {
 }
 
 /**
+ * Apre un PDF in pdf.js senza cedere al worker il buffer posseduto dal
+ * chiamante. L'anteprima usa il loading task per mantenere una sola pagina
+ * canvas alla volta e distruggere esplicitamente le risorse al cambio file.
+ *
+ * @param {ArrayBuffer|Uint8Array} data
+ * @returns {import('pdfjs-dist').PDFDocumentLoadingTask}
+ */
+export function loadPdfDocument(data) {
+  if (isDesktopPdfArtifact(data)) {
+    // Il protocollo Electron supporta le richieste Range: pdf.js legge dal
+    // file nativo soltanto i blocchi necessari, senza clonare l'intero libro.
+    return pdfjsLib.getDocument({ url: data.url, wasmUrl: WASM_URL });
+  }
+  return pdfjsLib.getDocument({ data: copyBytes(data), wasmUrl: WASM_URL });
+}
+
+/**
  * Renderizza le pagine di un PDF in data URL PNG.
  *
  * @param {ArrayBuffer|Uint8Array} data  contenuto del PDF
@@ -51,9 +69,7 @@ export async function renderPdfToImages(data, opts = {}) {
   // Limiti prudenti: sotto ~1000px l'OCR degrada, sopra ~5000px i payload
   // rischiano i limiti delle API (Gemini inline_data, NIM).
   const longSide = Math.min(5000, Math.max(1000, opts.longSide || TARGET_LONG_SIDE));
-  const bytes = copyBytes(data);
-
-  const loadingTask = pdfjsLib.getDocument({ data: bytes, wasmUrl: WASM_URL });
+  const loadingTask = loadPdfDocument(data);
   const pdf = await loadingTask.promise;
   try {
     const total = Math.min(pdf.numPages, maxPages);
@@ -90,8 +106,7 @@ export async function renderPdfToImages(data, opts = {}) {
  * @returns {Promise<number>}
  */
 export async function countPdfPages(data) {
-  const bytes = copyBytes(data);
-  const loadingTask = pdfjsLib.getDocument({ data: bytes, wasmUrl: WASM_URL });
+  const loadingTask = loadPdfDocument(data);
   const pdf = await loadingTask.promise;
   const n = pdf.numPages;
   loadingTask.destroy();

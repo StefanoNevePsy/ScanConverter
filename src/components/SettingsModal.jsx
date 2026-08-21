@@ -500,7 +500,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 </span>
                 <span className="mb-2 block text-xs text-faint">
                   Modello forte per il tasto «Correggi con AI»: riceve errore e
-                  codice, restituisce sostituzioni puntiformi.
+                  solo l’estratto localizzato, restituisce sostituzioni puntiformi.
                 </span>
                 <div className="mb-3 grid gap-2 sm:grid-cols-3">
                   <EngineButton

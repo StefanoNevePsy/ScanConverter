@@ -6,8 +6,15 @@ import { IconCheck, IconSpinner, IconAlert } from './Icons.jsx';
  * [3/3] Compilazione. Mostra lo stato attivo/completato/errore di ciascuna.
  */
 export default function PipelineStepper({ status, compact = false }) {
+  const stateLabel = {
+    pending: 'in attesa',
+    active: 'in corso',
+    done: 'completata',
+    error: 'errore',
+  };
   return (
     <ol
+      aria-label="Avanzamento elaborazione"
       className={`flex ${compact ? 'items-center gap-2' : 'flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-0'}`}
     >
       {STEPS.map((step, i) => {
@@ -15,6 +22,8 @@ export default function PipelineStepper({ status, compact = false }) {
         return (
           <li
             key={step.id}
+            aria-current={state === 'active' ? 'step' : undefined}
+            aria-label={`Fase ${i + 1} di ${STEPS.length}: ${step.label}, ${stateLabel[state] || stateLabel.pending}`}
             className={`flex ${compact ? 'items-center' : 'flex-1 items-start'} gap-3`}
           >
             <StepBadge index={i + 1} state={state} />
@@ -62,6 +71,7 @@ function StepBadge({ index, state }) {
 
   return (
     <span
+      aria-hidden="true"
       className={`grid size-8 shrink-0 place-items-center rounded-full border text-sm font-semibold tabular-nums transition-colors ${cls}`}
     >
       {state === 'done' ? (

@@ -7,7 +7,8 @@ name: Build app desktop (Mac + Windows)
 #
 # Avvio: manuale dalla tab "Actions" → "Run workflow", oppure creando un tag
 # di versione (es. git tag v0.1.0 && git push --tags). Gli installabili
-# compaiono come "Artifacts" del run (Mac: .dmg/.zip · Windows: .exe).
+# compaiono come "Artifacts" del run (Mac: .dmg/.zip · Windows: .exe). Ogni
+# runner scarica lo stesso Typst 0.15.1 per la propria piattaforma/architettura.
 
 on:
   workflow_dispatch:
@@ -34,6 +35,15 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Test JavaScript
+        run: npm test
+
+      - name: Download Typst native compiler
+        run: npm run download:typst
+
+      - name: Test native Typst engine
+        run: npm run test:native-engine
 
       - name: Build webapp (Vite)
         run: npm run build

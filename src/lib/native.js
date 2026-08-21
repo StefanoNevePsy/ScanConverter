@@ -10,17 +10,21 @@ import { StatusBar, Style } from '@capacitor/status-bar';
 
 export const isNative = Capacitor.isNativePlatform();
 
-/** Configura la status bar (tema scuro) all'avvio. */
-export async function initNativeShell() {
+/** Allinea la status bar nativa al tema dell'interfaccia. */
+export async function setNativeTheme(theme = 'light') {
   if (!isNative) return;
   try {
-    await StatusBar.setStyle({ style: Style.Dark });
+    await StatusBar.setStyle({ style: theme === 'dark' ? Style.Light : Style.Dark });
     if (Capacitor.getPlatform() === 'android') {
-      await StatusBar.setBackgroundColor({ color: '#111317' });
+      await StatusBar.setBackgroundColor({ color: theme === 'dark' ? '#10110f' : '#f0eee8' });
     }
   } catch {
     /* plugin non disponibile: si ignora */
   }
+}
+
+export async function initNativeShell() {
+  return setNativeTheme(document.documentElement.dataset.theme || 'light');
 }
 
 /**

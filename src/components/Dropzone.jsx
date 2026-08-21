@@ -55,11 +55,11 @@ export default function Dropzone({ onFile, disabled }) {
         }}
         aria-disabled={disabled}
         className={[
-          'group relative grid place-items-center rounded-2xl border-2 border-dashed px-8 py-14 text-center transition-all duration-200',
+          'scan-dropzone group relative grid place-items-center rounded-xl border border-dashed px-8 py-14 text-center transition-all duration-200',
           disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
           dragging
             ? 'border-primary bg-primary-soft scale-[1.01]'
-            : 'border-border-strong bg-surface/60 hover:border-primary/60 hover:bg-surface',
+            : 'border-border-strong bg-surface/70 hover:border-primary hover:bg-surface',
         ].join(' ')}
         style={{ transitionTimingFunction: 'var(--ease-out-quint)' }}
       >
@@ -68,25 +68,27 @@ export default function Dropzone({ onFile, disabled }) {
           type="file"
           accept={ACCEPTED.join(',')}
           className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
           onChange={(e) => handleFiles(e.target.files)}
           disabled={disabled}
         />
         <span
-          className={`mb-4 grid size-14 place-items-center rounded-2xl transition-colors ${
-            dragging ? 'bg-primary text-primary-ink' : 'bg-surface-2 text-primary'
+          className={`mb-4 grid size-14 place-items-center transition-colors ${
+            dragging ? 'bg-primary text-primary-ink' : 'bg-lime text-[#11110f]'
           }`}
         >
           <IconUpload width={26} height={26} />
         </span>
         <p className="text-base font-medium text-ink">
-          Trascina qui la pagina scansionata
+          Porta qui una scansione o un libro
         </p>
         <p className="mt-1 text-sm text-muted">
-          oppure <span className="text-primary">sfoglia i file</span> · PNG, JPEG, WebP o PDF
+          oppure <span className="font-semibold text-primary">sfoglia i file</span> · PNG, JPEG, WebP o PDF
         </p>
         <div className="mt-4 flex items-center gap-1.5 text-xs text-faint">
           <IconFile width={14} height={14} />
-          <span>Le vecchie fotocopie a basso contrasto funzionano meglio in scala di grigi.</span>
+          <span>Puoi interrompere un libro lungo e riprenderlo più tardi, anche su un altro computer.</span>
         </div>
       </div>
       {localError && (

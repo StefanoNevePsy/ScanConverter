@@ -8,16 +8,17 @@ interamente nel browser.
 ```
 Immagine/PDF  →  [1/3] OCR (NVIDIA Nemotron-Parse)
               →  [2/3] Layout (Google Gemini → codice Typst)
-              →  [3/3] Compilazione (Typst WASM, locale)  →  PDF vettoriale
+              →  [3/3] Compilazione (Typst nativo/WASM, locale)  →  PDF vettoriale
 ```
 
 ## Stack
 
-- **React 18 + Vite 6** — SPA, dark mode nativa.
-- **Tailwind CSS v4** — sistema di design ardesia/teal (OKLCH), tema scuro
-  ad alto contrasto, ottimizzato per schermi e tablet.
-- **@myriaddreamin/typst.ts** — compilatore Typst in WebAssembly, eseguito
-  client-side (nessun server di compilazione).
+- **React 18 + Vite 6** — SPA condivisa tra web, Electron e Android.
+- **Tailwind CSS v4** — interfaccia editoriale carta/grafite con tema chiaro e
+  scuro, ottimizzata per desktop, tablet e mobile.
+- **Typst 0.15.1 nativo + @myriaddreamin/typst.ts** — sulle app desktop il
+  compilatore ufficiale gira in un processo isolato; web e Android usano il
+  fallback WebAssembly. Nessun server di compilazione.
 
 ## Avvio
 
@@ -56,14 +57,34 @@ _Opzioni avanzate_.
 3. **Strutturazione** (`src/lib/gemini.js`) — Gemini riceve il testo grezzo e
    il system prompt tipografico e restituisce codice Typst con margini ampi,
    serif per il corpo, sans per i titoli e vere note a piè di pagina.
-4. **Compilazione** (`src/lib/typst.js`) — il codice Typst viene compilato in
-   PDF dal WASM locale. L'editor a sinistra è modificabile: **Genera PDF**
+4. **Compilazione** (`src/lib/typst.js`) — il codice Typst viene compilato dal
+   binario nativo nell'app Electron e dal WASM locale su web/Android. L'editor
+   a sinistra è modificabile: **Genera PDF**
    ricompila, oppure si attiva l'**Anteprima live** (ricompila con debounce).
+   L'anteprima apre il PDF con pdf.js e renderizza **una sola pagina canvas
+   alla volta**. Sul desktop il PDF resta in un file temporaneo servito con
+   richieste Range: anteprima e salvataggio non ne duplicano tutti i byte nel
+   renderer. Sul web gli stessi byte compilati vengono riusati dal download.
 
 I font accademici (Libertinus Serif, New Computer Modern, DejaVu Sans/Mono)
 sono **impacchettati localmente** in `src/assets/fonts`: il compilatore non
 dipende da CDN esterne a runtime, quindi funziona anche offline e non
 incappa in blocchi CORS/CSP.
+
+### Correzione degli errori Typst
+
+Quando la prima compilazione fallisce, l'app avvia automaticamente il motore
+locale in `src/lib/typstfix.js`. Il compilatore restituisce diagnostiche
+strutturate con riga e colonna; il motore genera patch minime attorno a quella
+posizione e conserva una modifica soltanto se una nuova compilazione dimostra
+che l'errore è scomparso, si è spostato in avanti o il numero di errori è
+diminuito. Il ciclo può attraversare fino a 64 errori consecutivi.
+
+Il tasto **Correggi (locale)** ripete lo stesso processo senza usare API. Se
+resta un errore non deterministico, **Correggi con AI** invia al modello solo
+un estratto di circa 12.000 caratteri attorno alla diagnostica, non l'intero
+libro. Le sostituzioni sono limitate a quell'estratto e vengono accettate solo
+dopo la verifica del compilatore locale.
 
 ## Struttura
 
@@ -74,11 +95,23 @@ src/
 ├─ lib/
 │  ├─ nvidia.js             chiamata Nemotron-Parse + parsing risposta
 │  ├─ gemini.js             chiamata Gemini + system prompt + unwrap del codice
-│  ├─ typst.js              init compilatore WASM + compile PDF/SVG + font locali
+│  ├─ typst.js              selezione compilatore nativo/WASM + diagnostiche
+│  ├─ desktop.js            bridge desktop, handle PDF e fallback trasparente
+│  ├─ typstdiag.js          normalizzazione degli intervalli riga/colonna
+│  ├─ typstfix.js           correzione deterministica compiler-guided
+│  ├─ aifix.js              patch AI focalizzate e applicazione sicura
+│  ├─ preamble.js           impaginazione Typst granulare e normalizzazione
+│  ├─ projectArchive.js     import/export portabile .scanconverter
+│  ├─ pdfPreview.js         ricerca e navigazione dell'anteprima paginata
 │  ├─ files.js              validazione file, base64
 │  └─ storage.js            persistenza chiavi/endpoint nel localStorage
 └─ components/              Dropzone, SettingsModal, PipelineStepper,
                             TypstEditor, PdfPreview, Icons
+electron/
+├─ main.cjs                 finestra, IPC, protocollo PDF Range e salvataggio
+├─ preload.cjs              API desktop minima esposta al renderer
+├─ typst-engine.cjs         processo utility serializzato
+└─ typst-runner.cjs         esecuzione del binario Typst e gestione figure
 ```
 
 ## App Android (Capacitor)
@@ -184,6 +217,12 @@ su Android — quindi le chiamate a NVIDIA non sono bloccate dal browser.
 (Verificato: senza iniezione la fetch a NVIDIA fallisce per CORS, con
 iniezione risponde `200`.)
 
+La compilazione Typst desktop usa inoltre il binario ufficiale **0.15.1** in
+un processo separato. Il sorgente e le figure attraversano un bridge IPC
+ristretto; il PDF rimane nella cache temporanea nativa e viene letto a blocchi
+dall'anteprima o copiato direttamente dal dialogo **Salva con nome**. Se il
+binario non può partire, l'app ricade automaticamente sul backend WASM.
+
 **Come ottenere gli installabili.** Il workflow
 `.github/workflows/build-desktop.yml` compila per macOS e Windows. Avvialo da
 **Actions → “Build app desktop (Mac + Windows)” → Run workflow** (oppure crea
@@ -204,14 +243,41 @@ sistema avvisa. Basta autorizzarla una volta:
 **Esecuzione locale (sviluppo):**
 
 ```bash
+npm run download:typst  # una volta: scarica il binario per OS/architettura
 npm run build      # genera dist/
 npm run electron   # avvia l'app desktop sulla build
-# pacchetto per il tuo OS:  npm run build:desktop  (output in release/)
+# pacchetto per il tuo OS: npm run build:desktop (scarica Typst automaticamente)
 ```
 
 Le chiavi API e le sessioni restano locali all'app, come sul web.
 
+## Progetti portabili tra computer
+
+Il pulsante **Esporta progetto** salva lo stato corrente in un archivio
+`.scanconverter`: sessione, testo OCR, chunk Typst, opzioni di impaginazione,
+figure e pagine ancora in attesa di OCR. Dalla home, **Importa progetto** crea
+una nuova sessione locale e permette di continuare il lavoro su un altro PC o
+Mac senza ricominciare la scansione.
+
+L'archivio è un ZIP versionato e validato prima dell'importazione. Le chiavi
+API, i token e gli altri segreti non vengono inclusi: vanno configurati sul
+computer di destinazione. Gli archivi esportati sono ignorati da Git perché
+possono essere molto grandi e contenere materiale riservato.
+
 ## Workflow di formattazione
+
+### Atelier di impaginazione locale
+
+Nel documento aperto, l'**Atelier di impaginazione** modifica e ricompila il
+preambolo senza chiamare modelli online. I controlli coprono formato standard
+o personalizzato, orientamento, colonne, rilegatura, margini predefiniti o
+manuali sui quattro lati, font e corpo, peso, tracking, lingua, sillabazione,
+allineamento, interlinea, spaziatura e rientri, gerarchia dei titoli, testatina,
+numerazione pagina, figure, didascalie e note. Le scelte restano nello stato
+della sessione e quindi viaggiano anche nel file `.scanconverter`.
+
+Il campo di istruzioni creative e **Rigenera con AI** restano disponibili per
+interventi strutturali; **Applica e compila** è invece deterministico e locale.
 
 Nelle impostazioni sono disponibili due percorsi indipendenti:
 
@@ -338,5 +404,5 @@ premere **Genera PDF**, oppure attivare l'**Anteprima live**.
   `nvidia/nemotron-parse`, tool `markdown_no_bbox`; il testo estratto arriva
   in `tool_calls[0].function.arguments`, che è un **array** JSON `[{text}]`.
   Il parser gestisce array, oggetto e i formati di fallback.
-- Il compilatore Typst WASM (~28 MB, ~11 MB gzip) viene scaricato una volta e
-  messo in cache dal browser.
+- Il compilatore Typst WASM (~28 MB, ~11 MB gzip) viene scaricato e messo in
+  cache soltanto da web/Android o quando il fallback desktop è necessario.

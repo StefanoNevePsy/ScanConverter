@@ -337,10 +337,10 @@ export default function TypstEditor({
               <button
                 onClick={onAutofix}
                 disabled={compiling || aiFixing}
-                title="Correzioni deterministiche istantanee (senza AI)"
+                title="Correzione locale iterativa guidata dal compilatore (senza AI)"
                 className="rounded-lg bg-danger/20 px-2.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-danger/30 disabled:opacity-50"
               >
-                Correggi (istantaneo)
+                Correggi (locale)
               </button>
             )}
             {onAiFix && (

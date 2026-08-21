@@ -261,7 +261,13 @@ function blockRangeAtLine(source, line = 1) {
   for (let i = 0; i < first; i++) start += lines[i].length + 1;
   let end = start;
   for (let i = first; i <= last; i++) end += lines[i].length + (i < last ? 1 : 0);
-  return { start, end, text: String(source || '').slice(start, end) };
+  return {
+    start,
+    end,
+    text: String(source || '').slice(start, end),
+    firstLine: first + 1,
+    lastLine: last + 1,
+  };
 }
 
 /** Delimitatori strutturali realmente sbilanciati nell'intero documento. */
@@ -270,41 +276,91 @@ function scanStructuralDelimiters(source) {
   const closing = new Set(Object.values(pairs));
   const stack = [];
   const stray = [];
+  const mismatched = [];
   let quote = false;
-  let raw = false;
+  let rawTicks = 0;
   let lineComment = false;
+  let blockComment = 0;
+  const escaped = (at) => {
+    let slashes = 0;
+    for (let j = at - 1; j >= 0 && source[j] === '\\'; j--) slashes++;
+    return slashes % 2 === 1;
+  };
   for (let i = 0; i < source.length; i++) {
     const ch = source[i];
-    const prev = source[i - 1];
     if (ch === '\n') {
       lineComment = false;
       continue;
     }
     if (lineComment) continue;
-    if (!quote && !raw && ch === '/' && source[i + 1] === '/') {
+    if (blockComment) {
+      if (ch === '/' && source[i + 1] === '*') {
+        blockComment++;
+        i++;
+      } else if (ch === '*' && source[i + 1] === '/') {
+        blockComment--;
+        i++;
+      }
+      continue;
+    }
+    if (!quote && !rawTicks && ch === '/' && source[i + 1] === '/') {
       lineComment = true;
       i++;
       continue;
     }
-    if (prev !== '\\' && ch === '`') {
-      raw = !raw;
+    if (!quote && !rawTicks && ch === '/' && source[i + 1] === '*') {
+      blockComment = 1;
+      i++;
       continue;
     }
-    if (raw) continue;
-    if (prev !== '\\' && ch === '"') {
+    if (ch === '`' && !escaped(i)) {
+      let count = 1;
+      while (source[i + count] === '`') count++;
+      if (!rawTicks) rawTicks = count;
+      else if (count === rawTicks) rawTicks = 0;
+      i += count - 1;
+      continue;
+    }
+    if (rawTicks) continue;
+    if (!escaped(i) && ch === '"') {
       quote = !quote;
       continue;
     }
-    if (quote || prev === '\\') continue;
+    if (quote || escaped(i)) continue;
     if (pairs[ch]) {
       stack.push({ ch, index: i });
     } else if (closing.has(ch)) {
-      const expectedOpen = Object.keys(pairs).find((open) => pairs[open] === ch);
-      if (stack.at(-1)?.ch === expectedOpen) stack.pop();
-      else stray.push({ ch, index: i });
+      const top = stack.at(-1);
+      if (top && pairs[top.ch] === ch) {
+        stack.pop();
+        continue;
+      }
+      // Se la chiusura corrisponde a un'apertura più in basso nello stack,
+      // mancano i delimitatori degli elementi annidati: proponi di inserirli
+      // subito prima. Esempio `([testo)` → `([testo])`.
+      let matching = -1;
+      for (let j = stack.length - 1; j >= 0; j--) {
+        if (pairs[stack[j].ch] === ch) {
+          matching = j;
+          break;
+        }
+      }
+      if (matching >= 0) {
+        const missing = stack.slice(matching + 1).reverse().map((item) => pairs[item.ch]).join('');
+        mismatched.push({ ch, index: i, missing, expected: pairs[top.ch] });
+        stack.splice(matching);
+      } else if (top) {
+        // Non esiste alcuna apertura compatibile: spesso l'LLM ha usato il
+        // tipo di parentesi sbagliato (`#emph[testo)`). La sostituzione viene
+        // comunque convalidata dal compilatore prima di essere accettata.
+        mismatched.push({ ch, index: i, missing: '', expected: pairs[top.ch] });
+        stack.pop();
+      } else {
+        stray.push({ ch, index: i });
+      }
     }
   }
-  return { open: stack, stray, pairs };
+  return { open: stack, stray, mismatched, pairs };
 }
 
 /**
@@ -324,6 +380,21 @@ export function delimiterRepairCandidates(source, line = 1, maxCandidates = 24) 
   };
 
   const structural = scanStructuralDelimiters(s);
+  for (const item of structural.mismatched) {
+    if (item.index < range.start || item.index > range.end) continue;
+    if (item.missing) {
+      add(
+        s.slice(0, item.index) + item.missing + s.slice(item.index),
+        `inserita chiusura mancante «${item.missing}»`,
+      );
+    }
+    if (item.expected && item.expected !== item.ch) {
+      add(
+        s.slice(0, item.index) + item.expected + s.slice(item.index + 1),
+        `corretto delimitatore «${item.ch}» → «${item.expected}»`,
+      );
+    }
+  }
   const localOpen = structural.open.filter((item) => item.index >= range.start && item.index <= range.end);
   if (localOpen.length) {
     const suffix = [...localOpen].reverse().map((item) => structural.pairs[item.ch]).join('');
@@ -332,6 +403,7 @@ export function delimiterRepairCandidates(source, line = 1, maxCandidates = 24) 
   for (const item of structural.stray) {
     if (item.index < range.start || item.index > range.end) continue;
     add(s.slice(0, item.index) + '\\' + s.slice(item.index), `protetto delimitatore isolato «${item.ch}»`);
+    add(s.slice(0, item.index) + s.slice(item.index + 1), `rimosso delimitatore isolato «${item.ch}»`);
   }
 
   // Markup enfasi: trasformare `_testo_`/`*testo*` nelle funzioni esplicite
@@ -365,6 +437,259 @@ export function delimiterRepairCandidates(source, line = 1, maxCandidates = 24) 
   return candidates;
 }
 
+const UNKNOWN_IDENTIFIER_MAP = {
+  paragraph: 'par',
+  textbf: 'strong',
+  textit: 'emph',
+  bold: 'strong',
+  italic: 'emph',
+  italics: 'emph',
+  includegraphics: 'image',
+  img: 'image',
+  href: 'link',
+  newpage: 'pagebreak',
+  new_page: 'pagebreak',
+  page_break: 'pagebreak',
+  newline: 'linebreak',
+  new_line: 'linebreak',
+  line_break: 'linebreak',
+  hspace: 'h',
+  vspace: 'v',
+};
+
+const UNKNOWN_ARGUMENT_MAP = {
+  top: 'above',
+  bottom: 'below',
+  fontsize: 'size',
+  'font-size': 'size',
+  fontweight: 'weight',
+  'font-weight': 'weight',
+  fontstyle: 'style',
+  'font-style': 'style',
+  color: 'fill',
+  background: 'fill',
+  padding: 'inset',
+  lineheight: 'leading',
+  'line-height': 'leading',
+  'line-spacing': 'leading',
+};
+
+function escapeTypstContent(text) {
+  return String(text || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/([#$@\[\]])/g, '\\$1')
+    .replace(/</g, '\\<')
+    .replace(/>/g, '\\>');
+}
+
+function replaceLocalMatches(source, range, re, replacement, add, description) {
+  const local = source.slice(range.start, range.end);
+  for (const match of local.matchAll(re)) {
+    const at = range.start + match.index;
+    const before = source.slice(at, at + match[0].length);
+    const after = typeof replacement === 'function' ? replacement(...match) : replacement;
+    if (before === after) continue;
+    add(source.slice(0, at) + after + source.slice(at + before.length), description);
+  }
+}
+
+function primaryError(result) {
+  return result?.diagnostics?.find((diag) => diag.severity === 'error') || result?.diagnostics?.[0] || null;
+}
+
+function errorCount(result) {
+  return result?.diagnostics?.filter((diag) => diag.severity === 'error').length || 0;
+}
+
+function errorFamily(message) {
+  const text = String(message || '').toLowerCase();
+  if (/delimiter|unclosed|unterminated|closing/.test(text)) return 'delimiter';
+  if (/unknown (?:variable|function|argument)/.test(text)) return 'unknown';
+  if (/expected|unexpected|invalid character|not valid in code/.test(text)) return 'syntax';
+  return text.replace(/[`“”'"].*?[`“”'"]/g, '').replace(/\d+/g, '#').slice(0, 80);
+}
+
+/** Una patch locale è conservata solo se il compilatore prova un avanzamento. */
+export function diagnosticProgress(before, after) {
+  if (after?.ok) return true;
+  const previous = primaryError(before);
+  const next = primaryError(after);
+  if (!previous || !next) return false;
+  const previousLine = Number(previous.line || 0);
+  const nextLine = Number(next.line || 0);
+  if (previousLine && nextLine && nextLine > previousLine) return true;
+  if (
+    errorCount(after) < errorCount(before) &&
+    (!previousLine || !nextLine || nextLine >= previousLine)
+  ) return true;
+  return (
+    errorFamily(previous.message) !== errorFamily(next.message) &&
+    (!previousLine || !nextLine || nextLine >= previousLine)
+  );
+}
+
+/**
+ * Candidati locali guidati dal messaggio del compilatore. Oltre ai
+ * delimitatori copre alias LaTeX/HTML e nomi tipici inventati dagli LLM.
+ */
+export function typstRepairCandidates(source, diagnostic = {}, maxCandidates = 16) {
+  const s = String(source || '');
+  const line = Math.max(1, Number(diagnostic?.line || 1));
+  const candidates = [];
+  const seen = new Set([s]);
+  const add = (fixed, description) => {
+    if (!fixed || seen.has(fixed) || candidates.length >= maxCandidates) return;
+    seen.add(fixed);
+    candidates.push({ fixed, description });
+  };
+
+  // Il parser può segnalare l'errore all'inizio del blocco successivo quando
+  // la vera apertura è nel paragrafo precedente: prova entrambi.
+  for (const candidateLine of new Set([line, Math.max(1, line - 1)])) {
+    for (const candidate of delimiterRepairCandidates(s, candidateLine, maxCandidates)) {
+      add(candidate.fixed, candidate.description);
+    }
+  }
+
+  const range = blockRangeAtLine(s, line);
+  const message = String(diagnostic?.message || '');
+  const unknown = message.match(/unknown (?:variable|function):?\s*[`“”'"]?([\w-]+)/i)?.[1];
+  const identifier = UNKNOWN_IDENTIFIER_MAP[unknown];
+  if (identifier) {
+    const escaped = unknown.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    replaceLocalMatches(
+      s,
+      range,
+      new RegExp(`#${escaped}(?=\\s*[\\[(])`, 'g'),
+      `#${identifier}`,
+      add,
+      `funzione «${unknown}» → «${identifier}»`,
+    );
+    replaceLocalMatches(
+      s,
+      range,
+      new RegExp(`(#(?:set|show)\\s+)${escaped}\\b`, 'g'),
+      (whole, prefix) => `${prefix}${identifier}`,
+      add,
+      `regola «${unknown}» → «${identifier}»`,
+    );
+  }
+
+  const unknownArg = message.match(/unknown argument:?\s*[`“”'"]?([\w-]+)/i)?.[1];
+  const argument = UNKNOWN_ARGUMENT_MAP[unknownArg];
+  if (argument) {
+    const escaped = unknownArg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    replaceLocalMatches(
+      s,
+      range,
+      new RegExp(`\\b${escaped}(?=\\s*:)`, 'g'),
+      argument,
+      add,
+      `argomento «${unknownArg}» → «${argument}»`,
+    );
+  }
+
+  // Virgolette tipografiche usate per errore come stringhe dentro una
+  // chiamata. La prosa normale non viene toccata.
+  replaceLocalMatches(
+    s,
+    range,
+    /([(:,=]\s*)[“‘]([^”’\n]+)[”’]/g,
+    (whole, prefix, text) => `${prefix}"${text}"`,
+    add,
+    'virgolette tipografiche → stringa Typst',
+  );
+
+  const html = [
+    [/<sup>([^<\n]*)<\/sup>/gi, (whole, text) => `#super[${escapeTypstContent(text)}]`, 'HTML <sup> → #super'],
+    [/<sub>([^<\n]*)<\/sub>/gi, (whole, text) => `#sub[${escapeTypstContent(text)}]`, 'HTML <sub> → #sub'],
+    [/<(?:strong|b)>([^<\n]*)<\/(?:strong|b)>/gi, (whole, text) => `#strong[${escapeTypstContent(text)}]`, 'HTML grassetto → #strong'],
+    [/<(?:em|i)>([^<\n]*)<\/(?:em|i)>/gi, (whole, text) => `#emph[${escapeTypstContent(text)}]`, 'HTML corsivo → #emph'],
+    [/<br\s*\/?>/gi, '#linebreak()', 'HTML <br> → #linebreak'],
+  ];
+  for (const [pattern, replacement, description] of html) {
+    replaceLocalMatches(s, range, pattern, replacement, add, description);
+  }
+
+  // Assegnazioni in stile Python/CSS dentro chiamate (`width = 80%`). Non
+  // toccare i `#let x = ...`: il candidato è sempre verificato localmente.
+  if (/expected.*:|named argument|argument/i.test(message)) {
+    replaceLocalMatches(
+      s,
+      range,
+      /\b(?!let\b)([a-z][\w-]*)\s*=\s*(?=[^=])/g,
+      (whole, name) => `${name}: `,
+      add,
+      'argomento con «=» → «:»',
+    );
+  }
+
+  return candidates;
+}
+
+/**
+ * Motore iterativo locale. Può attraversare decine di errori consecutivi e
+ * non conserva mai una patch euristica senza una prova di avanzamento del
+ * compilatore.
+ */
+export async function repairTypstDeterministically({
+  source,
+  diagnose,
+  maxRounds = 64,
+  maxCandidates = 16,
+  maxAttempts = 256,
+  signal,
+}) {
+  const abortIfNeeded = () => {
+    if (!signal?.aborted) return;
+    const error = new Error('Correzione annullata.');
+    error.name = 'AbortError';
+    throw error;
+  };
+  abortIfNeeded();
+  const initial = autofixTypst(String(source || ''));
+  let code = initial.fixed;
+  const changes = [...initial.changes];
+  const visited = new Set([code]);
+  let result = await diagnose(code);
+  let rounds = 0;
+  let attempts = 0;
+
+  while (!result?.ok && rounds < maxRounds && attempts < maxAttempts) {
+    abortIfNeeded();
+    const diagnostic = primaryError(result) || {};
+    const candidates = typstRepairCandidates(code, diagnostic, maxCandidates);
+    let progressed = null;
+    for (const candidate of candidates) {
+      abortIfNeeded();
+      if (attempts >= maxAttempts) break;
+      if (visited.has(candidate.fixed)) continue;
+      visited.add(candidate.fixed);
+      attempts++;
+      const checked = await diagnose(candidate.fixed);
+      if (diagnosticProgress(result, checked)) {
+        progressed = { ...candidate, checked };
+        break;
+      }
+    }
+    if (!progressed) break;
+    code = progressed.fixed;
+    result = progressed.checked;
+    changes.push(progressed.description);
+    rounds++;
+  }
+
+  return {
+    fixed: code,
+    changes,
+    ok: result?.ok === true,
+    diagnostics: result?.diagnostics || [],
+    error: result?.error || '',
+    rounds,
+    attempts,
+  };
+}
+
 /**
  * @param {string} source
  * @returns {{ fixed: string, changes: string[] }}
@@ -373,6 +698,15 @@ export function autofixTypst(source) {
   let s = source;
   const changes = [];
   const count = (re) => (s.match(re) || []).length;
+
+  // Markdown grassetto residuo: Typst usa un solo `*` per lato. Le forme a
+  // doppio delimitatore possono confondere il parser nei chunk prodotti da
+  // modelli abituati al Markdown.
+  const mdStrong = count(/\*\*[^*\n]+\*\*/g);
+  if (mdStrong) {
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, '*$1*');
+    changes.push(`${mdStrong} grassetto/i Markdown → Typst`);
+  }
 
   // 1) Titoli Markdown non convertiti: `## Titolo` → `== Titolo`.
   const mdHeads = count(/^[ \t]{0,3}#{1,6}[ \t]+\S/gm);

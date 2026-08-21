@@ -1,20 +1,29 @@
 <!doctype html>
-<html lang="it" class="dark">
+<html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%9C%3C/text%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' fill='%23d7ff3f'/%3E%3Cg fill='none' stroke='%2311110f' stroke-width='2'%3E%3Cpath d='M10 5.5h17l4 4v25H10zM27 5.5v5h4M15 14h10M15 19h11M15 24h8'/%3E%3Cpath stroke='%237c6cff' d='M12.5 5.5v29'/%3E%3C/g%3E%3C/svg%3E" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f0eee8" />
     <meta
       name="description"
-      content="ScanConverter — digitalizza fotocopie e paper storici: OCR Nemotron-Parse, layout Typst via Gemini, PDF vettoriale compilato nel browser."
+      content="ScanConverter digitalizza scansioni e libri con OCR configurabile, impaginazione Typst modificabile e compilazione locale su web e desktop."
     />
     <title>ScanConverter · Digitalizzazione documenti accademici</title>
   </head>
   <body>
+    <!--
+      THESIS: ScanConverter è un banco editoriale, non una dashboard di card; il documento e il suo passaggio da scansione a pagina pulita guidano la superficie.
+      OWN-WORLD: carta minerale chiara o grafite, inchiostro netto, violetto operativo e lampi lime; Manrope per il lavoro, Barlow Condensed per identità e gerarchie.
+      STORY: l’utente vede cosa può riprendere, importa o avvia un documento, poi lavora fra sorgente, controlli tipografici e pagina compilata senza perdere lo stato.
+      FIRST VIEWPORT: wordmark e stato in una barra sottile; titolo ampio, sessioni e ingresso del documento compongono un unico banco, con importazione sempre visibile.
+      FORM: estensione dell’interfaccia operativa esistente, direzione Soglia fissata dal brief; seed key soglia-reference-user-pinned.
+      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+    -->
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

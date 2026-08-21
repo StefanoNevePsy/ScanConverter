@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractPageBlocks, toTypstNvidia } from '../lib/nvidia.js';
 import { toTypst, ocrImageGemini } from '../lib/gemini.js';
-import { compileToPdf, compileToSvg, initTypst, locateTypstError } from '../lib/typst.js';
-import { savePdf, sharePdf } from '../lib/download.js';
+import { compileToPdf, diagnoseTypst, initTypst, locateTypstError } from '../lib/typst.js';
+import { savePdf, saveProjectArchive, sharePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assemble.js';
@@ -10,6 +10,7 @@ import { refinePageTables } from '../lib/segments.js';
 import { localOcrBlocks } from '../lib/local.js';
 import { toTypstLocal } from '../lib/engines.js';
 import { extractPdfText } from '../lib/pdftext.js';
+import { hasPdfData, releaseDesktopPdf } from '../lib/desktop.js';
 import { isSpreadLike, preparePages, makeThumbnail } from '../lib/pagePrep.js';
 import {
   chunkDocument,
@@ -19,8 +20,17 @@ import {
   normalizeHeadingLevels,
   enforceHeadingLevels,
 } from '../lib/session.js';
-import { buildPreamble, ensureExplicitHyphenation, extractTitle } from '../lib/preamble.js';
-import { autofixTypst, delimiterRepairCandidates } from '../lib/typstfix.js';
+import {
+  buildPreamble,
+  DEFAULT_LAYOUT_OPTIONS,
+  ensureExplicitHyphenation,
+  extractTitle,
+  normalizeLayoutOptions,
+} from '../lib/preamble.js';
+import {
+  diagnosticProgress,
+  repairTypstDeterministically,
+} from '../lib/typstfix.js';
 import { checkFidelity, fidelityNoteFrom } from '../lib/fidelity.js';
 import { requestTypstFix, applyFixes, describeFix } from '../lib/aifix.js';
 import {
@@ -55,8 +65,9 @@ import {
   requestStrictLayoutPlan,
   requestStrictPassageRepair,
 } from '../lib/layoutPlan.js';
-import { markTypstSearchMatch } from '../lib/searchPreview.js';
+import { createPdfSearchTarget } from '../lib/pdfPreview.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
+import { createProjectArchive, inspectProjectArchive } from '../lib/projectArchive.js';
 import {
   saveSession,
   saveFigures,
@@ -67,8 +78,11 @@ import {
   savePages,
   getPage,
   savePart,
+  saveParts,
   getParts,
   getSession,
+  getPages,
+  savePageRecords,
   deletePage,
   deletePagesFor,
   requestPersistentStorage,
@@ -120,10 +134,16 @@ async function withRetry(fn, signal, onWait, { max = 6, start = 15000, cap = 120
 export const STEPS = [
   { id: 'ocr', label: 'Estrazione testo', hint: 'NVIDIA Nemotron-Parse' },
   { id: 'format', label: 'Formattazione layout', hint: 'Gemini/NVIDIA → Typst' },
-  { id: 'compile', label: 'Compilazione PDF', hint: 'Typst WASM · locale' },
+  { id: 'compile', label: 'Compilazione PDF', hint: 'Typst nativo/WASM · locale' },
 ];
 
 const emptyStatus = { ocr: 'pending', format: 'pending', compile: 'pending' };
+
+function summarizeFixLog(items, limit = 10) {
+  const visible = items.slice(0, limit);
+  const more = items.length > visible.length ? ` · +${items.length - visible.length} altre` : '';
+  return `${visible.join(' · ')}${more}`;
+}
 
 function correctionContext(rawText, before, after, radius = 700) {
   const source = String(rawText || '');
@@ -146,10 +166,12 @@ export function usePipeline(settings) {
 
   const [rawText, setRawText] = useState('');
   const [typstCode, setTypstCode] = useState('');
-  const [previewSvg, setPreviewSvg] = useState(null); // anteprima vettoriale (SVG)
+  const [layoutOptions, setLayoutOptions] = useState(DEFAULT_LAYOUT_OPTIONS);
+  const [previewPdf, setPreviewPdf] = useState(null); // byte web o handle file desktop
   const [compileError, setCompileError] = useState(null);
   const [compiling, setCompiling] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [projectBusy, setProjectBusy] = useState(null); // 'export' | 'import' | null
   const [aiFixing, setAiFixing] = useState(false);
   const [spellReport, setSpellReport] = useState(null); // {suspects, error?} | null
   const [spellBusy, setSpellBusy] = useState(false);
@@ -174,6 +196,9 @@ export function usePipeline(settings) {
   const [strictCorrectionBusy, setStrictCorrectionBusy] = useState(null);
   const [strictIssueBusy, setStrictIssueBusy] = useState(null);
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
+  // Il PDF mostrato in anteprima è anche quello consegnato al download. La
+  // coppia sorgente/riferimento figure impedisce di riusare byte obsoleti.
+  const compiledPdfRef = useRef({ source: '', figures: null, pdf: null });
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
   const searchPreviewRef = useRef(0); // scarta compilazioni di ricerca ormai superate
@@ -188,9 +213,12 @@ export function usePipeline(settings) {
 
   /**
    * Arricchisce un errore di compilazione con la posizione trovata per
-   * bisezione (gli errori Typst non hanno numero di riga).
+   * diagnostica strutturata; usa la bisezione solo come fallback.
    */
   const describeCompileError = useCallback(async (source, message) => {
+    // Le nuove diagnostiche strutturate sono già formattate con riga/colonna:
+    // evita una seconda compilazione soltanto per ricavare la stessa posizione.
+    if (/\briga\s+\d+/i.test(String(message || ''))) return message;
     const loc = await locateTypstError(source, figuresRef.current);
     return loc
       ? `${message} — L’errore è vicino alla riga ${loc.line}: «${loc.snippet}»`
@@ -214,10 +242,34 @@ export function usePipeline(settings) {
     setFidelityWarnings(warns);
   }, []);
 
+  /** Compila una sola volta il PDF corrente e lo conserva per il download. */
+  const getCompiledPdf = useCallback(async (source) => {
+    const cached = compiledPdfRef.current;
+    if (cached.source === source && cached.figures === figuresRef.current && hasPdfData(cached.pdf)) {
+      return cached.pdf;
+    }
+    const pdf = await compileToPdf(source, figuresRef.current);
+    compiledPdfRef.current = { source, figures: figuresRef.current, pdf };
+    releaseDesktopPdf(cached.pdf);
+    return pdf;
+  }, []);
+
+  /** Compila e pubblica l'anteprima PDF paginata. */
+  const compilePreviewPdf = useCallback(async (source) => {
+    const bytes = await getCompiledPdf(source);
+    setPreviewPdf(bytes);
+    return bytes;
+  }, [getCompiledPdf]);
+
   /** Compila e confronta il layer testuale del PDF con la fonte canonica. */
   const verifyStrictPdf = useCallback(async (source, existingBytes = null) => {
     const s = sessionRef.current;
     if (s?.workflow !== 'strict') return existingBytes;
+    // Download e riapertura dell'anteprima riusano lo stesso artefatto: non
+    // riestrarre centinaia di pagine se questo identico PDF è già verificato.
+    if (existingBytes && s.verifiedPdfSource === source && s.verifiedPdfArtifact === existingBytes) {
+      return existingBytes;
+    }
     s.verified = false;
     const pdfBytes = existingBytes || await compileToPdf(source, figuresRef.current);
     // Il PDF riformattato può avere più pagine dell'input: non applicare qui
@@ -231,6 +283,8 @@ export function usePipeline(settings) {
         layoutPlan: s.layoutPlan || null,
         pdf: { contentOk: false, unverifiable: true, missing: [], added: [], missingInvariants: [] },
       });
+      s.verifiedPdfSource = source;
+      s.verifiedPdfArtifact = pdfBytes;
       return pdfBytes;
     }
     const expected = sourcePlainText(s.canonicalText || s.rawText);
@@ -295,6 +349,8 @@ export function usePipeline(settings) {
       },
     });
     s.verified = contentOk;
+    s.verifiedPdfSource = source;
+    s.verifiedPdfArtifact = pdfBytes;
     return pdfBytes;
   }, [settings]);
 
@@ -344,6 +400,7 @@ export function usePipeline(settings) {
       // e fix di punteggiatura senza dover ricostruire i vecchi chunk.
       editorCode: s.editorCode || null,
       styleHint: s.styleHint || null,
+      layoutOptions: s.layoutOptions || null,
       chunks: s.chunks.map((c) => ({
         text: c.text,
         body: c.body,
@@ -389,8 +446,81 @@ export function usePipeline(settings) {
         comparisons: s.ocr.comparisons || [],
       },
       styleHint: s.styleHint || null,
+      layoutOptions: s.layoutOptions || null,
     });
   }, []);
+
+  /**
+   * Esporta una sessione come progetto portatile versionato. Lo snapshot
+   * corrente viene forzato prima di leggere IndexedDB, così anche l’ultima
+   * modifica nell’editor entra nell’archivio senza attendere il debounce.
+   */
+  const exportProject = useCallback(async (summary = null) => {
+    setProjectBusy('export');
+    try {
+      const active = !summary && sessionRef.current;
+      const id = summary?.id || active?.id;
+      if (!id) throw new Error('Il documento non ha ancora uno stato esportabile.');
+      if (active) {
+        if (typstCode.trim()) active.editorCode = typstCode;
+        if (active.ocr && active.ocr.done < active.ocr.total) await persistOcr('ocr');
+        else await persist();
+      }
+      const session = await getSession(id);
+      if (!session) throw new Error('Non riesco a leggere la sessione salvata.');
+      // Letture sequenziali: sui libri grandi evita tre picchi IndexedDB
+      // concorrenti prima che l'archivio venga costruito.
+      const parts = await getParts(id, session.ocr?.total || 0);
+      const figures = await getFigures(id);
+      const pages = await getPages(id);
+      const archive = await createProjectArchive({ session, parts, figures, pages });
+      const result = await saveProjectArchive(archive.bytes, archive.fileName);
+      return { ...archive.summary, fileName: archive.fileName, cancelled: !!result?.cancelled };
+    } finally {
+      setProjectBusy(null);
+    }
+  }, [persist, persistOcr, typstCode]);
+
+  /** Importa una copia indipendente della sessione e restituisce il suo riepilogo. */
+  const importProject = useCallback(async (file) => {
+    setProjectBusy('import');
+    try {
+      const archive = await inspectProjectArchive(file);
+      let id;
+      do {
+        id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      } while (await getSession(id));
+
+      const importedAt = new Date().toISOString();
+      const session = {
+        ...archive.session,
+        id,
+        fileName: archive.fileName || archive.session.fileName || 'documento',
+        importedFrom: {
+          sessionId: archive.manifest.document?.sourceSessionId || archive.session.id || null,
+          exportedAt: archive.manifest.exportedAt,
+          importedAt,
+        },
+      };
+      await saveSession(session);
+      // Ricostruisce uno store alla volta per contenere memoria e contesa
+      // fra transazioni quando l'archivio è voluminoso.
+      await saveParts(id, archive.parts);
+      await saveFigures(id, archive.figures);
+      await savePageRecords(id, archive.pages);
+      const stored = await getSession(id);
+      if (!stored) throw new Error('L’importazione non è stata salvata sul dispositivo.');
+      await refreshSessions();
+      return {
+        id,
+        fileName: stored.fileName,
+        status: stored.status,
+        updatedAt: stored.updatedAt,
+      };
+    } finally {
+      setProjectBusy(null);
+    }
+  }, [refreshSessions]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -401,7 +531,8 @@ export function usePipeline(settings) {
     setError(null);
     setRawText('');
     setTypstCode('');
-    setPreviewSvg(null);
+    setLayoutOptions(DEFAULT_LAYOUT_OPTIONS);
+    setPreviewPdf(null);
     setCompileError(null);
     setDetail('');
     setChunkProgress(null);
@@ -411,6 +542,8 @@ export function usePipeline(settings) {
     setStrictReport(null);
     setSpellReport(null);
     figuresRef.current = [];
+    releaseDesktopPdf(compiledPdfRef.current.pdf);
+    compiledPdfRef.current = { source: '', figures: null, pdf: null };
     sessionRef.current = null;
     refreshSessions(); // riallinea l'elenco al ritorno sulla home
   }, [refreshSessions, clearReview]);
@@ -557,23 +690,51 @@ export function usePipeline(settings) {
   const finalizeCompile = useCallback(
     async (signal) => {
       const s = sessionRef.current;
-      const combined = ensureExplicitHyphenation(
+      let finalSource = ensureExplicitHyphenation(
         combineDocument(s.preamble, s.chunks.map((c) => c.body || '')),
       );
-      setTypstCode(combined);
+      setTypstCode(finalSource);
       setStatus((x) => ({ ...x, format: 'done', compile: 'active' }));
       setActiveStep('compile');
       setDetail('');
       collectFidelity();
       try {
-        if (s.workflow === 'strict') {
-          setDetail('Verifica testuale del PDF compilato…');
-          await verifyStrictPdf(combined);
-          if (signal.aborted) return;
+        const renderFinal = async (source) => {
+          const pdfBytes = await getCompiledPdf(source);
+          if (s.workflow === 'strict') {
+            setDetail('Verifica testuale del PDF compilato…');
+            await verifyStrictPdf(source, pdfBytes);
+            if (signal.aborted) return null;
+          }
+          return pdfBytes;
+        };
+
+        let pdfBytes;
+        try {
+          pdfBytes = await renderFinal(finalSource);
+        } catch (initialError) {
+          if (signal.aborted || initialError?.name === 'AbortError') return;
+          setDetail('Correzione locale guidata dal compilatore…');
+          const repaired = await repairTypstDeterministically({
+            source: finalSource,
+            diagnose: (candidate) => diagnoseTypst(candidate, figuresRef.current),
+            signal,
+          });
+          if (repaired.fixed !== finalSource) {
+            finalSource = repaired.fixed;
+            s.editorCode = finalSource;
+            setTypstCode(finalSource);
+          }
+          if (!repaired.ok) {
+            const first = repaired.diagnostics.find((diag) => diag.severity === 'error') || repaired.diagnostics[0];
+            const error = new Error(first?.message || repaired.error || initialError.message);
+            error.location = first;
+            throw error;
+          }
+          pdfBytes = await renderFinal(finalSource);
         }
-        const svg = await compileToSvg(combined, figuresRef.current);
         if (signal.aborted) return;
-        setPreviewSvg(svg);
+        setPreviewPdf(pdfBytes);
         setStatus((x) => ({ ...x, compile: 'done' }));
         setActiveStep(null);
         setPhase('done');
@@ -582,14 +743,17 @@ export function usePipeline(settings) {
         if (signal.aborted) return;
         // Errore di compilazione Typst: non fatale, l'editor resta usabile.
         setStatus((x) => ({ ...x, compile: 'error' }));
-        setCompileError(
-          await describeCompileError(combined, e.message || 'Errore di compilazione Typst.'),
-        );
+        const message = e.message || 'Errore di compilazione Typst.';
+        setCompileError(e.location?.line
+          ? `${message} — L’errore è vicino alla riga ${e.location.line}${
+              e.location.column ? `, colonna ${e.location.column}` : ''
+            }.`
+          : await describeCompileError(finalSource, message));
         setActiveStep(null);
         setPhase('done');
       }
     },
-    [persist, collectFidelity, describeCompileError, verifyStrictPdf],
+    [persist, collectFidelity, describeCompileError, getCompiledPdf, verifyStrictPdf],
   );
 
   /** Esegue la fase 2+3 sulla sessione corrente (fresh o resume). */
@@ -1087,10 +1251,12 @@ export function usePipeline(settings) {
             comparisons: meta.ocr.comparisons || new Array(meta.ocr.total).fill(null),
           },
           styleHint: meta.styleHint || undefined,
+          layoutOptions: normalizeLayoutOptions(meta.layoutOptions || {}),
           lastError: '',
         };
         setRawText('');
         setTypstCode('');
+        setLayoutOptions(normalizeLayoutOptions(meta.layoutOptions || {}));
         setStatus({ ocr: 'active', format: 'pending', compile: 'pending' });
         setOcrProgress({ done: meta.ocr.done, total: meta.ocr.total });
         setPhase('running');
@@ -1107,6 +1273,7 @@ export function usePipeline(settings) {
         chunks: (meta.chunks || []).map((c) => ({ ...c })),
         preamble: meta.preamble || '',
         styleHint: meta.styleHint || undefined,
+        layoutOptions: normalizeLayoutOptions(meta.layoutOptions || {}),
         lastError: '',
         workflow: meta.workflow || 'legacy',
         canonicalText: meta.canonicalText || meta.rawText,
@@ -1119,6 +1286,7 @@ export function usePipeline(settings) {
         verified: meta.verified === true,
       };
       setRawText(meta.rawText || '');
+      setLayoutOptions(normalizeLayoutOptions(meta.layoutOptions || {}));
       const restoredCode = ensureExplicitHyphenation(
         meta.editorCode || combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || '')),
       );
@@ -1177,9 +1345,12 @@ export function usePipeline(settings) {
       setCompiling(true);
       setCompileError(null);
       try {
-        if (sessionRef.current?.workflow === 'strict') await verifyStrictPdf(source);
-        const svg = await compileToSvg(source, figuresRef.current);
-        setPreviewSvg(svg);
+        // Lascia un frame per mostrare lo stato di caricamento prima di
+        // invocare il processo desktop o, sul web, il compilatore WASM.
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+        const pdfBytes = await getCompiledPdf(source);
+        if (sessionRef.current?.workflow === 'strict') await verifyStrictPdf(source, pdfBytes);
+        setPreviewPdf(pdfBytes);
         return true;
       } catch (e) {
         setCompileError(
@@ -1190,33 +1361,24 @@ export function usePipeline(settings) {
         setCompiling(false);
       }
     },
-    [typstCode, describeCompileError, verifyStrictPdf],
+    [typstCode, describeCompileError, getCompiledPdf, verifyStrictPdf],
   );
 
   /**
-   * Ricompila soltanto l'anteprima con una singola occorrenza evidenziata.
-   * Il sorgente salvato e il PDF scaricato non vengono mai modificati.
+   * Localizza nell'anteprima PDF l'occorrenza selezionata nell'editor. Il
+   * layer testuale di pdf.js sostituisce la vecchia ricompilazione di un SVG
+   * completo con una parola evidenziata.
    */
   const previewSearchMatch = useCallback(
     async (match) => {
       const requestId = ++searchPreviewRef.current;
-      if (!typstCode.trim()) return false;
-      const source = match
-        ? markTypstSearchMatch(typstCode, match.start, match.end)
-        : typstCode;
-      if (match && source === typstCode) return false;
-      try {
-        const svg = await compileToSvg(source, figuresRef.current);
-        if (requestId !== searchPreviewRef.current) return false;
-        setPreviewSvg(svg);
-        return true;
-      } catch {
-        // Una ricerca dentro codice/preambolo resta selezionata nell'editor,
-        // ma non deve sostituire un'anteprima PDF valida con un errore.
-        return false;
-      }
+      if (!match) return null;
+      if (!typstCode.trim() || !hasPdfData(previewPdf)) return false;
+      const target = createPdfSearchTarget(typstCode, match);
+      if (requestId !== searchPreviewRef.current) return false;
+      return target || false;
     },
-    [typstCode],
+    [previewPdf, typstCode],
   );
 
   /**
@@ -1232,7 +1394,8 @@ export function usePipeline(settings) {
       setDownloading(true);
       setCompileError(null);
       try {
-        let bytes = await compileToPdf(typstCode, figuresRef.current);
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+        let bytes = await getCompiledPdf(typstCode);
         bytes = await verifyStrictPdf(typstCode, bytes);
         if (mode === 'share') await sharePdf(bytes, fileName || 'documento');
         else await savePdf(bytes, fileName || 'documento');
@@ -1242,7 +1405,7 @@ export function usePipeline(settings) {
         setDownloading(false);
       }
     },
-    [typstCode, verifyStrictPdf],
+    [getCompiledPdf, typstCode, verifyStrictPdf],
   );
 
   /**
@@ -1254,11 +1417,16 @@ export function usePipeline(settings) {
     async (sel) => {
       if (!typstCode.trim()) return false;
       const { body } = splitPreamble(typstCode);
-      const preamble = buildPreamble(sel, { title: extractTitle(body) });
+      const normalized = normalizeLayoutOptions(sel);
+      const preamble = buildPreamble(normalized, { title: extractTitle(body) });
       const next = combineDocument(preamble, [body]);
       setTypstCode(next);
+      setLayoutOptions(normalized);
       // salva anche nel corpo della sessione (se attiva) per la persistenza
-      if (sessionRef.current) sessionRef.current.preamble = preamble;
+      if (sessionRef.current) {
+        sessionRef.current.preamble = preamble;
+        sessionRef.current.layoutOptions = normalized;
+      }
       return recompile(next);
     },
     [typstCode, recompile],
@@ -1273,76 +1441,34 @@ export function usePipeline(settings) {
     if (!typstCode.trim()) return { changes: [] };
     setCompiling(true);
     try {
-    const deterministic = autofixTypst(typstCode);
-    let code = deterministic.fixed;
-    const changes = [...deterministic.changes];
-    let finalSvg = null;
-
-    // Fino a quattro errori locali consecutivi. Ogni modifica resta solo in
-    // memoria finché l'intero documento non compila: in caso di insuccesso
-    // l'editor conserva esattamente il sorgente dell'utente.
-    for (let round = 0; round < 4; round++) {
-      try {
-        finalSvg = await compileToSvg(code, figuresRef.current);
-        break;
-      } catch (compileFailure) {
-        const message = compileFailure.message || String(compileFailure);
-        if (!/unclosed|delimiter|unterminated|expected\s+.*[\])}]/i.test(message)) break;
-        const location = await locateTypstError(code, figuresRef.current);
-        const candidates = delimiterRepairCandidates(code, location?.line || 1);
-        let progressed = null;
-        for (const candidate of candidates) {
-          try {
-            const svg = await compileToSvg(candidate.fixed, figuresRef.current);
-            progressed = { ...candidate, svg };
-            break;
-          } catch (candidateFailure) {
-            // Se l'errore si è spostato in avanti, questa riparazione ha
-            // risolto il blocco corrente: conservala provvisoriamente e passa
-            // al successivo. Nulla viene salvato finché non compila tutto.
-            const nextLocation = await locateTypstError(candidate.fixed, figuresRef.current);
-            if (location && nextLocation?.line > location.line) {
-              progressed = { ...candidate, svg: null };
-              break;
-            }
-            const nextMessage = candidateFailure.message || String(candidateFailure);
-            if (/unclosed|delimiter|unterminated/i.test(message) && !/unclosed|delimiter|unterminated/i.test(nextMessage)) {
-              progressed = { ...candidate, svg: null };
-              break;
-            }
-          }
-        }
-        if (!progressed) break;
-        code = progressed.fixed;
-        changes.push(progressed.description);
-        if (progressed.svg) {
-          finalSvg = progressed.svg;
-          break;
-        }
+      const repaired = await repairTypstDeterministically({
+        source: typstCode,
+        diagnose: (code) => diagnoseTypst(code, figuresRef.current),
+      });
+      setTypstCode(repaired.fixed);
+      if (repaired.ok) {
+        await compilePreviewPdf(repaired.fixed);
+        setCompileError(null);
+        return { changes: repaired.changes, ok: true };
       }
-    }
-
-    if (finalSvg) {
-      setTypstCode(code);
-      setPreviewSvg(finalSvg);
-      setCompileError(null);
-      return { changes, ok: true };
-    }
-    // Mostra nuovamente l'errore arricchito, senza applicare tentativi non
-    // verificati. Le sostituzioni statiche precedenti mantengono il vecchio
-    // comportamento soltanto se erano effettivamente presenti.
-    if (deterministic.changes.length) setTypstCode(deterministic.fixed);
-    await recompile(deterministic.fixed);
-    return { changes: deterministic.changes, ok: false };
+      const first = repaired.diagnostics.find((diag) => diag.severity === 'error') || repaired.diagnostics[0];
+      const message = first?.message || repaired.error || 'Errore di compilazione Typst.';
+      setCompileError(
+        first?.line
+          ? `${message} — L’errore è vicino alla riga ${first.line}${first.column ? `, colonna ${first.column}` : ''}.`
+          : await describeCompileError(repaired.fixed, message),
+      );
+      return { changes: repaired.changes, ok: false };
     } finally {
       setCompiling(false);
     }
-  }, [typstCode, recompile]);
+  }, [compilePreviewPdf, typstCode, describeCompileError]);
 
   /**
    * Correzione AI puntiforme: compila → se fallisce chiede al modello forte
    * (fixEngine/fixModel) le sostituzioni minime {find, replace}, le applica e
-   * ricompila; fino a 3 giri. Prova prima l'autofix deterministico (gratuito).
+   * ricompila; fino a 8 estratti locali. Prima di ogni richiesta esaurisce il
+   * motore deterministico (gratuito) e valida ogni patch col compilatore.
    * Il documento non viene MAI riscritto per intero: solo sostituzioni esatte.
    * @returns {Promise<{ok:boolean, message:string}>}
    */
@@ -1353,72 +1479,130 @@ export function usePipeline(settings) {
     setAiFixing(true);
     let code = typstCode;
     const log = [];
+    const attemptedErrors = new Set();
+    const controller = new AbortController();
+    abortRef.current?.abort();
+    abortRef.current = controller;
     try {
-      const det = autofixTypst(code);
-      if (det.changes.length) {
-        code = det.fixed;
-        log.push(...det.changes);
-      }
       let lastError = '';
-      // Quattro compilazioni consentono fino a tre vere richieste di patch.
-      for (let round = 0; round < 4; round++) {
-        try {
-          const svg = await compileToSvg(code, figuresRef.current);
-          setTypstCode(code);
-          setPreviewSvg(svg);
+      let lastDiagnostics = [];
+      // Ogni richiesta vede soltanto il blocco localizzato; otto passaggi
+      // restano gestibili anche per un libro con molti errori indipendenti.
+      for (let round = 0; round < 8; round++) {
+        const local = await repairTypstDeterministically({
+          source: code,
+          diagnose: (candidate) => diagnoseTypst(candidate, figuresRef.current),
+          signal: controller.signal,
+        });
+        code = local.fixed;
+        for (const change of local.changes) {
+          if (!log.includes(change)) log.push(change);
+        }
+        setTypstCode(code);
+        if (local.ok) {
+          await compilePreviewPdf(code);
           setCompileError(null); // risolto: ora il banner può sparire
           return {
             ok: true,
             message: log.length
-              ? `Corretto e compilato. Modifiche: ${log.join(' · ')}`
+              ? `Corretto e compilato. Modifiche: ${summarizeFixLog(log)}`
               : 'Il codice compila già, nessuna correzione necessaria.',
           };
-        } catch (e) {
-          lastError = e.message || 'Errore di compilazione Typst.';
-          if (round === 3) break; // niente più tentativi AI
-          // Localizza l'errore per bisezione: il modello riceve riga e blocco
-          // indiziato (gli errori Typst non hanno posizione).
-          const loc = await locateTypstError(code, figuresRef.current);
-          const res = await requestTypstFix({ settings, code, error: lastError, hint: loc });
-          const { code: next, applied } = applyFixes(code, res.fixes);
-          if (!applied.length || next === code) {
-            setTypstCode(code);
-            setCompileError(await describeCompileError(code, lastError));
-            return {
-              ok: false,
-              message:
-                'L’AI non ha prodotto correzioni applicabili' +
-                (res.explanation ? ` (${res.explanation})` : '.'),
-            };
-          }
-          code = next;
-          // Rende subito visibile la modifica: se un errore successivo resta,
-          // l'utente può comunque ispezionare la patch e il testo non sembra
-          // tornare silenziosamente alla versione precedente.
-          setTypstCode(code);
-          if (res.explanation && !log.includes(res.explanation)) log.push(res.explanation);
-          log.push(...applied.map(describeFix));
         }
+
+        lastDiagnostics = local.diagnostics;
+        const first = local.diagnostics.find((diag) => diag.severity === 'error') || local.diagnostics[0];
+        lastError = first?.message || local.error || 'Errore di compilazione Typst.';
+        const loc = first?.line
+          ? {
+              line: first.line,
+              column: first.column,
+              endLine: first.endLine,
+              endColumn: first.endColumn,
+              message: first.message,
+              snippet: code.split('\n').slice(Math.max(0, first.line - 2), first.line + 1).join(' ').trim().slice(0, 140),
+            }
+          : await locateTypstError(code, figuresRef.current);
+        const fingerprint = `${lastError}|${loc?.line || 0}|${loc?.snippet || ''}`;
+        if (attemptedErrors.has(fingerprint)) break;
+        attemptedErrors.add(fingerprint);
+
+        const res = await requestTypstFix({
+          settings,
+          code,
+          error: lastError,
+          hint: loc,
+          signal: controller.signal,
+        });
+        const patched = applyFixes(code, res.fixes, { scope: res.scope });
+        if (!patched.applied.length || patched.code === code) {
+          setCompileError(
+            loc?.line ? `${lastError} — L’errore è vicino alla riga ${loc.line}.` : lastError,
+          );
+          return {
+            ok: false,
+            message:
+              'L’AI non ha prodotto correzioni applicabili nell’estratto localizzato' +
+              (res.explanation ? ` (${res.explanation})` : '.'),
+          };
+        }
+
+        const before = { ok: false, diagnostics: local.diagnostics };
+        let accepted = patched;
+        let checked = await diagnoseTypst(patched.code, figuresRef.current);
+        // Se il gruppo di patch non migliora la diagnostica, prova le singole
+        // sostituzioni: evita che una proposta secondaria regressiva annulli
+        // una correzione principale valida.
+        if (!diagnosticProgress(before, checked)) {
+          accepted = null;
+          for (const fix of res.fixes || []) {
+            const single = applyFixes(code, [fix], { scope: res.scope });
+            if (!single.applied.length) continue;
+            const singleCheck = await diagnoseTypst(single.code, figuresRef.current);
+            if (diagnosticProgress(before, singleCheck)) {
+              accepted = single;
+              checked = singleCheck;
+              break;
+            }
+          }
+        }
+        if (!accepted) {
+          setCompileError(
+            loc?.line ? `${lastError} — L’errore è vicino alla riga ${loc.line}.` : lastError,
+          );
+          return {
+            ok: false,
+            message: 'Le patch AI sono state scartate perché non miglioravano la diagnostica del compilatore.',
+          };
+        }
+        code = accepted.code;
+        setTypstCode(code);
+        if (res.explanation && !log.includes(res.explanation)) log.push(res.explanation);
+        log.push(...accepted.applied.map(describeFix));
+        lastDiagnostics = checked.diagnostics || [];
       }
-      // Quattro compilazioni fallite: mantieni comunque le modifiche applicate
-      // (spesso avvicinano alla soluzione) e mostra l'errore residuo con la
-      // posizione localizzata per bisezione.
-      const described = await describeCompileError(code, lastError);
+      const first = lastDiagnostics.find((diag) => diag.severity === 'error') || lastDiagnostics[0];
+      const described = first?.line
+        ? `${first.message || lastError} — L’errore è vicino alla riga ${first.line}.`
+        : await describeCompileError(code, lastError);
       setTypstCode(code);
       setCompileError(described);
       return {
         ok: false,
         message:
-          (log.length ? `Applicate: ${log.join(' · ')} — ` : '') +
+          (log.length ? `Applicate: ${summarizeFixLog(log)} — ` : '') +
           `errore residuo: ${described}`,
       };
     } catch (e) {
+      if (e?.name === 'AbortError' || controller.signal.aborted) {
+        return { ok: false, message: 'Correzione annullata.' };
+      }
       setCompileError(e.message || 'Errore nella correzione AI.');
       return { ok: false, message: e.message || 'Errore nella correzione AI.' };
     } finally {
       setAiFixing(false);
     }
-  }, [typstCode, settings, describeCompileError]);
+  }, [compilePreviewPdf, typstCode, settings, describeCompileError]);
 
   /**
    * Controllo ortografico locale (dizionari it+en impacchettati): elenca le
@@ -1573,7 +1757,7 @@ export function usePipeline(settings) {
         const previousCanonical = strictSession?.canonicalText;
         const previousCorrections = strictSession?.corrections || [];
         try {
-          const svg = await compileToSvg(code, figuresRef.current);
+          const pdfBytes = await getCompiledPdf(code);
           if (strictSession) {
             const canonical = applySpellFixes(previousCanonical || strictSession.rawText, corrections);
             strictSession.canonicalText = canonical.code;
@@ -1586,9 +1770,9 @@ export function usePipeline(settings) {
                 count: a.count,
               })),
             ];
-            await verifyStrictPdf(code);
+            await verifyStrictPdf(code, pdfBytes);
           }
-          setPreviewSvg(svg);
+          setPreviewPdf(pdfBytes);
           setCompileError(null);
         } catch (eAfter) {
           if (strictSession) {
@@ -1597,8 +1781,7 @@ export function usePipeline(settings) {
           }
           let beforeOk = false;
           try {
-            await compileToSvg(before, figuresRef.current);
-            beforeOk = true;
+            beforeOk = (await diagnoseTypst(before, figuresRef.current)).ok;
           } catch {
             /* era già rotto prima: le correzioni non c'entrano */
           }
@@ -1630,7 +1813,7 @@ export function usePipeline(settings) {
         setSpellBusy(false);
       }
     },
-    [spellReport, typstCode, settings, verifyStrictPdf],
+    [getCompiledPdf, spellReport, typstCode, settings, verifyStrictPdf],
   );
 
   /**
@@ -1668,7 +1851,7 @@ export function usePipeline(settings) {
       const previousCanonical = strictSession?.canonicalText;
       const previousCorrections = strictSession?.corrections || [];
       try {
-        const svg = await compileToSvg(code, figuresRef.current);
+        const pdfBytes = await getCompiledPdf(code);
         if (strictSession) {
           let nextCanonical = previousCanonical || strictSession.rawText;
           for (const change of changes) {
@@ -1682,9 +1865,9 @@ export function usePipeline(settings) {
             ...previousCorrections,
             ...changes.map((c) => ({ ...c, type: 'contextual' })),
           ];
-          await verifyStrictPdf(code);
+          await verifyStrictPdf(code, pdfBytes);
         }
-        setPreviewSvg(svg);
+        setPreviewPdf(pdfBytes);
         setCompileError(null);
       } catch (eAfter) {
         if (strictSession) {
@@ -1693,8 +1876,7 @@ export function usePipeline(settings) {
         }
         let beforeOk = false;
         try {
-          await compileToSvg(before, figuresRef.current);
-          beforeOk = true;
+          beforeOk = (await diagnoseTypst(before, figuresRef.current)).ok;
         } catch {
           /* era già rotto prima */
         }
@@ -1723,7 +1905,7 @@ export function usePipeline(settings) {
       setProofreadBusy(false);
       setProofreadDetail('');
     }
-  }, [typstCode, settings, verifyStrictPdf]);
+  }, [getCompiledPdf, typstCode, settings, verifyStrictPdf]);
 
   /** Revisione interattiva di una singola voce del registro conservativo. */
   const reviewStrictCorrection = useCallback(async (index, action) => {
@@ -1819,7 +2001,7 @@ export function usePipeline(settings) {
         preamble: s.preamble,
         chunks: s.chunks,
       };
-      const svg = await compileToSvg(nextCode, figuresRef.current);
+      const pdfBytes = await getCompiledPdf(nextCode);
       s.canonicalText = nextCanonical;
       s.corrections = nextCorrections;
       s.editorCode = nextCode;
@@ -1832,7 +2014,7 @@ export function usePipeline(settings) {
         fidelity: { coverage: 1, missing: [] },
       }];
       try {
-        await verifyStrictPdf(nextCode);
+        await verifyStrictPdf(nextCode, pdfBytes);
       } catch (e) {
         s.canonicalText = previous.canonicalText;
         s.corrections = previous.corrections;
@@ -1842,7 +2024,7 @@ export function usePipeline(settings) {
         throw e;
       }
       setTypstCode(nextCode);
-      setPreviewSvg(svg);
+      setPreviewPdf(pdfBytes);
       setCompileError(null);
       await persist();
       return { ok: true, message: 'Scelta applicata e PDF ricontrollato.' };
@@ -1852,7 +2034,7 @@ export function usePipeline(settings) {
     } finally {
       setStrictCorrectionBusy(null);
     }
-  }, [persist, settings, typstCode, verifyStrictPdf]);
+  }, [getCompiledPdf, persist, settings, typstCode, verifyStrictPdf]);
 
   /** Azioni sui passaggi discordanti fra fonte canonica e PDF compilato. */
   const reviewStrictIssue = useCallback(async (index, action) => {
@@ -1946,7 +2128,7 @@ export function usePipeline(settings) {
         corrections: s.corrections,
         resolutions: s.strictIssueResolutions,
       };
-      const svg = await compileToSvg(nextCode, figuresRef.current);
+      const pdfBytes = await getCompiledPdf(nextCode);
       s.canonicalText = nextCanonical;
       s.editorCode = nextCode;
       s.strictIssueResolutions = {
@@ -1969,7 +2151,7 @@ export function usePipeline(settings) {
       s.preamble = parts.preamble;
       s.chunks = [{ text: s.rawText, body: parts.body, status: 'done', fidelity: { coverage: 1, missing: [] } }];
       try {
-        await verifyStrictPdf(nextCode);
+        await verifyStrictPdf(nextCode, pdfBytes);
       } catch (e) {
         s.canonicalText = previous.canonicalText;
         s.editorCode = previous.editorCode;
@@ -1980,7 +2162,7 @@ export function usePipeline(settings) {
         throw e;
       }
       setTypstCode(nextCode);
-      setPreviewSvg(svg);
+      setPreviewPdf(pdfBytes);
       setCompileError(null);
       await persist();
       return { ok: true, message: 'Passaggio rigenerato, compilato e confrontato nuovamente.' };
@@ -1990,7 +2172,7 @@ export function usePipeline(settings) {
     } finally {
       setStrictIssueBusy(null);
     }
-  }, [persist, settings, strictReport, typstCode, verifyStrictPdf]);
+  }, [getCompiledPdf, persist, settings, strictReport, typstCode, verifyStrictPdf]);
 
   /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
@@ -2087,10 +2269,13 @@ export function usePipeline(settings) {
       setStatus({ ...emptyStatus });
       setRawText('');
       setTypstCode('');
+      setPreviewPdf(null);
       setFidelityWarnings([]);
       setOcrProgress(null);
       clearReview();
       figuresRef.current = [];
+      releaseDesktopPdf(compiledPdfRef.current.pdf);
+      compiledPdfRef.current = { source: '', figures: null, pdf: null };
 
       try {
         // [1/3] Estrazione testo (NVIDIA). Nemotron-Parse accetta solo
@@ -2188,9 +2373,11 @@ export function usePipeline(settings) {
     rawText,
     typstCode,
     setTypstCode,
-    previewSvg,
+    layoutOptions,
+    previewPdf,
     downloadPdf,
     downloading,
+    projectBusy,
     compileError,
     compiling,
     chunkProgress,
@@ -2210,6 +2397,8 @@ export function usePipeline(settings) {
     openSession,
     deleteSavedSession,
     refreshSessions,
+    exportProject,
+    importProject,
     runPipeline,
     recompile,
     previewSearchMatch,
