@@ -26,6 +26,9 @@ const KEYS = {
   formatWorkflow: 'sc.formatWorkflow',
   compareOcr: 'sc.compareOcr',
   refineTables: 'sc.refineTables',
+  localEndpoint: 'sc.localEndpoint',
+  localModel: 'sc.localModel',
+  localOcrEndpoint: 'sc.localOcrEndpoint',
 };
 
 export const DEFAULTS = {
@@ -69,10 +72,16 @@ export const DEFAULTS = {
   // la struttura righe/colonne si recupera solo dall'immagine. Richiede bbox
   // (motore OCR NVIDIA) e la chiave Google.
   refineTables: false,
+  // Pipeline LOCALE (branch sperimentale): un server OpenAI-compatibile sulla
+  // macchina dell'utente per le fasi testuali, e un sidecar che incapsula
+  // Nemotron OCR v2 per la fase immagine → testo. Nessuna chiave richiesta.
+  localEndpoint: 'http://localhost:11434/v1/chat/completions',
+  localModel: 'qwen3:8b',
+  localOcrEndpoint: 'http://localhost:8000/ocr',
 };
 
 // Valori ammessi per il motore Typst.
-const ENGINES = ['gemini', 'nvidia'];
+const ENGINES = ['gemini', 'nvidia', 'local'];
 const PDF_MODES = ['auto', 'ocr'];
 const FORMAT_WORKFLOWS = ['legacy', 'strict'];
 
@@ -151,6 +160,9 @@ export function loadSettings() {
       : DEFAULTS.formatWorkflow,
     compareOcr: readBool(KEYS.compareOcr, DEFAULTS.compareOcr),
     refineTables: readBool(KEYS.refineTables, DEFAULTS.refineTables),
+    localEndpoint: read(KEYS.localEndpoint, DEFAULTS.localEndpoint),
+    localModel: read(KEYS.localModel, DEFAULTS.localModel),
+    localOcrEndpoint: read(KEYS.localOcrEndpoint, DEFAULTS.localOcrEndpoint),
   };
 }
 
@@ -217,4 +229,7 @@ export function saveSettings(s) {
   );
   write(KEYS.compareOcr, s.compareOcr ? '1' : '0');
   write(KEYS.refineTables, s.refineTables ? '1' : '0');
+  write(KEYS.localEndpoint, s.localEndpoint?.trim() || DEFAULTS.localEndpoint);
+  write(KEYS.localModel, s.localModel?.trim() || DEFAULTS.localModel);
+  write(KEYS.localOcrEndpoint, s.localOcrEndpoint?.trim() || DEFAULTS.localOcrEndpoint);
 }

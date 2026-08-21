@@ -19,8 +19,7 @@
   vengono saltati e lasciati identici.
 */
 
-import { nvidiaChat } from './nvidia.js';
-import { geminiGenerate } from './gemini.js';
+import { engineChat, modelFor } from './engines.js';
 import { extractJson } from './aifix.js';
 import { loadSpeller } from './spell.js';
 
@@ -239,30 +238,17 @@ export async function requestProofread({ settings, paragraphs, signal }) {
     '\n\nRispondi SOLO con: {"items":[{"i":0,"text":"…"}, …]} includendo un ' +
     'oggetto per OGNI paragrafo.';
 
-  let text;
-  if (settings.fixEngine === 'gemini') {
-    text = await geminiGenerate({
-      apiKey: settings.googleApiKey,
-      model: settings.fixModel,
-      system: SYSTEM,
-      user,
-      temperature: 0,
-      maxTokens: 8192,
-      json: true,
-      signal,
-    });
-  } else {
-    text = await nvidiaChat({
-      apiKey: settings.nvidiaApiKey,
-      endpoint: settings.nvidiaEndpoint,
-      model: settings.fixModel,
-      system: SYSTEM,
-      user,
-      temperature: 0,
-      maxTokens: 8192,
-      signal,
-    });
-  }
+  const text = await engineChat({
+    settings,
+    engine: settings.fixEngine,
+    model: modelFor(settings, settings.fixEngine, settings.fixModel),
+    system: SYSTEM,
+    user,
+    temperature: 0,
+    maxTokens: 8192,
+    json: true,
+    signal,
+  });
   const parsed = extractJson(text);
   const items = Array.isArray(parsed.items) ? parsed.items : [];
   const map = new Map();
@@ -288,30 +274,17 @@ export async function requestCorrectionReview({ settings, before, after, context
     `ORIGINALE OCR:\n${before}\n\nCORREZIONE ATTUALE:\n${after}\n\n` +
     'Rispondi SOLO con: {"choice":"original|corrected|proposal",' +
     '"text":"testo esatto scelto o proposto","explanation":"spiegazione breve"}';
-  let text;
-  if (settings.fixEngine === 'gemini') {
-    text = await geminiGenerate({
-      apiKey: settings.googleApiKey,
-      model: settings.fixModel,
-      system: SYSTEM,
-      user,
-      temperature: 0,
-      maxTokens: 2048,
-      json: true,
-      signal,
-    });
-  } else {
-    text = await nvidiaChat({
-      apiKey: settings.nvidiaApiKey,
-      endpoint: settings.nvidiaEndpoint,
-      model: settings.fixModel,
-      system: SYSTEM,
-      user,
-      temperature: 0,
-      maxTokens: 2048,
-      signal,
-    });
-  }
+  const text = await engineChat({
+    settings,
+    engine: settings.fixEngine,
+    model: modelFor(settings, settings.fixEngine, settings.fixModel),
+    system: SYSTEM,
+    user,
+    temperature: 0,
+    maxTokens: 2048,
+    json: true,
+    signal,
+  });
   const parsed = extractJson(text);
   const choice = ['original', 'corrected', 'proposal'].includes(parsed?.choice)
     ? parsed.choice

@@ -10,3 +10,7 @@ yarn-error.log*
 # APK di build (consegnato a parte)
 *.apk
 release/
+
+# Cache Python del sidecar OCR locale
+__pycache__/
+*.pyc

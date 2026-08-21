@@ -7,6 +7,8 @@ import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assemble.js';
 import { refinePageTables } from '../lib/segments.js';
+import { localOcrBlocks } from '../lib/local.js';
+import { toTypstLocal } from '../lib/engines.js';
 import { extractPdfText } from '../lib/pdftext.js';
 import { isSpreadLike, preparePages, makeThumbnail } from '../lib/pagePrep.js';
 import {
@@ -433,7 +435,17 @@ export function usePipeline(settings) {
     async (args, signal, chunkLabel) => {
       const nvidia = settings.typstEngine === 'nvidia';
       const call = () =>
-        nvidia
+        settings.typstEngine === 'local'
+          ? toTypstLocal({
+              settings,
+              rawText: args.rawText,
+              styleHint: args.styleHint,
+              continuation: args.continuation,
+              fidelityNote: args.fidelityNote,
+              fixTypos: settings.fixTypos,
+              signal,
+            })
+          : nvidia
           ? toTypstNvidia({
               apiKey: settings.nvidiaApiKey,
               endpoint: settings.nvidiaEndpoint,
@@ -749,8 +761,22 @@ export function usePipeline(settings) {
             setDetail(`${label} · servizio occupato: nuovo tentativo tra ${secs}s…`);
           // Gemini (vision): trascrizione Markdown, nessuna figura/bbox.
           // NVIDIA (Nemotron-Parse): blocchi strutturati con bbox e figure.
+          // 'local': sidecar sulla macchina dell'utente (Nemotron OCR v2).
+          // 'gemini': trascrizione multimodale, un blocco senza bbox.
+          // 'nvidia': blocchi strutturati con bbox, figure e classi semantiche.
           const blocks =
-            settings.ocrEngine === 'gemini'
+            settings.ocrEngine === 'local'
+              ? await withRetry(
+                  () =>
+                    localOcrBlocks({
+                      endpoint: settings.localOcrEndpoint,
+                      imageDataUrl: dataUrl,
+                      signal,
+                    }),
+                  signal,
+                  onWait,
+                )
+              : settings.ocrEngine === 'gemini'
               ? [
                   {
                     type: 'Text',

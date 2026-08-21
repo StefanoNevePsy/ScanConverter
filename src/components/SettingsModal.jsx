@@ -199,9 +199,9 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             <span className="mb-2 block text-xs text-faint">
               Chi legge il testo dalle immagini scansionate.
             </span>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-2 sm:grid-cols-3">
               <EngineButton
-                active={form.ocrEngine !== 'gemini'}
+                active={form.ocrEngine === 'nvidia'}
                 onClick={() => setForm((f) => ({ ...f, ocrEngine: 'nvidia' }))}
                 title="NVIDIA Nemotron-Parse"
                 sub="estrae anche figure e tabelle"
@@ -211,6 +211,12 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 onClick={() => setForm((f) => ({ ...f, ocrEngine: 'gemini' }))}
                 title="Google Gemini"
                 sub="più robusto su scansioni pessime"
+              />
+              <EngineButton
+                active={form.ocrEngine === 'local'}
+                onClick={() => setForm((f) => ({ ...f, ocrEngine: 'local' }))}
+                title="Locale (sidecar)"
+                sub="Nemotron OCR v2 sulla tua GPU"
               />
             </div>
             {form.ocrEngine === 'gemini' && (
@@ -287,9 +293,9 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             <span className="mb-2 block text-xs text-faint">
               Chi trasforma il testo estratto in codice Typst.
             </span>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-2 sm:grid-cols-3">
               <EngineButton
-                active={!engineNvidia}
+                active={form.typstEngine === 'gemini'}
                 onClick={() => setEngine('gemini')}
                 title="Google Gemini"
                 sub="veloce, ottimo layout"
@@ -299,6 +305,12 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 onClick={() => setEngine('nvidia')}
                 title="Modello NVIDIA"
                 sub="alternativa se Gemini è limitato"
+              />
+              <EngineButton
+                active={form.typstEngine === 'local'}
+                onClick={() => setEngine('local')}
+                title="Modello locale"
+                sub="senza rete né chiavi"
               />
             </div>
           </div>
@@ -368,6 +380,49 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
           </div>
           </Section>
 
+          {/* Pipeline locale: compare solo se almeno una fase la usa, così non
+              ingombra chi lavora solo con le API. */}
+          {(form.ocrEngine === 'local' ||
+            form.typstEngine === 'local' ||
+            form.fixEngine === 'local') && (
+            <Section title="Pipeline locale" note="Nessuna chiave, nessuna quota.">
+              <p className="text-xs leading-relaxed text-faint">
+                L’OCR locale riconosce i glifi velocissimo ma non capisce la
+                lingua: è il modello locale a rimettere gli accenti e le parole
+                troncate, con gli stessi guard usati per Gemini. Serve Ollama in
+                esecuzione (e il sidecar OCR, se scegli l’OCR locale).
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field
+                  label="Endpoint LLM locale"
+                  hint="Ollama espone l’API OpenAI su questa porta."
+                  value={form.localEndpoint}
+                  onChange={update('localEndpoint')}
+                  placeholder={DEFAULTS.localEndpoint}
+                  mono
+                />
+                <Field
+                  label="Modello locale"
+                  hint="Consigliato qwen3:8b — multilingue, entra in 10 GB."
+                  value={form.localModel}
+                  onChange={update('localModel')}
+                  placeholder={DEFAULTS.localModel}
+                  mono
+                />
+              </div>
+              {form.ocrEngine === 'local' && (
+                <Field
+                  label="Endpoint sidecar OCR"
+                  hint="Il servizio Python che incapsula Nemotron OCR v2 (vedi tools/local-ocr)."
+                  value={form.localOcrEndpoint}
+                  onChange={update('localOcrEndpoint')}
+                  placeholder={DEFAULTS.localOcrEndpoint}
+                  mono
+                />
+              )}
+            </Section>
+          )}
+
           <details className="group border-t border-border pt-5">
             <summary className="cursor-pointer select-none text-sm font-medium text-muted hover:text-ink transition-colors">
               Opzioni avanzate
@@ -428,9 +483,9 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                   Modello forte per il tasto «Correggi con AI»: riceve errore e
                   codice, restituisce sostituzioni puntiformi.
                 </span>
-                <div className="mb-3 grid grid-cols-2 gap-2">
+                <div className="mb-3 grid gap-2 sm:grid-cols-3">
                   <EngineButton
-                    active={form.fixEngine !== 'gemini'}
+                    active={form.fixEngine === 'nvidia'}
                     onClick={() => setForm((f) => ({ ...f, fixEngine: 'nvidia' }))}
                     title="Modello NVIDIA"
                     sub="es. DeepSeek, GLM, Qwen"
@@ -440,6 +495,12 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                     onClick={() => setForm((f) => ({ ...f, fixEngine: 'gemini' }))}
                     title="Google Gemini"
                     sub="es. gemini-pro di livello alto"
+                  />
+                  <EngineButton
+                    active={form.fixEngine === 'local'}
+                    onClick={() => setForm((f) => ({ ...f, fixEngine: 'local' }))}
+                    title="Modello locale"
+                    sub="rilettura senza limiti di quota"
                   />
                 </div>
                 <ModelSelect

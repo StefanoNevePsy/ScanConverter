@@ -192,10 +192,11 @@ export async function nvidiaChat({ apiKey, endpoint, model, system, user, temper
   return stripReasoning(text);
 }
 
-export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHint, continuation, fidelityNote, fixTypos, signal }) {
-  if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
-  if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
-
+/**
+ * Costruisce il messaggio utente della fase Typst. Estratto a parte perché è
+ * identico per ogni motore: cambiando il modello non deve cambiare il prompt.
+ */
+export function buildTypstUser({ rawText, styleHint, continuation, fidelityNote, fixTypos }) {
   const guidance =
     buildGuidance(styleHint, { fixTypos }) +
     (continuation
@@ -211,16 +212,23 @@ export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHin
       : '') +
     (fidelityNote ? '\n\n' + fidelityNote : '');
 
+  return (
+    guidance +
+    '\n\nTesto estratto dall’OCR da convertire in Typst:\n\n"""\n' +
+    rawText +
+    '\n"""'
+  );
+}
+
+export async function toTypstNvidia({ apiKey, endpoint, model, rawText, styleHint, continuation, fidelityNote, fixTypos, signal }) {
+  if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
+  if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
   const text = await nvidiaChat({
     apiKey,
     endpoint,
     model: model || 'meta/llama-3.3-70b-instruct',
     system: SYSTEM_PROMPT,
-    user:
-      guidance +
-      '\n\nTesto estratto dall’OCR da convertire in Typst:\n\n"""\n' +
-      rawText +
-      '\n"""',
+    user: buildTypstUser({ rawText, styleHint, continuation, fidelityNote, fixTypos }),
     temperature: 0.2,
     maxTokens: 8192,
     signal,

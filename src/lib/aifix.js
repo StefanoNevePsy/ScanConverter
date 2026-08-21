@@ -10,8 +10,7 @@
   Così il contenuto resta intatto e la modifica è verificabile.
 */
 
-import { nvidiaChat } from './nvidia.js';
-import { geminiGenerate } from './gemini.js';
+import { engineChat, modelFor } from './engines.js';
 
 export const FIX_SYSTEM =
   'Sei un esperto del linguaggio di impaginazione Typst (versione 0.13). ' +
@@ -173,30 +172,17 @@ export async function requestTypstFix({ settings, code, error, hint, signal }) {
 async function requestOnce({ settings, code, error, hint, signal }) {
   const engine = settings.fixEngine || 'nvidia';
   const user = buildFixUser(code, error, hint);
-  let text;
-  if (engine === 'gemini') {
-    text = await geminiGenerate({
-      apiKey: settings.googleApiKey,
-      model: settings.fixModel || settings.geminiTypstModel,
-      system: FIX_SYSTEM,
-      user,
-      temperature: 0.1,
-      maxTokens: 4096,
-      json: true,
-      signal,
-    });
-  } else {
-    text = await nvidiaChat({
-      apiKey: settings.nvidiaApiKey,
-      endpoint: settings.nvidiaEndpoint,
-      model: settings.fixModel || 'z-ai/glm-5.2',
-      system: FIX_SYSTEM,
-      user,
-      temperature: 0.1,
-      maxTokens: 4096,
-      signal,
-    });
-  }
+  const text = await engineChat({
+    settings,
+    engine,
+    model: modelFor(settings, engine, settings.fixModel),
+    system: FIX_SYSTEM,
+    user,
+    temperature: 0.1,
+    maxTokens: 4096,
+    json: true,
+    signal,
+  });
   const parsed = extractJson(text);
   return {
     fixes: Array.isArray(parsed.fixes) ? parsed.fixes : [],

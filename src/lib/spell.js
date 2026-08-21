@@ -11,8 +11,7 @@
   contesto (requestSpellFixes): mai il documento intero.
 */
 
-import { nvidiaChat } from './nvidia.js';
-import { geminiGenerate } from './gemini.js';
+import { engineChat } from './engines.js';
 import { extractJson } from './aifix.js';
 
 // Token Typst/tecnici che non sono refusi anche se ignoti ai dizionari.
@@ -303,30 +302,16 @@ export async function requestSpellFixes({ settings, entries, signal }) {
       .join('\n') +
     '\n\nRispondi SOLO con: {"corrections":[{"word":"…","fix":"…"}]}';
 
-  let text;
-  if (settings.typstEngine === 'nvidia') {
-    text = await nvidiaChat({
-      apiKey: settings.nvidiaApiKey,
-      endpoint: settings.nvidiaEndpoint,
-      model: settings.nvidiaTypstModel,
-      system,
-      user,
-      temperature: 0.1,
-      maxTokens: 4096,
-      signal,
-    });
-  } else {
-    text = await geminiGenerate({
-      apiKey: settings.googleApiKey,
-      model: settings.geminiTypstModel,
-      system,
-      user,
-      temperature: 0.1,
-      maxTokens: 4096,
-      json: true,
-      signal,
-    });
-  }
+  const text = await engineChat({
+    settings,
+    engine: settings.typstEngine,
+    system,
+    user,
+    temperature: 0.1,
+    maxTokens: 4096,
+    json: true,
+    signal,
+  });
   const parsed = extractJson(text);
   const list = Array.isArray(parsed.corrections) ? parsed.corrections : [];
   return list.filter(
