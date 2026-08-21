@@ -147,7 +147,13 @@ function Install-Ollama {
         $installer = Join-Path $env:TEMP 'OllamaSetup.exe'
         Get-Download -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile $installer
         Write-Host "       installo (l'installer chiede conferma)..."
-        Start-Process -FilePath $installer -ArgumentList "/DIR=`"$programDir`"" -Wait
+        # `Start-Process -Wait` aspetta anche i processi discendenti. Ollama
+        # avvia l'app e il server al termine dell'installazione, quindi quel
+        # comando non tornerebbe finché Ollama resta aperto. Il Process .NET,
+        # invece, aspetta soltanto l'installer vero e proprio.
+        $installProcess = Start-Process -FilePath $installer `
+            -ArgumentList "/DIR=`"$programDir`"" -PassThru
+        $installProcess.WaitForExit()
         Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $exe) { Write-Ok "Ollama installato in $programDir" }
         else { Write-Warn2 "Ollama non risulta in ${programDir}: controlla la destinazione scelta nell'installer." }

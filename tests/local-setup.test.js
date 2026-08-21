@@ -22,6 +22,12 @@ test('lo script usa UTF-8 con BOM per Windows PowerShell 5.1', () => {
   assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
 });
 
+test('l’installer Ollama non aspetta il server che lascia in esecuzione', () => {
+  const script = readFileSync(windowsScript, 'utf8');
+  assert.doesNotMatch(script, /Start-Process\s+-FilePath[^\r\n]*-Wait/);
+  assert.match(script, /\$installProcess\.WaitForExit\(\)/);
+});
+
 test('Windows PowerShell 5.1 riesce a leggere tutto lo script', {
   skip: process.platform !== 'win32',
 }, () => {
