@@ -7,8 +7,8 @@
   API verificata contro @myriaddreamin/typst.ts@0.7.0:
     - $typst.setCompilerInitOptions({ getModule, beforeBuild })
     - $typst.setRendererInitOptions({ getModule })
-    - await $typst.pdf({ mainContent })  -> Uint8Array (byte del PDF)
-    - await $typst.svg({ mainContent })  -> string (markup SVG)
+    - compiler.compile({ diagnostics: "full" }) -> artefatto + riga/colonna
+    - await $typst.svg({ vectorData }) -> string (markup SVG)
 
   Font: di default il compilatore scarica i font da una CDN (jsdelivr). Qui
   li impacchettiamo localmente e passiamo un font-loader con `{ assets: false }`
@@ -17,7 +17,14 @@
 */
 
 import { $typst } from '@myriaddreamin/typst.ts/dist/esm/contrib/snippet.mjs';
+import { CompileFormatEnum } from '@myriaddreamin/typst.ts/compiler';
 import { loadFonts } from '@myriaddreamin/typst.ts/dist/esm/options.init.mjs';
+import {
+  formatTypstDiagnostics,
+  normalizeTypstDiagnostics,
+} from './typstdiag.js';
+
+export { normalizeTypstDiagnostics, parseTypstRange } from './typstdiag.js';
 
 // Vite risolve i binari WASM in URL statici serviti dall'app.
 import compilerWasmUrl from '@myriaddreamin/typst-ts-web-compiler/pkg/typst_ts_web_compiler_bg.wasm?url';
@@ -34,6 +41,18 @@ const fontModules = import.meta.glob('../assets/fonts/*.{ttf,otf}', {
 const FONT_URLS = Object.values(fontModules);
 
 let initPromise = null;
+let compileQueue = Promise.resolve();
+const MAIN_SOURCE_PATH = '/scanconverter/main.typ';
+
+// Il compilatore e il renderer di `$typst` sono singleton mutabili. Le
+// compilazioni dell'editor, della ricerca e del correttore possono partire
+// quasi insieme: serializzarle evita che un reset/addSource sostituisca il
+// documento mentre un'altra operazione lo sta ancora usando.
+function serializedCompile(task) {
+  const run = compileQueue.catch(() => {}).then(task);
+  compileQueue = run.catch(() => {});
+  return run;
+}
 
 /**
  * Inizializza compilatore e renderer una sola volta (idempotente).
@@ -71,8 +90,7 @@ export function initTypst() {
  *        disponibili al compilatore (referenziate come `image("/figures/…")`)
  * @returns {Promise<Uint8Array>} byte del PDF
  */
-async function prepare(source, figures) {
-  await initTypst();
+function validateSource(source) {
   // Pre-controllo: titoli Markdown non convertiti (`## Titolo`). In Typst `#`
   // seguito da spazio non è mai valido → messaggio chiaro invece del criptico
   // "the character `#` is not valid in code".
@@ -85,6 +103,9 @@ async function prepare(source, figures) {
         `«${md[1]} …».`,
     );
   }
+}
+
+async function prepareFigures(figures) {
   // Rende disponibili le figure come "shadow file" nel filesystem virtuale
   // del compilatore. mapShadow sovrascrive: ri-compilazioni idempotenti.
   for (const fig of figures || []) {
@@ -92,14 +113,58 @@ async function prepare(source, figures) {
   }
 }
 
-export async function compileToPdf(source, figures = []) {
-  await prepare(source, figures);
-  let bytes;
+function compileError(diagnostics, fallback) {
+  const error = new Error(formatTypstDiagnostics(diagnostics) || formatTypstError(fallback));
+  error.name = 'TypstCompileError';
+  error.diagnostics = diagnostics;
+  return error;
+}
+
+async function compileArtifact(source, figures, format = CompileFormatEnum.vector) {
+  validateSource(source);
+  await initTypst();
+  await prepareFigures(figures);
+  const compiler = await $typst.getCompiler();
+  await compiler.reset();
+  compiler.addSource(MAIN_SOURCE_PATH, source);
+  let result;
   try {
-    bytes = await $typst.pdf({ mainContent: source });
-  } catch (e) {
-    throw new Error(formatTypstError(e));
+    result = await compiler.compile({
+      mainFilePath: MAIN_SOURCE_PATH,
+      format,
+      diagnostics: 'full',
+    });
+  } catch (error) {
+    const diagnostics = normalizeTypstDiagnostics(error?.diagnostics || error?.message || error);
+    throw compileError(diagnostics, error);
   }
+  const diagnostics = normalizeTypstDiagnostics(result?.diagnostics);
+  if (!result?.result) throw compileError(diagnostics, 'Errore di compilazione Typst.');
+  return { artifact: result.result, diagnostics };
+}
+
+/**
+ * Controlla sintassi e semantica senza renderizzare: è il percorso economico
+ * usato dal correttore per provare molte patch su documenti molto lunghi.
+ */
+export async function diagnoseTypst(source, figures = []) {
+  return serializedCompile(async () => {
+    try {
+      const compiled = await compileArtifact(source, figures);
+      return { ok: true, diagnostics: compiled.diagnostics };
+    } catch (error) {
+      return {
+        ok: false,
+        diagnostics: normalizeTypstDiagnostics(error?.diagnostics || error?.message || error),
+        error: error?.message || String(error),
+      };
+    }
+  });
+}
+
+export async function compileToPdf(source, figures = []) {
+  const { artifact: bytes } = await serializedCompile(() =>
+    compileArtifact(source, figures, CompileFormatEnum.pdf));
   if (!bytes || !bytes.length) {
     throw new Error('Il compilatore Typst non ha prodotto alcun output PDF.');
   }
@@ -112,6 +177,8 @@ export async function compileToPdf(source, figures = []) {
  * un messaggio leggibile con i messaggi d'errore reali (e gli eventuali hint).
  */
 export function formatTypstError(err) {
+  const structured = normalizeTypstDiagnostics(err?.diagnostics);
+  if (structured.length) return formatTypstDiagnostics(structured);
   const raw = typeof err === 'string' ? err : err?.message || String(err);
   if (!raw || !raw.includes('SourceDiagnostic')) {
     return err?.message || raw || 'Errore di compilazione Typst.';
@@ -136,23 +203,25 @@ export function formatTypstError(err) {
  * @returns {Promise<string>} markup SVG
  */
 export async function compileToSvg(source, figures = []) {
-  await prepare(source, figures);
-  try {
-    const svg = await $typst.svg({ mainContent: source });
-    if (!svg) throw new Error('Il compilatore Typst non ha prodotto SVG.');
-    return svg;
-  } catch (e) {
-    throw new Error(formatTypstError(e));
-  }
+  return serializedCompile(async () => {
+    const { artifact } = await compileArtifact(source, figures);
+    try {
+      // Riusa l'artefatto vettoriale appena validato: nessuna seconda
+      // compilazione del sorgente prima del rendering SVG.
+      const svg = await $typst.svg({ vectorData: artifact });
+      if (!svg) throw new Error('Il compilatore Typst non ha prodotto SVG.');
+      return svg;
+    } catch (e) {
+      throw new Error(formatTypstError(e));
+    }
+  });
 }
 
 /**
- * Localizza un errore di compilazione per BISEZIONE: gli errori di Typst non
- * riportano la riga (gli span sono id opachi), così su un documento lungo un
- * «unclosed delimiter» è introvabile. Qui si compilano prefissi crescenti di
- * paragrafi col compilatore locale (gratis) e si trova il primo blocco che fa
- * fallire la compilazione: riga e snippet da mostrare all'utente e da passare
- * alla correzione AI.
+ * Localizza un errore usando prima le diagnostiche strutturate del compilatore
+ * (`riga:colonna`). Solo per i rari errori del wrapper privi di range usa una
+ * bisezione di prefissi; il chiamante riceve riga e snippet da mostrare e da
+ * passare alla correzione AI.
  *
  * @param {string} source codice Typst che NON compila
  * @param {{path:string,bytes:Uint8Array}[]} [figures]
@@ -160,10 +229,31 @@ export async function compileToSvg(source, figures = []) {
  */
 export async function locateTypstError(source, figures = []) {
   try {
-    await initTypst();
-    for (const fig of figures || []) {
-      if (fig?.path && fig?.bytes) await $typst.mapShadow(fig.path, fig.bytes);
+    // Il formato diagnostico "full" del compilatore contiene già
+    // riga/colonna. Una sola compilazione sostituisce normalmente tutta la
+    // vecchia bisezione.
+    const direct = await diagnoseTypst(source, figures);
+    if (direct.ok) return null;
+    const first = direct.diagnostics.find((diag) => diag.severity === 'error') || direct.diagnostics[0];
+    if (first?.line) {
+      const lines = String(source || '').split('\n');
+      const snippet = lines
+        .slice(Math.max(0, first.line - 2), Math.min(lines.length, first.line + 1))
+        .join(' ')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, 140);
+      return {
+        line: first.line,
+        column: first.column,
+        endLine: first.endLine,
+        endColumn: first.endColumn,
+        snippet,
+        message: first.message,
+      };
     }
+
+    // Fallback per diagnostiche prive di range (errori del wrapper/runtime).
     // Paragrafi con la loro riga di partenza (1-based).
     const paras = [];
     let line = 1;
@@ -174,11 +264,8 @@ export async function locateTypstError(source, figures = []) {
     if (paras.length < 2) return null;
 
     const compiles = async (src) => {
-      try {
-        return !!(await $typst.svg({ mainContent: src }));
-      } catch {
-        return false;
-      }
+      const result = await diagnoseTypst(src, figures);
+      return result.ok;
     };
     const prefix = (k) => paras.slice(0, k + 1).map((p) => p.text).join('\n\n');
 

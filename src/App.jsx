@@ -412,9 +412,11 @@ function Workspace({
 
   const handleAutofix = useCallback(async () => {
     const { changes } = await pipe.autofix();
+    const visible = changes.slice(0, 8);
+    const more = changes.length > visible.length ? ` · +${changes.length - visible.length} altre` : '';
     setAutofixMsg(
       changes.length
-        ? `Applicate: ${changes.join(' · ')}`
+        ? `Applicate: ${visible.join(' · ')}${more}`
         : 'Nessuna correzione automatica applicabile.',
     );
     setTimeout(() => setAutofixMsg(null), 7000);

@@ -65,6 +65,21 @@ sono **impacchettati localmente** in `src/assets/fonts`: il compilatore non
 dipende da CDN esterne a runtime, quindi funziona anche offline e non
 incappa in blocchi CORS/CSP.
 
+### Correzione degli errori Typst
+
+Quando la prima compilazione fallisce, l'app avvia automaticamente il motore
+locale in `src/lib/typstfix.js`. Il compilatore restituisce diagnostiche
+strutturate con riga e colonna; il motore genera patch minime attorno a quella
+posizione e conserva una modifica soltanto se una nuova compilazione dimostra
+che l'errore è scomparso, si è spostato in avanti o il numero di errori è
+diminuito. Il ciclo può attraversare fino a 64 errori consecutivi.
+
+Il tasto **Correggi (locale)** ripete lo stesso processo senza usare API. Se
+resta un errore non deterministico, **Correggi con AI** invia al modello solo
+un estratto di circa 12.000 caratteri attorno alla diagnostica, non l'intero
+libro. Le sostituzioni sono limitate a quell'estratto e vengono accettate solo
+dopo la verifica del compilatore locale.
+
 ## Struttura
 
 ```
@@ -74,7 +89,10 @@ src/
 ├─ lib/
 │  ├─ nvidia.js             chiamata Nemotron-Parse + parsing risposta
 │  ├─ gemini.js             chiamata Gemini + system prompt + unwrap del codice
-│  ├─ typst.js              init compilatore WASM + compile PDF/SVG + font locali
+│  ├─ typst.js              compilatore WASM + diagnostiche + PDF/SVG
+│  ├─ typstdiag.js          normalizzazione degli intervalli riga/colonna
+│  ├─ typstfix.js           correzione deterministica compiler-guided
+│  ├─ aifix.js              patch AI focalizzate e applicazione sicura
 │  ├─ files.js              validazione file, base64
 │  └─ storage.js            persistenza chiavi/endpoint nel localStorage
 └─ components/              Dropzone, SettingsModal, PipelineStepper,

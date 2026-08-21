@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractPageBlocks, toTypstNvidia } from '../lib/nvidia.js';
 import { toTypst, ocrImageGemini } from '../lib/gemini.js';
-import { compileToPdf, compileToSvg, initTypst, locateTypstError } from '../lib/typst.js';
+import { compileToPdf, compileToSvg, diagnoseTypst, initTypst, locateTypstError } from '../lib/typst.js';
 import { savePdf, sharePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
@@ -18,7 +18,10 @@ import {
   enforceHeadingLevels,
 } from '../lib/session.js';
 import { buildPreamble, ensureExplicitHyphenation, extractTitle } from '../lib/preamble.js';
-import { autofixTypst, delimiterRepairCandidates } from '../lib/typstfix.js';
+import {
+  diagnosticProgress,
+  repairTypstDeterministically,
+} from '../lib/typstfix.js';
 import { checkFidelity, fidelityNoteFrom } from '../lib/fidelity.js';
 import { requestTypstFix, applyFixes, describeFix } from '../lib/aifix.js';
 import {
@@ -123,6 +126,12 @@ export const STEPS = [
 
 const emptyStatus = { ocr: 'pending', format: 'pending', compile: 'pending' };
 
+function summarizeFixLog(items, limit = 10) {
+  const visible = items.slice(0, limit);
+  const more = items.length > visible.length ? ` · +${items.length - visible.length} altre` : '';
+  return `${visible.join(' · ')}${more}`;
+}
+
 function correctionContext(rawText, before, after, radius = 700) {
   const source = String(rawText || '');
   let index = before ? source.indexOf(before) : -1;
@@ -186,9 +195,12 @@ export function usePipeline(settings) {
 
   /**
    * Arricchisce un errore di compilazione con la posizione trovata per
-   * bisezione (gli errori Typst non hanno numero di riga).
+   * diagnostica strutturata; usa la bisezione solo come fallback.
    */
   const describeCompileError = useCallback(async (source, message) => {
+    // Le nuove diagnostiche strutturate sono già formattate con riga/colonna:
+    // evita una seconda compilazione soltanto per ricavare la stessa posizione.
+    if (/\briga\s+\d+/i.test(String(message || ''))) return message;
     const loc = await locateTypstError(source, figuresRef.current);
     return loc
       ? `${message} — L’errore è vicino alla riga ${loc.line}: «${loc.snippet}»`
@@ -542,21 +554,48 @@ export function usePipeline(settings) {
   const finalizeCompile = useCallback(
     async (signal) => {
       const s = sessionRef.current;
-      const combined = ensureExplicitHyphenation(
+      let finalSource = ensureExplicitHyphenation(
         combineDocument(s.preamble, s.chunks.map((c) => c.body || '')),
       );
-      setTypstCode(combined);
+      setTypstCode(finalSource);
       setStatus((x) => ({ ...x, format: 'done', compile: 'active' }));
       setActiveStep('compile');
       setDetail('');
       collectFidelity();
       try {
-        if (s.workflow === 'strict') {
-          setDetail('Verifica testuale del PDF compilato…');
-          await verifyStrictPdf(combined);
-          if (signal.aborted) return;
+        const renderFinal = async (source) => {
+          if (s.workflow === 'strict') {
+            setDetail('Verifica testuale del PDF compilato…');
+            await verifyStrictPdf(source);
+            if (signal.aborted) return null;
+          }
+          return compileToSvg(source, figuresRef.current);
+        };
+
+        let svg;
+        try {
+          svg = await renderFinal(finalSource);
+        } catch (initialError) {
+          if (signal.aborted || initialError?.name === 'AbortError') return;
+          setDetail('Correzione locale guidata dal compilatore…');
+          const repaired = await repairTypstDeterministically({
+            source: finalSource,
+            diagnose: (candidate) => diagnoseTypst(candidate, figuresRef.current),
+            signal,
+          });
+          if (repaired.fixed !== finalSource) {
+            finalSource = repaired.fixed;
+            s.editorCode = finalSource;
+            setTypstCode(finalSource);
+          }
+          if (!repaired.ok) {
+            const first = repaired.diagnostics.find((diag) => diag.severity === 'error') || repaired.diagnostics[0];
+            const error = new Error(first?.message || repaired.error || initialError.message);
+            error.location = first;
+            throw error;
+          }
+          svg = await renderFinal(finalSource);
         }
-        const svg = await compileToSvg(combined, figuresRef.current);
         if (signal.aborted) return;
         setPreviewSvg(svg);
         setStatus((x) => ({ ...x, compile: 'done' }));
@@ -567,9 +606,12 @@ export function usePipeline(settings) {
         if (signal.aborted) return;
         // Errore di compilazione Typst: non fatale, l'editor resta usabile.
         setStatus((x) => ({ ...x, compile: 'error' }));
-        setCompileError(
-          await describeCompileError(combined, e.message || 'Errore di compilazione Typst.'),
-        );
+        const message = e.message || 'Errore di compilazione Typst.';
+        setCompileError(e.location?.line
+          ? `${message} — L’errore è vicino alla riga ${e.location.line}${
+              e.location.column ? `, colonna ${e.location.column}` : ''
+            }.`
+          : await describeCompileError(finalSource, message));
         setActiveStep(null);
         setPhase('done');
       }
@@ -1244,76 +1286,35 @@ export function usePipeline(settings) {
     if (!typstCode.trim()) return { changes: [] };
     setCompiling(true);
     try {
-    const deterministic = autofixTypst(typstCode);
-    let code = deterministic.fixed;
-    const changes = [...deterministic.changes];
-    let finalSvg = null;
-
-    // Fino a quattro errori locali consecutivi. Ogni modifica resta solo in
-    // memoria finché l'intero documento non compila: in caso di insuccesso
-    // l'editor conserva esattamente il sorgente dell'utente.
-    for (let round = 0; round < 4; round++) {
-      try {
-        finalSvg = await compileToSvg(code, figuresRef.current);
-        break;
-      } catch (compileFailure) {
-        const message = compileFailure.message || String(compileFailure);
-        if (!/unclosed|delimiter|unterminated|expected\s+.*[\])}]/i.test(message)) break;
-        const location = await locateTypstError(code, figuresRef.current);
-        const candidates = delimiterRepairCandidates(code, location?.line || 1);
-        let progressed = null;
-        for (const candidate of candidates) {
-          try {
-            const svg = await compileToSvg(candidate.fixed, figuresRef.current);
-            progressed = { ...candidate, svg };
-            break;
-          } catch (candidateFailure) {
-            // Se l'errore si è spostato in avanti, questa riparazione ha
-            // risolto il blocco corrente: conservala provvisoriamente e passa
-            // al successivo. Nulla viene salvato finché non compila tutto.
-            const nextLocation = await locateTypstError(candidate.fixed, figuresRef.current);
-            if (location && nextLocation?.line > location.line) {
-              progressed = { ...candidate, svg: null };
-              break;
-            }
-            const nextMessage = candidateFailure.message || String(candidateFailure);
-            if (/unclosed|delimiter|unterminated/i.test(message) && !/unclosed|delimiter|unterminated/i.test(nextMessage)) {
-              progressed = { ...candidate, svg: null };
-              break;
-            }
-          }
-        }
-        if (!progressed) break;
-        code = progressed.fixed;
-        changes.push(progressed.description);
-        if (progressed.svg) {
-          finalSvg = progressed.svg;
-          break;
-        }
+      const repaired = await repairTypstDeterministically({
+        source: typstCode,
+        diagnose: (code) => diagnoseTypst(code, figuresRef.current),
+      });
+      setTypstCode(repaired.fixed);
+      if (repaired.ok) {
+        const svg = await compileToSvg(repaired.fixed, figuresRef.current);
+        setPreviewSvg(svg);
+        setCompileError(null);
+        return { changes: repaired.changes, ok: true };
       }
-    }
-
-    if (finalSvg) {
-      setTypstCode(code);
-      setPreviewSvg(finalSvg);
-      setCompileError(null);
-      return { changes, ok: true };
-    }
-    // Mostra nuovamente l'errore arricchito, senza applicare tentativi non
-    // verificati. Le sostituzioni statiche precedenti mantengono il vecchio
-    // comportamento soltanto se erano effettivamente presenti.
-    if (deterministic.changes.length) setTypstCode(deterministic.fixed);
-    await recompile(deterministic.fixed);
-    return { changes: deterministic.changes, ok: false };
+      const first = repaired.diagnostics.find((diag) => diag.severity === 'error') || repaired.diagnostics[0];
+      const message = first?.message || repaired.error || 'Errore di compilazione Typst.';
+      setCompileError(
+        first?.line
+          ? `${message} — L’errore è vicino alla riga ${first.line}${first.column ? `, colonna ${first.column}` : ''}.`
+          : await describeCompileError(repaired.fixed, message),
+      );
+      return { changes: repaired.changes, ok: false };
     } finally {
       setCompiling(false);
     }
-  }, [typstCode, recompile]);
+  }, [typstCode, describeCompileError]);
 
   /**
    * Correzione AI puntiforme: compila → se fallisce chiede al modello forte
    * (fixEngine/fixModel) le sostituzioni minime {find, replace}, le applica e
-   * ricompila; fino a 3 giri. Prova prima l'autofix deterministico (gratuito).
+   * ricompila; fino a 8 estratti locali. Prima di ogni richiesta esaurisce il
+   * motore deterministico (gratuito) e valida ogni patch col compilatore.
    * Il documento non viene MAI riscritto per intero: solo sostituzioni esatte.
    * @returns {Promise<{ok:boolean, message:string}>}
    */
@@ -1324,66 +1325,125 @@ export function usePipeline(settings) {
     setAiFixing(true);
     let code = typstCode;
     const log = [];
+    const attemptedErrors = new Set();
+    const controller = new AbortController();
+    abortRef.current?.abort();
+    abortRef.current = controller;
     try {
-      const det = autofixTypst(code);
-      if (det.changes.length) {
-        code = det.fixed;
-        log.push(...det.changes);
-      }
       let lastError = '';
-      // Quattro compilazioni consentono fino a tre vere richieste di patch.
-      for (let round = 0; round < 4; round++) {
-        try {
+      let lastDiagnostics = [];
+      // Ogni richiesta vede soltanto il blocco localizzato; otto passaggi
+      // restano gestibili anche per un libro con molti errori indipendenti.
+      for (let round = 0; round < 8; round++) {
+        const local = await repairTypstDeterministically({
+          source: code,
+          diagnose: (candidate) => diagnoseTypst(candidate, figuresRef.current),
+          signal: controller.signal,
+        });
+        code = local.fixed;
+        for (const change of local.changes) {
+          if (!log.includes(change)) log.push(change);
+        }
+        setTypstCode(code);
+        if (local.ok) {
           const svg = await compileToSvg(code, figuresRef.current);
-          setTypstCode(code);
           setPreviewSvg(svg);
           setCompileError(null); // risolto: ora il banner può sparire
           return {
             ok: true,
             message: log.length
-              ? `Corretto e compilato. Modifiche: ${log.join(' · ')}`
+              ? `Corretto e compilato. Modifiche: ${summarizeFixLog(log)}`
               : 'Il codice compila già, nessuna correzione necessaria.',
           };
-        } catch (e) {
-          lastError = e.message || 'Errore di compilazione Typst.';
-          if (round === 3) break; // niente più tentativi AI
-          // Localizza l'errore per bisezione: il modello riceve riga e blocco
-          // indiziato (gli errori Typst non hanno posizione).
-          const loc = await locateTypstError(code, figuresRef.current);
-          const res = await requestTypstFix({ settings, code, error: lastError, hint: loc });
-          const { code: next, applied } = applyFixes(code, res.fixes);
-          if (!applied.length || next === code) {
-            setTypstCode(code);
-            setCompileError(await describeCompileError(code, lastError));
-            return {
-              ok: false,
-              message:
-                'L’AI non ha prodotto correzioni applicabili' +
-                (res.explanation ? ` (${res.explanation})` : '.'),
-            };
-          }
-          code = next;
-          // Rende subito visibile la modifica: se un errore successivo resta,
-          // l'utente può comunque ispezionare la patch e il testo non sembra
-          // tornare silenziosamente alla versione precedente.
-          setTypstCode(code);
-          if (res.explanation && !log.includes(res.explanation)) log.push(res.explanation);
-          log.push(...applied.map(describeFix));
         }
+
+        lastDiagnostics = local.diagnostics;
+        const first = local.diagnostics.find((diag) => diag.severity === 'error') || local.diagnostics[0];
+        lastError = first?.message || local.error || 'Errore di compilazione Typst.';
+        const loc = first?.line
+          ? {
+              line: first.line,
+              column: first.column,
+              endLine: first.endLine,
+              endColumn: first.endColumn,
+              message: first.message,
+              snippet: code.split('\n').slice(Math.max(0, first.line - 2), first.line + 1).join(' ').trim().slice(0, 140),
+            }
+          : await locateTypstError(code, figuresRef.current);
+        const fingerprint = `${lastError}|${loc?.line || 0}|${loc?.snippet || ''}`;
+        if (attemptedErrors.has(fingerprint)) break;
+        attemptedErrors.add(fingerprint);
+
+        const res = await requestTypstFix({
+          settings,
+          code,
+          error: lastError,
+          hint: loc,
+          signal: controller.signal,
+        });
+        const patched = applyFixes(code, res.fixes, { scope: res.scope });
+        if (!patched.applied.length || patched.code === code) {
+          setCompileError(
+            loc?.line ? `${lastError} — L’errore è vicino alla riga ${loc.line}.` : lastError,
+          );
+          return {
+            ok: false,
+            message:
+              'L’AI non ha prodotto correzioni applicabili nell’estratto localizzato' +
+              (res.explanation ? ` (${res.explanation})` : '.'),
+          };
+        }
+
+        const before = { ok: false, diagnostics: local.diagnostics };
+        let accepted = patched;
+        let checked = await diagnoseTypst(patched.code, figuresRef.current);
+        // Se il gruppo di patch non migliora la diagnostica, prova le singole
+        // sostituzioni: evita che una proposta secondaria regressiva annulli
+        // una correzione principale valida.
+        if (!diagnosticProgress(before, checked)) {
+          accepted = null;
+          for (const fix of res.fixes || []) {
+            const single = applyFixes(code, [fix], { scope: res.scope });
+            if (!single.applied.length) continue;
+            const singleCheck = await diagnoseTypst(single.code, figuresRef.current);
+            if (diagnosticProgress(before, singleCheck)) {
+              accepted = single;
+              checked = singleCheck;
+              break;
+            }
+          }
+        }
+        if (!accepted) {
+          setCompileError(
+            loc?.line ? `${lastError} — L’errore è vicino alla riga ${loc.line}.` : lastError,
+          );
+          return {
+            ok: false,
+            message: 'Le patch AI sono state scartate perché non miglioravano la diagnostica del compilatore.',
+          };
+        }
+        code = accepted.code;
+        setTypstCode(code);
+        if (res.explanation && !log.includes(res.explanation)) log.push(res.explanation);
+        log.push(...accepted.applied.map(describeFix));
+        lastDiagnostics = checked.diagnostics || [];
       }
-      // Quattro compilazioni fallite: mantieni comunque le modifiche applicate
-      // (spesso avvicinano alla soluzione) e mostra l'errore residuo con la
-      // posizione localizzata per bisezione.
-      const described = await describeCompileError(code, lastError);
+      const first = lastDiagnostics.find((diag) => diag.severity === 'error') || lastDiagnostics[0];
+      const described = first?.line
+        ? `${first.message || lastError} — L’errore è vicino alla riga ${first.line}.`
+        : await describeCompileError(code, lastError);
       setTypstCode(code);
       setCompileError(described);
       return {
         ok: false,
         message:
-          (log.length ? `Applicate: ${log.join(' · ')} — ` : '') +
+          (log.length ? `Applicate: ${summarizeFixLog(log)} — ` : '') +
           `errore residuo: ${described}`,
       };
     } catch (e) {
+      if (e?.name === 'AbortError' || controller.signal.aborted) {
+        return { ok: false, message: 'Correzione annullata.' };
+      }
       setCompileError(e.message || 'Errore nella correzione AI.');
       return { ok: false, message: e.message || 'Errore nella correzione AI.' };
     } finally {
