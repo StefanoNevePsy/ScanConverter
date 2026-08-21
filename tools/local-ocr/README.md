@@ -173,9 +173,11 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
    ```
 
    Se vedi la tua 3080, sei a posto.
-3. **Toolkit CUDA 12.8.** Nemotron contiene un'estensione C++/CUDA da
-   compilare. Dentro Ubuntu installa soltanto il toolkit WSL, mai un driver
-   NVIDIA Linux:
+3. **Compilatore CUDA 13.2.** Nemotron contiene un'estensione C++/CUDA da
+   compilare. Dentro Ubuntu installa soltanto il compilatore WSL, mai un driver
+   NVIDIA Linux. CUDA 13.2 evita inoltre l'incompatibilità fra gli header di
+   CUDA 12.8 e la glibc recente inclusa in Ubuntu 26.04. Il pacchetto minimale
+   evita circa 6 GB di profiler, GUI e librerie duplicate che il sidecar non usa:
 
    ```bash
    sudo apt update
@@ -183,8 +185,8 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
    wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
    sudo dpkg -i cuda-keyring_1.1-1_all.deb
    sudo apt update
-   sudo apt install -y cuda-toolkit-12-8
-   export CUDA_HOME=/usr/local/cuda-12.8
+   sudo apt install -y --no-install-recommends cuda-compiler-13-2
+   export CUDA_HOME=/usr/local/cuda-13.2
    export PATH="$CUDA_HOME/bin:$PATH"
    export CC=/usr/bin/gcc-13
    export CXX=/usr/bin/g++-13
@@ -216,12 +218,24 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
    "$HOME/.local/bin/uv" venv --python 3.12 --seed "$SC_VENV"
    source "$SC_VENV/bin/activate"
    python --version
-   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+   pip list --format=freeze | awk -F== '/^nvidia-.*-cu12==/ {print $1}' \
+     | xargs -r pip uninstall -y
+   pip uninstall -y torch torchvision cuda-toolkit cuda-bindings triton
+   pip install torch==2.12.1 torchvision==0.27.1 \
+     --index-url https://download.pytorch.org/whl/cu132
+   nvcc --version
+   python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
    pip install hatchling editables setuptools ninja
+   export TORCH_CUDA_ARCH_LIST="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n 1)"
+   export MAX_JOBS=4
    export OCR_BUILD_ROOT="$(mktemp -d)"
    cp -a "$SC_ROOT/sidecar/nemotron-ocr-v2/nemotron-ocr" "$OCR_BUILD_ROOT/"
    pip install --no-build-isolation -v "$OCR_BUILD_ROOT/nemotron-ocr"
+   python -c "from nemotron_ocr.inference.pipeline_v2 import NemotronOCRV2; print('OK')"
    pip install -r "$SC_ROOT/sidecar/ScanConverter/tools/local-ocr/requirements.txt"
+   rm -rf "$OCR_BUILD_ROOT"
+   pip cache purge
+   sudo apt clean
 
    export NEMOTRON_OCR_MODEL_ROOT="$SC_ROOT/sidecar/nemotron-ocr-v2"
    cd "$SC_ROOT/sidecar/ScanConverter/tools/local-ocr"

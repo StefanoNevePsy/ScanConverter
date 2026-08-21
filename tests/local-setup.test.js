@@ -41,12 +41,19 @@ test('il virtualenv OCR resta nel filesystem Linux che supporta i symlink', () =
   assert.doesNotMatch(script, /linuxRoot\/sidecar\/\.venv/);
 });
 
-test('Nemotron viene compilato con un GCC accettato da CUDA 12.8', () => {
+test('Nemotron usa una toolchain coerente con Ubuntu 26.04', () => {
   const script = readFileSync(windowsScript, 'utf8');
+  assert.match(script, /cuda-compiler-13-2/);
+  assert.match(script, /CUDA_HOME=\/usr\/local\/cuda-13\.2/);
+  assert.match(script, /torch==2\.12\.1 torchvision==0\.27\.1/);
+  assert.match(script, /download\.pytorch\.org\/whl\/cu132/);
+  assert.doesNotMatch(script, /cuda-toolkit-(?:12-8|13-2)|\/whl\/cu128/);
   assert.match(script, /gcc-13 g\+\+-13/);
   assert.match(script, /CC=\/usr\/bin\/gcc-13/);
   assert.match(script, /CXX=\/usr\/bin\/g\+\+-13/);
   assert.match(script, /OCR_BUILD_ROOT=.*mktemp -d/);
+  assert.match(script, /TORCH_CUDA_ARCH_LIST=.*compute_cap/);
+  assert.match(script, /pip cache purge/);
 });
 
 test('Windows PowerShell 5.1 riesce a leggere tutto lo script', {

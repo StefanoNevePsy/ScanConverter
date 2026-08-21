@@ -249,8 +249,8 @@ function Install-Sidecar {
     Write-Host '    sudo apt install -y curl wget git git-lfs build-essential gcc-13 g++-13' -ForegroundColor White
     Write-Host '    wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb' -ForegroundColor White
     Write-Host '    sudo dpkg -i cuda-keyring_1.1-1_all.deb' -ForegroundColor White
-    Write-Host '    sudo apt update && sudo apt install -y cuda-toolkit-12-8' -ForegroundColor White
-    Write-Host '    export CUDA_HOME=/usr/local/cuda-12.8' -ForegroundColor White
+    Write-Host '    sudo apt update && sudo apt install -y --no-install-recommends cuda-compiler-13-2' -ForegroundColor White
+    Write-Host '    export CUDA_HOME=/usr/local/cuda-13.2' -ForegroundColor White
     Write-Host '    export PATH="$CUDA_HOME/bin:$PATH"' -ForegroundColor White
     Write-Host '    export CC=/usr/bin/gcc-13' -ForegroundColor White
     Write-Host '    export CXX=/usr/bin/g++-13' -ForegroundColor White
@@ -266,12 +266,21 @@ function Install-Sidecar {
     Write-Host '    "$HOME/.local/bin/uv" venv --python 3.12 --seed "$SC_VENV"' -ForegroundColor White
     Write-Host '    source "$SC_VENV/bin/activate"' -ForegroundColor White
     Write-Host '    python --version' -ForegroundColor White
-    Write-Host '    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128' -ForegroundColor White
+    Write-Host '    pip list --format=freeze | awk -F== ''/^nvidia-.*-cu12==/ {print $1}'' | xargs -r pip uninstall -y' -ForegroundColor White
+    Write-Host '    pip uninstall -y torch torchvision cuda-toolkit cuda-bindings triton' -ForegroundColor White
+    Write-Host '    pip install torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cu132' -ForegroundColor White
+    Write-Host '    nvcc --version' -ForegroundColor White
+    Write-Host '    python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"' -ForegroundColor White
     Write-Host '    pip install hatchling editables setuptools ninja' -ForegroundColor White
+    Write-Host '    export TORCH_CUDA_ARCH_LIST="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n 1)"' -ForegroundColor White
+    Write-Host '    export MAX_JOBS=4' -ForegroundColor White
     Write-Host '    export OCR_BUILD_ROOT="$(mktemp -d)"' -ForegroundColor White
     Write-Host "    cp -a $linuxRoot/sidecar/nemotron-ocr-v2/nemotron-ocr `"`$OCR_BUILD_ROOT/`"" -ForegroundColor White
     Write-Host '    pip install --no-build-isolation -v "$OCR_BUILD_ROOT/nemotron-ocr"' -ForegroundColor White
     Write-Host "    pip install -r $linuxRoot/sidecar/ScanConverter/tools/local-ocr/requirements.txt" -ForegroundColor White
+    Write-Host '    rm -rf "$OCR_BUILD_ROOT"' -ForegroundColor White
+    Write-Host '    pip cache purge' -ForegroundColor White
+    Write-Host '    sudo apt clean' -ForegroundColor White
     Write-Host "    export NEMOTRON_OCR_MODEL_ROOT=$linuxRoot/sidecar/nemotron-ocr-v2" -ForegroundColor White
     Write-Host "    cd $linuxRoot/sidecar/ScanConverter/tools/local-ocr" -ForegroundColor White
     Write-Host '    python server.py' -ForegroundColor White

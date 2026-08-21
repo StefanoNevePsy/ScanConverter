@@ -154,7 +154,7 @@ install_sidecar() {
   fi
   printf '\n  Per completare, dalla cartella del sidecar:\n'
   printf '    cd %s/sidecar/ScanConverter/tools/local-ocr\n' "$ROOT"
-  printf '    pip install torch --index-url https://download.pytorch.org/whl/cu124\n'
+  printf '    pip install torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cu132\n'
   printf '    pip install -r requirements.txt\n'
   printf '    python server.py\n'
 }
