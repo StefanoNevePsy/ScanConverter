@@ -38,7 +38,14 @@ import json
 import logging
 import re
 
-from layout import find_figures_excluding, find_tables, heading_levels
+from layout import (
+    deskew,
+    estimate_skew,
+    find_figures_excluding,
+    find_tables,
+    heading_levels,
+    rotate_box,
+)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -109,13 +116,27 @@ def to_blocks(regions, width: int, height: int, page_gray=None) -> list[dict]:
     if page_gray is None:
         return blocks
 
-    text_boxes = [r["bbox"] for r in prepared]
-    tables = find_tables(page_gray, text_boxes)
-    for x0, y0, x1, y1 in tables:
+    # RADDRIZZAMENTO. I righelli di una tabella si riconoscono come corse
+    # orizzontali continue: se la pagina è appoggiata storta sul vetro non lo
+    # sono più, e la tabella sparisce. Si stima l'inclinazione, si analizza la
+    # pagina raddrizzata e si riportano i riquadri trovati nello spazio
+    # originale, che è quello da cui l'app ritaglia.
+    angle = estimate_skew(page_gray)
+    straight = deskew(page_gray, angle)
+    sh, sw = straight.shape
+    straight_boxes = [rotate_box(b, -angle, sw, sh) for b in (r["bbox"] for r in prepared)]
+
+    def back(box):
+        return rotate_box(box, angle, width, height)
+
+    tables = find_tables(straight, straight_boxes)
+    for x0, y0, x1, y1 in (back(t) for t in tables):
         blocks.append({"type": "Table", "text": "", "bbox": _norm(x0, y0, x1, y1, width, height)})
     # Le tabelle sono già rese come tabelle: escluderle evita che tornino anche
     # come immagini ritagliate.
-    for x0, y0, x1, y1 in find_figures_excluding(page_gray, text_boxes, tables):
+    for x0, y0, x1, y1 in (
+        back(f) for f in find_figures_excluding(straight, straight_boxes, tables)
+    ):
         blocks.append({"type": "Picture", "text": "", "bbox": _norm(x0, y0, x1, y1, width, height)})
     return blocks
 

@@ -104,9 +104,129 @@ def _looks_like_heading(text: str) -> bool:
 # ------------------------------------------------------------------ figure
 
 
-def _ink_mask(gray: np.ndarray, threshold: int = 200) -> np.ndarray:
-    """True dove la pagina è scura: l'inchiostro, testo o disegno che sia."""
-    return gray < threshold
+def _box_mean(gray: np.ndarray, radius: int) -> np.ndarray:
+    """Media locale su finestra quadrata, via immagine integrale (O(1) a pixel)."""
+    padded = np.pad(gray.astype(np.float64), radius + 1, mode="edge")
+    integral = padded.cumsum(axis=0).cumsum(axis=1)
+    h, w = gray.shape
+    size = 2 * radius + 1
+    y0, x0 = 0, 0
+    a = integral[y0 : y0 + h, x0 : x0 + w]
+    b = integral[y0 : y0 + h, x0 + size : x0 + size + w]
+    c = integral[y0 + size : y0 + size + h, x0 : x0 + w]
+    d = integral[y0 + size : y0 + size + h, x0 + size : x0 + size + w]
+    return (d - b - c + a) / (size * size)
+
+
+def _ink_mask(gray: np.ndarray, offset: int = 18, radius: int = 24) -> np.ndarray:
+    """
+    True dove c'è inchiostro, con soglia LOCALE.
+
+    Una soglia globale (`gray < 200`) è inadeguata alle fotocopie vere: la
+    lampada dello scanner illumina un lato più dell'altro, e una macchia di
+    caffè o una piega scuriscono un'intera zona. Con la soglia globale quella
+    zona diventa tutta "inchiostro" e finisce riconosciuta come figura.
+
+    Confrontando invece ogni pixel con la MEDIA DEI SUOI VICINI, ciò che conta
+    è il contrasto locale: l'inchiostro è più scuro della carta che ha intorno,
+    qualunque sia il grigio di fondo. Le ombre morbide spariscono, i glifi no.
+    """
+    local = _box_mean(gray, radius)
+    return _despeckle(gray < (local - offset))
+
+
+def _despeckle(mask: np.ndarray) -> np.ndarray:
+    """
+    Toglie i granelli isolati della fotocopia.
+
+    Un granello di rumore è un pixel scuro da solo; un tratto d'inchiostro,
+    anche sottile, ha sempre almeno un paio di vicini lungo il tratto. Contare
+    i vicini scuri separa le due cose senza erodere i glifi — cosa che una
+    normale erosione morfologica farebbe.
+    """
+    counts = np.zeros(mask.shape, dtype=np.uint8)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            counts += np.roll(np.roll(mask, dy, axis=0), dx, axis=1).astype(np.uint8)
+    return mask & (counts >= 2)
+
+
+# ------------------------------------------------------------ inclinazione
+
+
+def estimate_skew(gray: np.ndarray, limit: float = 5.0, step: float = 0.25) -> float:
+    """
+    Stima l'inclinazione della pagina in gradi (positivo = ruotata in senso
+    antiorario), col metodo del profilo di proiezione.
+
+    Quando le righe di testo sono orizzontali, sommando i pixel scuri per riga
+    si ottengono picchi netti (riga piena) alternati a valli (interlinea). Se la
+    pagina è storta i picchi si spalmano. Provando piccole rotazioni e tenendo
+    quella che rende il profilo più CONTRASTATO si ritrova l'angolo: è la
+    tecnica classica, non serve nessun modello.
+    """
+    from PIL import Image  # import locale: la stima serve solo qui
+
+    # Si lavora in miniatura: l'angolo è una proprietà globale della pagina e
+    # provare una decina di rotazioni a piena risoluzione sarebbe uno spreco.
+    small = np.asarray(
+        Image.fromarray(gray).resize((400, int(400 * gray.shape[0] / gray.shape[1]))),
+        dtype=np.uint8,
+    )
+    best_angle, best_score = 0.0, -1.0
+    angle = -limit
+    while angle <= limit + 1e-9:
+        rotated = np.asarray(
+            Image.fromarray(small).rotate(angle, resample=Image.BILINEAR, fillcolor=255)
+        )
+        profile = (rotated < 160).sum(axis=1).astype(np.float64)
+        # La varianza delle differenze fra righe consecutive premia i profili
+        # con stacchi netti fra riga di testo e interlinea.
+        score = float(np.diff(profile).var())
+        if score > best_score:
+            best_angle, best_score = angle, score
+        angle += step
+    return best_angle
+
+
+def deskew(gray: np.ndarray, angle: float) -> np.ndarray:
+    """Raddrizza la pagina dell'angolo stimato."""
+    from PIL import Image
+
+    if abs(angle) < 0.1:
+        return gray
+    return np.asarray(
+        Image.fromarray(gray).rotate(angle, resample=Image.BILINEAR, fillcolor=255)
+    )
+
+
+def rotate_box(box, angle: float, width: int, height: int):
+    """
+    Riporta un riquadro fra spazio originale e spazio raddrizzato.
+
+    Ruotando un rettangolo si ottiene un parallelogramma: si restituisce il suo
+    riquadro contenitore. Per angoli di pochi gradi la differenza è minima, e
+    per ritagliare una figura un margine in più non fa danno.
+    """
+    if abs(angle) < 0.1:
+        return tuple(box)
+    cx, cy = width / 2.0, height / 2.0
+    rad = np.deg2rad(-angle)  # PIL ruota in senso antiorario
+    cos, sin = np.cos(rad), np.sin(rad)
+    x0, y0, x1, y1 = box
+    xs, ys = [], []
+    for px, py in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+        dx, dy = px - cx, py - cy
+        xs.append(cx + dx * cos - dy * sin)
+        ys.append(cy + dx * sin + dy * cos)
+    return (
+        max(0, int(min(xs))),
+        max(0, int(min(ys))),
+        min(width, int(max(xs))),
+        min(height, int(max(ys))),
+    )
 
 
 def find_figures(
@@ -114,7 +234,7 @@ def find_figures(
     text_boxes,
     cell: int = 16,
     min_area_ratio: float = 0.004,
-    pad: int = 2,
+    pad: int = 8,
 ) -> list[tuple[int, int, int, int]]:
     """
     Trova le regioni illustrate: l'inchiostro che NON appartiene al testo.
@@ -130,7 +250,10 @@ def find_figures(
     h, w = gray.shape
     mask = _ink_mask(gray)
 
-    # Via il testo, con un margine: i riquadri OCR sono spesso stretti.
+    # Via il testo, con un margine generoso: i riquadri dell'OCR non coincidono
+    # mai col perimetro esatto dei glifi, e su una scansione storta lo scarto
+    # cresce. Se il margine è troppo stretto le code delle lettere restano
+    # fuori e vengono scambiate per figure.
     for x0, y0, x1, y1 in text_boxes:
         xa, ya = max(0, int(x0) - pad), max(0, int(y0) - pad)
         xb, yb = min(w, int(x1) + pad), min(h, int(y1) + pad)

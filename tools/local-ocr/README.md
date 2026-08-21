@@ -35,10 +35,8 @@ sposta di più la qualità sull'italiano.
    ollama list
    ```
 
-**Dove finiscono i file:** in `C:\Users\<tuonome>\.ollama\models`. Non devi
-spostarli né saperlo: Ollama li gestisce da sé. Se vuoi metterli su un altro
-disco, imposta la variabile d'ambiente `OLLAMA_MODELS` sul percorso che
-preferisci.
+**Dove finiscono i file:** in `C:\Users\<tuonome>\.ollama\models`.
+Vedi sotto se hai poco spazio su C:.
 
 **Come si usa:** non devi lanciare niente a mano. Ollama si avvia con Windows e
 resta in ascolto su `http://localhost:11434`. Se l'app dice che non lo trova,
@@ -63,6 +61,52 @@ cambiato nulla in Ollama, vanno bene così.
 
 Lascia pure l'OCR su Gemini e il Typst su Gemini. **Questo è già il 90% del
 beneficio pratico**, e non perdi né la struttura né le figure.
+
+### Se su C: hai poco spazio
+
+Tutto si può spostare, ma va fatto **prima** di scaricare i modelli — altrimenti
+li riscarichi.
+
+**I modelli di Ollama** (la parte pesante, ~5 GB). Imposta una variabile
+d'ambiente di sistema e riavvia Ollama:
+
+```
+setx OLLAMA_MODELS "D:\ollama\models"
+```
+
+Poi chiudi Ollama dalla barra delle applicazioni e riaprilo. Se avevi già
+scaricato dei modelli, sposta a mano la cartella `.ollama\models` nella nuova
+posizione: Ollama li ritrova.
+
+**Il programma Ollama** (poche centinaia di MB). L'installer accetta una
+destinazione:
+
+```
+OllamaSetup.exe /DIR="D:\Programmi\Ollama"
+```
+
+**La distribuzione WSL2** — serve solo per il Pezzo 2, e di default sta su C:.
+Si sposta esportandola e reimportandola:
+
+```
+wsl --shutdown
+wsl --export Ubuntu D:\wsl\ubuntu-backup.tar
+wsl --unregister Ubuntu
+wsl --import Ubuntu D:\wsl\Ubuntu D:\wsl\ubuntu-backup.tar
+```
+
+**Il modello OCR** dentro WSL (poche centinaia di MB). Nel terminale Ubuntu,
+prima di avviare il sidecar:
+
+```
+export HF_HOME=/mnt/d/hf-cache
+```
+
+Aggiungi la stessa riga in fondo a `~/.bashrc` per non ridigitarla ogni volta.
+`/mnt/d/` è come WSL vede il tuo disco D:.
+
+**Riepilogo dello spazio:** Pezzo 1 circa 5,5 GB (Ollama + qwen3:8b); Pezzo 2
+circa 3 GB per WSL2 e le librerie, più qualche centinaio di MB per il modello.
 
 ---
 
@@ -150,10 +194,37 @@ ricostruisce senza alcun modello:
   pixel scuri, sottili) per le tabelle bordate, e l'*allineamento delle
   colonne* fra righe consecutive per quelle senza bordi.
 
-Tutto deterministico e ispezionabile. La suite (`python test_layout.py`, 23
-controlli) verifica anche i casi in cui non deve scattare nulla: pagine di sola
-prosa che non devono produrre titoli inventati, rumore di scansione che non
-deve diventare una figura, paragrafi a piena larghezza che non sono tabelle.
+Poiché l'app esiste per le fotocopie mal fatte, due accorgimenti sono
+essenziali e sono dentro:
+
+- **Raddrizzamento automatico.** Una pagina appoggiata storta sul vetro rende i
+  righelli non più orizzontali, e la tabella sparisce. L'inclinazione viene
+  stimata col profilo di proiezione (si prova una decina di piccole rotazioni e
+  si tiene quella che rende più netti gli stacchi fra riga e interlinea),
+  l'analisi gira sulla pagina raddrizzata e i riquadri tornano nello spazio
+  originale, che è quello da cui l'app ritaglia.
+- **Soglia locale invece che globale.** Con una soglia fissa, una macchia di
+  caffè o la lampada che illumina un lato più dell'altro rendono "inchiostro"
+  un'intera zona, che diventa una figura fantasma. Confrontando ogni pixel con
+  la media dei suoi vicini conta solo il contrasto locale: le ombre morbide
+  spariscono, i glifi restano.
+
+### Quanto regge davvero
+
+`python test_degraded.py` prende la stessa pagina e la rovina in modi
+realistici — inclinata, con granelli di fotocopia, con luce disomogenea, con
+una macchia, col bordo nero del coperchio aperto, sbiadita — una degradazione
+per volta e poi tutte insieme, con anche i riquadri OCR spostati di qualche
+pixel come succede nella realtà.
+
+| Pagina | Esito |
+|---|---|
+| pulita, inclinata 1° e 3°, rumore, luce disomogenea, macchia, bordo nero, sbiadita | tutto riconosciuto |
+| **tutti i difetti insieme** | titolo, prosa e tabella corretti; la figura vera trovata, più qualche candidata in eccesso |
+
+Nel caso peggiore quindi non si rompe: produce *candidate in più*, che finiscono
+nella revisione figure dove si tolgono con un clic. È un cedimento visibile e
+correggibile, non silenzioso.
 
 **Resta comunque un'approssimazione.** La gerarchia dedotta dalla tipografia è
 buona ma non è la classificazione semantica di Nemotron-Parse: su documenti
