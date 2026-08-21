@@ -179,7 +179,7 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
 
    ```bash
    sudo apt update
-   sudo apt install -y wget git git-lfs build-essential python3-venv python3-pip
+   sudo apt install -y curl wget git git-lfs build-essential
    wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
    sudo dpkg -i cuda-keyring_1.1-1_all.deb
    sudo apt update
@@ -188,7 +188,10 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
    export PATH="$CUDA_HOME/bin:$PATH"
    ```
 
-4. **Codice, ambiente Python 3.12 e modello.** Sempre dentro Ubuntu; cambia
+4. **Codice, ambiente Python 3.12 e modello.** Ubuntu 26.04 include Python
+   3.14, ma Nemotron accetta esclusivamente `>=3.12,<3.13`. `uv` installa un
+   3.12 isolato senza sostituire il Python di sistema. Sempre dentro Ubuntu;
+   cambia
    `/mnt/d/ScanConverter` se hai scelto un'altra unità o cartella:
 
    ```bash
@@ -204,9 +207,11 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
    git clone https://huggingface.co/nvidia/nemotron-ocr-v2 \
      "$SC_ROOT/sidecar/nemotron-ocr-v2"
 
-   python3 -m venv --copies "$SC_ROOT/sidecar/.venv"
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   "$HOME/.local/bin/uv" python install 3.12
+   "$HOME/.local/bin/uv" venv --python 3.12 --seed "$SC_ROOT/sidecar/.venv"
    source "$SC_ROOT/sidecar/.venv/bin/activate"
-   python -m pip install --upgrade pip
+   python --version
    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
    pip install hatchling editables setuptools ninja
    pip install --no-build-isolation -v \

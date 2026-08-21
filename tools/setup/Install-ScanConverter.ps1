@@ -246,7 +246,7 @@ function Install-Sidecar {
     Write-Host '  Dopo il primo avvio di Ubuntu, installa toolkit, codice e modello:' -ForegroundColor DarkGray
     Write-Host ''
     Write-Host '    sudo apt update' -ForegroundColor White
-    Write-Host '    sudo apt install -y wget git git-lfs build-essential python3-venv python3-pip' -ForegroundColor White
+    Write-Host '    sudo apt install -y curl wget git git-lfs build-essential' -ForegroundColor White
     Write-Host '    wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb' -ForegroundColor White
     Write-Host '    sudo dpkg -i cuda-keyring_1.1-1_all.deb' -ForegroundColor White
     Write-Host '    sudo apt update && sudo apt install -y cuda-toolkit-12-8' -ForegroundColor White
@@ -257,9 +257,11 @@ function Install-Sidecar {
     Write-Host "    git clone --branch claude/pipeline-locale --single-branch https://github.com/StefanoNevePsy/ScanConverter.git $linuxRoot/sidecar/ScanConverter" -ForegroundColor White
     Write-Host '    git lfs install' -ForegroundColor White
     Write-Host "    git clone https://huggingface.co/nvidia/nemotron-ocr-v2 $linuxRoot/sidecar/nemotron-ocr-v2" -ForegroundColor White
-    Write-Host "    python3 -m venv --copies $linuxRoot/sidecar/.venv" -ForegroundColor White
+    Write-Host '    curl -LsSf https://astral.sh/uv/install.sh | sh' -ForegroundColor White
+    Write-Host '    "$HOME/.local/bin/uv" python install 3.12' -ForegroundColor White
+    Write-Host "    `"`$HOME/.local/bin/uv`" venv --python 3.12 --seed $linuxRoot/sidecar/.venv" -ForegroundColor White
     Write-Host "    source $linuxRoot/sidecar/.venv/bin/activate" -ForegroundColor White
-    Write-Host '    python -m pip install --upgrade pip' -ForegroundColor White
+    Write-Host '    python --version' -ForegroundColor White
     Write-Host '    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128' -ForegroundColor White
     Write-Host '    pip install hatchling editables setuptools ninja' -ForegroundColor White
     Write-Host "    pip install --no-build-isolation -v $linuxRoot/sidecar/nemotron-ocr-v2/nemotron-ocr" -ForegroundColor White
