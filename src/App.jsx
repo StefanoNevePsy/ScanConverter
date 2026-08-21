@@ -393,20 +393,17 @@ function Workspace({
   const [styleHint, setStyleHint] = useState(''); // scelte di impaginazione correnti
   const [autofixMsg, setAutofixMsg] = useState(null);
   const [searchReq, setSearchReq] = useState(null); // ricerca pilotata nell'editor
-  const [pdfSearchRevision, setPdfSearchRevision] = useState(null);
+  const [pdfSearchTarget, setPdfSearchTarget] = useState(null);
   const pdfSearchRequestRef = useRef(0);
 
   const handleSearchMatch = useCallback(async (match) => {
     const requestId = ++pdfSearchRequestRef.current;
-    const ok = await pipe.previewSearchMatch(match);
+    const target = await pipe.previewSearchMatch(match);
     if (requestId !== pdfSearchRequestRef.current) return;
-    if (match && ok) {
-      setPdfSearchRevision(match.id);
+    if (match && target) {
+      setPdfSearchTarget(target);
     } else {
-      // Se la selezione era sintassi Typst (non testo visibile), ripristina
-      // l'anteprima normale invece di lasciare evidenziata l'occorrenza prima.
-      if (match) await pipe.previewSearchMatch(null);
-      if (requestId === pdfSearchRequestRef.current) setPdfSearchRevision(null);
+      if (requestId === pdfSearchRequestRef.current) setPdfSearchTarget(null);
     }
   }, [pipe.previewSearchMatch]);
 
@@ -636,11 +633,11 @@ function Workspace({
 
         <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'pdf' ? 'flex' : 'hidden'} lg:flex`}>
           <PdfPreview
-            svg={pipe.previewSvg}
+            pdfBytes={pipe.previewPdf}
             compiling={pipe.compiling || pipe.status.compile === 'active'}
             downloading={pipe.downloading}
             onDownload={onDownload}
-            searchRevision={pdfSearchRevision}
+            searchTarget={pdfSearchTarget}
           />
         </div>
       </div>

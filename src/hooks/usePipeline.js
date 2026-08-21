@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractPageBlocks, toTypstNvidia } from '../lib/nvidia.js';
 import { toTypst, ocrImageGemini } from '../lib/gemini.js';
-import { compileToPdf, compileToSvg, diagnoseTypst, initTypst, locateTypstError } from '../lib/typst.js';
+import { compileToPdf, diagnoseTypst, initTypst, locateTypstError } from '../lib/typst.js';
 import { savePdf, sharePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
@@ -56,7 +56,7 @@ import {
   requestStrictLayoutPlan,
   requestStrictPassageRepair,
 } from '../lib/layoutPlan.js';
-import { markTypstSearchMatch } from '../lib/searchPreview.js';
+import { createPdfSearchTarget } from '../lib/pdfPreview.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import {
   saveSession,
@@ -153,7 +153,7 @@ export function usePipeline(settings) {
 
   const [rawText, setRawText] = useState('');
   const [typstCode, setTypstCode] = useState('');
-  const [previewSvg, setPreviewSvg] = useState(null); // anteprima vettoriale (SVG)
+  const [previewPdf, setPreviewPdf] = useState(null); // byte PDF, renderizzati una pagina alla volta
   const [compileError, setCompileError] = useState(null);
   const [compiling, setCompiling] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -181,6 +181,9 @@ export function usePipeline(settings) {
   const [strictCorrectionBusy, setStrictCorrectionBusy] = useState(null);
   const [strictIssueBusy, setStrictIssueBusy] = useState(null);
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
+  // Il PDF mostrato in anteprima è anche quello consegnato al download. La
+  // coppia sorgente/riferimento figure impedisce di riusare byte obsoleti.
+  const compiledPdfRef = useRef({ source: '', figures: null, bytes: null });
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
   const searchPreviewRef = useRef(0); // scarta compilazioni di ricerca ormai superate
@@ -223,6 +226,24 @@ export function usePipeline(settings) {
     });
     setFidelityWarnings(warns);
   }, []);
+
+  /** Compila una sola volta il PDF corrente e lo conserva per il download. */
+  const getCompiledPdf = useCallback(async (source) => {
+    const cached = compiledPdfRef.current;
+    if (cached.source === source && cached.figures === figuresRef.current && cached.bytes?.length) {
+      return cached.bytes;
+    }
+    const bytes = await compileToPdf(source, figuresRef.current);
+    compiledPdfRef.current = { source, figures: figuresRef.current, bytes };
+    return bytes;
+  }, []);
+
+  /** Compila e pubblica l'anteprima PDF paginata. */
+  const compilePreviewPdf = useCallback(async (source) => {
+    const bytes = await getCompiledPdf(source);
+    setPreviewPdf(bytes);
+    return bytes;
+  }, [getCompiledPdf]);
 
   /** Compila e confronta il layer testuale del PDF con la fonte canonica. */
   const verifyStrictPdf = useCallback(async (source, existingBytes = null) => {
@@ -411,7 +432,7 @@ export function usePipeline(settings) {
     setError(null);
     setRawText('');
     setTypstCode('');
-    setPreviewSvg(null);
+    setPreviewPdf(null);
     setCompileError(null);
     setDetail('');
     setChunkProgress(null);
@@ -421,6 +442,7 @@ export function usePipeline(settings) {
     setStrictReport(null);
     setSpellReport(null);
     figuresRef.current = [];
+    compiledPdfRef.current = { source: '', figures: null, bytes: null };
     sessionRef.current = null;
     refreshSessions(); // riallinea l'elenco al ritorno sulla home
   }, [refreshSessions, clearReview]);
@@ -564,17 +586,18 @@ export function usePipeline(settings) {
       collectFidelity();
       try {
         const renderFinal = async (source) => {
+          const pdfBytes = await getCompiledPdf(source);
           if (s.workflow === 'strict') {
             setDetail('Verifica testuale del PDF compilato…');
-            await verifyStrictPdf(source);
+            await verifyStrictPdf(source, pdfBytes);
             if (signal.aborted) return null;
           }
-          return compileToSvg(source, figuresRef.current);
+          return pdfBytes;
         };
 
-        let svg;
+        let pdfBytes;
         try {
-          svg = await renderFinal(finalSource);
+          pdfBytes = await renderFinal(finalSource);
         } catch (initialError) {
           if (signal.aborted || initialError?.name === 'AbortError') return;
           setDetail('Correzione locale guidata dal compilatore…');
@@ -594,10 +617,10 @@ export function usePipeline(settings) {
             error.location = first;
             throw error;
           }
-          svg = await renderFinal(finalSource);
+          pdfBytes = await renderFinal(finalSource);
         }
         if (signal.aborted) return;
-        setPreviewSvg(svg);
+        setPreviewPdf(pdfBytes);
         setStatus((x) => ({ ...x, compile: 'done' }));
         setActiveStep(null);
         setPhase('done');
@@ -616,7 +639,7 @@ export function usePipeline(settings) {
         setPhase('done');
       }
     },
-    [persist, collectFidelity, describeCompileError, verifyStrictPdf],
+    [persist, collectFidelity, describeCompileError, getCompiledPdf, verifyStrictPdf],
   );
 
   /** Esegue la fase 2+3 sulla sessione corrente (fresh o resume). */
@@ -1190,9 +1213,12 @@ export function usePipeline(settings) {
       setCompiling(true);
       setCompileError(null);
       try {
-        if (sessionRef.current?.workflow === 'strict') await verifyStrictPdf(source);
-        const svg = await compileToSvg(source, figuresRef.current);
-        setPreviewSvg(svg);
+        // Lascia al browser un frame per mostrare lo stato di caricamento
+        // prima che il compilatore WASM occupi il main thread.
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+        const pdfBytes = await getCompiledPdf(source);
+        if (sessionRef.current?.workflow === 'strict') await verifyStrictPdf(source, pdfBytes);
+        setPreviewPdf(pdfBytes);
         return true;
       } catch (e) {
         setCompileError(
@@ -1203,33 +1229,24 @@ export function usePipeline(settings) {
         setCompiling(false);
       }
     },
-    [typstCode, describeCompileError, verifyStrictPdf],
+    [typstCode, describeCompileError, getCompiledPdf, verifyStrictPdf],
   );
 
   /**
-   * Ricompila soltanto l'anteprima con una singola occorrenza evidenziata.
-   * Il sorgente salvato e il PDF scaricato non vengono mai modificati.
+   * Localizza nell'anteprima PDF l'occorrenza selezionata nell'editor. Il
+   * layer testuale di pdf.js sostituisce la vecchia ricompilazione di un SVG
+   * completo con una parola evidenziata.
    */
   const previewSearchMatch = useCallback(
     async (match) => {
       const requestId = ++searchPreviewRef.current;
-      if (!typstCode.trim()) return false;
-      const source = match
-        ? markTypstSearchMatch(typstCode, match.start, match.end)
-        : typstCode;
-      if (match && source === typstCode) return false;
-      try {
-        const svg = await compileToSvg(source, figuresRef.current);
-        if (requestId !== searchPreviewRef.current) return false;
-        setPreviewSvg(svg);
-        return true;
-      } catch {
-        // Una ricerca dentro codice/preambolo resta selezionata nell'editor,
-        // ma non deve sostituire un'anteprima PDF valida con un errore.
-        return false;
-      }
+      if (!match) return null;
+      if (!typstCode.trim() || !previewPdf?.length) return false;
+      const target = createPdfSearchTarget(typstCode, match);
+      if (requestId !== searchPreviewRef.current) return false;
+      return target || false;
     },
-    [typstCode],
+    [previewPdf, typstCode],
   );
 
   /**
@@ -1245,7 +1262,8 @@ export function usePipeline(settings) {
       setDownloading(true);
       setCompileError(null);
       try {
-        let bytes = await compileToPdf(typstCode, figuresRef.current);
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+        let bytes = await getCompiledPdf(typstCode);
         bytes = await verifyStrictPdf(typstCode, bytes);
         if (mode === 'share') await sharePdf(bytes, fileName || 'documento');
         else await savePdf(bytes, fileName || 'documento');
@@ -1255,7 +1273,7 @@ export function usePipeline(settings) {
         setDownloading(false);
       }
     },
-    [typstCode, verifyStrictPdf],
+    [getCompiledPdf, typstCode, verifyStrictPdf],
   );
 
   /**
@@ -1292,8 +1310,7 @@ export function usePipeline(settings) {
       });
       setTypstCode(repaired.fixed);
       if (repaired.ok) {
-        const svg = await compileToSvg(repaired.fixed, figuresRef.current);
-        setPreviewSvg(svg);
+        await compilePreviewPdf(repaired.fixed);
         setCompileError(null);
         return { changes: repaired.changes, ok: true };
       }
@@ -1308,7 +1325,7 @@ export function usePipeline(settings) {
     } finally {
       setCompiling(false);
     }
-  }, [typstCode, describeCompileError]);
+  }, [compilePreviewPdf, typstCode, describeCompileError]);
 
   /**
    * Correzione AI puntiforme: compila → se fallisce chiede al modello forte
@@ -1346,8 +1363,7 @@ export function usePipeline(settings) {
         }
         setTypstCode(code);
         if (local.ok) {
-          const svg = await compileToSvg(code, figuresRef.current);
-          setPreviewSvg(svg);
+          await compilePreviewPdf(code);
           setCompileError(null); // risolto: ora il banner può sparire
           return {
             ok: true,
@@ -1449,7 +1465,7 @@ export function usePipeline(settings) {
     } finally {
       setAiFixing(false);
     }
-  }, [typstCode, settings, describeCompileError]);
+  }, [compilePreviewPdf, typstCode, settings, describeCompileError]);
 
   /**
    * Controllo ortografico locale (dizionari it+en impacchettati): elenca le
@@ -1604,7 +1620,7 @@ export function usePipeline(settings) {
         const previousCanonical = strictSession?.canonicalText;
         const previousCorrections = strictSession?.corrections || [];
         try {
-          const svg = await compileToSvg(code, figuresRef.current);
+          const pdfBytes = await getCompiledPdf(code);
           if (strictSession) {
             const canonical = applySpellFixes(previousCanonical || strictSession.rawText, corrections);
             strictSession.canonicalText = canonical.code;
@@ -1617,9 +1633,9 @@ export function usePipeline(settings) {
                 count: a.count,
               })),
             ];
-            await verifyStrictPdf(code);
+            await verifyStrictPdf(code, pdfBytes);
           }
-          setPreviewSvg(svg);
+          setPreviewPdf(pdfBytes);
           setCompileError(null);
         } catch (eAfter) {
           if (strictSession) {
@@ -1628,7 +1644,7 @@ export function usePipeline(settings) {
           }
           let beforeOk = false;
           try {
-            await compileToSvg(before, figuresRef.current);
+            await compileToPdf(before, figuresRef.current);
             beforeOk = true;
           } catch {
             /* era già rotto prima: le correzioni non c'entrano */
@@ -1661,7 +1677,7 @@ export function usePipeline(settings) {
         setSpellBusy(false);
       }
     },
-    [spellReport, typstCode, settings, verifyStrictPdf],
+    [getCompiledPdf, spellReport, typstCode, settings, verifyStrictPdf],
   );
 
   /**
@@ -1699,7 +1715,7 @@ export function usePipeline(settings) {
       const previousCanonical = strictSession?.canonicalText;
       const previousCorrections = strictSession?.corrections || [];
       try {
-        const svg = await compileToSvg(code, figuresRef.current);
+        const pdfBytes = await getCompiledPdf(code);
         if (strictSession) {
           let nextCanonical = previousCanonical || strictSession.rawText;
           for (const change of changes) {
@@ -1713,9 +1729,9 @@ export function usePipeline(settings) {
             ...previousCorrections,
             ...changes.map((c) => ({ ...c, type: 'contextual' })),
           ];
-          await verifyStrictPdf(code);
+          await verifyStrictPdf(code, pdfBytes);
         }
-        setPreviewSvg(svg);
+        setPreviewPdf(pdfBytes);
         setCompileError(null);
       } catch (eAfter) {
         if (strictSession) {
@@ -1724,7 +1740,7 @@ export function usePipeline(settings) {
         }
         let beforeOk = false;
         try {
-          await compileToSvg(before, figuresRef.current);
+          await compileToPdf(before, figuresRef.current);
           beforeOk = true;
         } catch {
           /* era già rotto prima */
@@ -1754,7 +1770,7 @@ export function usePipeline(settings) {
       setProofreadBusy(false);
       setProofreadDetail('');
     }
-  }, [typstCode, settings, verifyStrictPdf]);
+  }, [getCompiledPdf, typstCode, settings, verifyStrictPdf]);
 
   /** Revisione interattiva di una singola voce del registro conservativo. */
   const reviewStrictCorrection = useCallback(async (index, action) => {
@@ -1850,7 +1866,7 @@ export function usePipeline(settings) {
         preamble: s.preamble,
         chunks: s.chunks,
       };
-      const svg = await compileToSvg(nextCode, figuresRef.current);
+      const pdfBytes = await getCompiledPdf(nextCode);
       s.canonicalText = nextCanonical;
       s.corrections = nextCorrections;
       s.editorCode = nextCode;
@@ -1863,7 +1879,7 @@ export function usePipeline(settings) {
         fidelity: { coverage: 1, missing: [] },
       }];
       try {
-        await verifyStrictPdf(nextCode);
+        await verifyStrictPdf(nextCode, pdfBytes);
       } catch (e) {
         s.canonicalText = previous.canonicalText;
         s.corrections = previous.corrections;
@@ -1873,7 +1889,7 @@ export function usePipeline(settings) {
         throw e;
       }
       setTypstCode(nextCode);
-      setPreviewSvg(svg);
+      setPreviewPdf(pdfBytes);
       setCompileError(null);
       await persist();
       return { ok: true, message: 'Scelta applicata e PDF ricontrollato.' };
@@ -1883,7 +1899,7 @@ export function usePipeline(settings) {
     } finally {
       setStrictCorrectionBusy(null);
     }
-  }, [persist, settings, typstCode, verifyStrictPdf]);
+  }, [getCompiledPdf, persist, settings, typstCode, verifyStrictPdf]);
 
   /** Azioni sui passaggi discordanti fra fonte canonica e PDF compilato. */
   const reviewStrictIssue = useCallback(async (index, action) => {
@@ -1977,7 +1993,7 @@ export function usePipeline(settings) {
         corrections: s.corrections,
         resolutions: s.strictIssueResolutions,
       };
-      const svg = await compileToSvg(nextCode, figuresRef.current);
+      const pdfBytes = await getCompiledPdf(nextCode);
       s.canonicalText = nextCanonical;
       s.editorCode = nextCode;
       s.strictIssueResolutions = {
@@ -2000,7 +2016,7 @@ export function usePipeline(settings) {
       s.preamble = parts.preamble;
       s.chunks = [{ text: s.rawText, body: parts.body, status: 'done', fidelity: { coverage: 1, missing: [] } }];
       try {
-        await verifyStrictPdf(nextCode);
+        await verifyStrictPdf(nextCode, pdfBytes);
       } catch (e) {
         s.canonicalText = previous.canonicalText;
         s.editorCode = previous.editorCode;
@@ -2011,7 +2027,7 @@ export function usePipeline(settings) {
         throw e;
       }
       setTypstCode(nextCode);
-      setPreviewSvg(svg);
+      setPreviewPdf(pdfBytes);
       setCompileError(null);
       await persist();
       return { ok: true, message: 'Passaggio rigenerato, compilato e confrontato nuovamente.' };
@@ -2021,7 +2037,7 @@ export function usePipeline(settings) {
     } finally {
       setStrictIssueBusy(null);
     }
-  }, [persist, settings, strictReport, typstCode, verifyStrictPdf]);
+  }, [getCompiledPdf, persist, settings, strictReport, typstCode, verifyStrictPdf]);
 
   /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la
@@ -2118,10 +2134,12 @@ export function usePipeline(settings) {
       setStatus({ ...emptyStatus });
       setRawText('');
       setTypstCode('');
+      setPreviewPdf(null);
       setFidelityWarnings([]);
       setOcrProgress(null);
       clearReview();
       figuresRef.current = [];
+      compiledPdfRef.current = { source: '', figures: null, bytes: null };
 
       try {
         // [1/3] Estrazione testo (NVIDIA). Nemotron-Parse accetta solo
@@ -2219,7 +2237,7 @@ export function usePipeline(settings) {
     rawText,
     typstCode,
     setTypstCode,
-    previewSvg,
+    previewPdf,
     downloadPdf,
     downloading,
     compileError,

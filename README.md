@@ -59,6 +59,10 @@ _Opzioni avanzate_.
 4. **Compilazione** (`src/lib/typst.js`) — il codice Typst viene compilato in
    PDF dal WASM locale. L'editor a sinistra è modificabile: **Genera PDF**
    ricompila, oppure si attiva l'**Anteprima live** (ricompila con debounce).
+   L'anteprima apre il PDF con pdf.js e renderizza **una sola pagina canvas
+   alla volta**: anche i libri lunghi non vengono montati come un unico SVG.
+   Gli stessi byte già compilati sono riusati dal download, evitando una
+   seconda compilazione completa.
 
 I font accademici (Libertinus Serif, New Computer Modern, DejaVu Sans/Mono)
 sono **impacchettati localmente** in `src/assets/fonts`: il compilatore non
@@ -93,6 +97,7 @@ src/
 │  ├─ typstdiag.js          normalizzazione degli intervalli riga/colonna
 │  ├─ typstfix.js           correzione deterministica compiler-guided
 │  ├─ aifix.js              patch AI focalizzate e applicazione sicura
+│  ├─ pdfPreview.js         ricerca e navigazione dell'anteprima paginata
 │  ├─ files.js              validazione file, base64
 │  └─ storage.js            persistenza chiavi/endpoint nel localStorage
 └─ components/              Dropzone, SettingsModal, PipelineStepper,
