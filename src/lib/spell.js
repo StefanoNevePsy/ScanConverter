@@ -306,7 +306,7 @@ export async function requestSpellFixes({ settings, entries, signal }) {
 
   const text = await engineChat({
     settings,
-    engine: settings.typstEngine,
+    phase: 'proof',
     system,
     user,
     temperature: 0.1,

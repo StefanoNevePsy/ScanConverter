@@ -162,7 +162,9 @@ export async function refinePageTables({
       const answer = stripFence(
         await geminiVision({
           apiKey: settings.googleApiKey,
-          model: settings.geminiOcrModel || settings.geminiModel,
+          // Il riparsing tabelle è vision e passa sempre da Gemini: il
+          // modello è quello scelto per Gemini nella fase OCR.
+          model: settings.phases?.ocr?.models?.gemini || 'gemini-flash-latest',
           imageDataUrl: crop,
           prompt: TABLE_PROMPT,
           maxTokens: 4096,

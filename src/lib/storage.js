@@ -5,19 +5,13 @@
   direttamente dal client.
 */
 
+import { ENGINES, PHASES, PHASE_DEFAULTS, normalizeEngine } from './phases.js';
+
 const KEYS = {
   nvidia: 'sc.nvidiaApiKey',
   google: 'sc.googleApiKey',
   nvidiaEndpoint: 'sc.nvidiaEndpoint',
-  nvidiaModel: 'sc.nvidiaModel',
-  geminiModel: 'sc.geminiModel',
-  geminiOcrModel: 'sc.geminiOcrModel',
-  geminiTypstModel: 'sc.geminiTypstModel',
-  ocrEngine: 'sc.ocrEngine',
-  typstEngine: 'sc.typstEngine',
-  nvidiaTypstModel: 'sc.nvidiaTypstModel',
-  fixEngine: 'sc.fixEngine',
-  fixModel: 'sc.fixModel',
+  phases: 'sc.phases',
   pdfTextMode: 'sc.pdfTextMode',
   maxPages: 'sc.maxPages',
   chunkSize: 'sc.chunkSize',
@@ -30,28 +24,34 @@ const KEYS = {
   localModel: 'sc.localModel',
   localOcrEndpoint: 'sc.localOcrEndpoint',
   docContext: 'sc.docContext',
+  sourceLang: 'sc.sourceLang',
+  targetLang: 'sc.targetLang',
+  translateOverlap: 'sc.translateOverlap',
+};
+
+// Chiavi delle versioni precedenti: lette una sola volta per costruire
+// `phases`, poi non più scritte. Restano nel localStorage dell'utente senza
+// dare fastidio — riscriverle significherebbe mantenere due verità.
+const LEGACY = {
+  nvidiaModel: 'sc.nvidiaModel',
+  geminiModel: 'sc.geminiModel',
+  geminiOcrModel: 'sc.geminiOcrModel',
+  geminiTypstModel: 'sc.geminiTypstModel',
+  ocrEngine: 'sc.ocrEngine',
+  typstEngine: 'sc.typstEngine',
+  nvidiaTypstModel: 'sc.nvidiaTypstModel',
+  fixEngine: 'sc.fixEngine',
+  fixModel: 'sc.fixModel',
+  localModel: 'sc.localModel',
 };
 
 export const DEFAULTS = {
   // Endpoint hosted verificato: il NIM Nemotron-Parse risponde qui (stile
   // OpenAI chat/completions). Il vecchio ai.api.nvidia.com/gr/... dava 404.
   nvidiaEndpoint: 'https://integrate.api.nvidia.com/v1/chat/completions',
-  nvidiaModel: 'nvidia/nemotron-parse',
-  geminiOcrModel: 'gemini-flash-latest',
-  geminiTypstModel: 'gemini-flash-latest',
-  // Motore OCR (fase 1, immagine → testo): 'nvidia' (Nemotron-Parse, estrae
-  // anche figure/bbox) oppure 'gemini' (multimodale: più robusto su scansioni
-  // pessime e usabile da web, ma senza figure).
-  ocrEngine: 'nvidia',
-  // Motore per la fase 2 (testo OCR → Typst): 'gemini' oppure 'nvidia'.
-  typstEngine: 'gemini',
-  // Modello NVIDIA usato quando typstEngine === 'nvidia' (istruct generico,
-  // adatto alla generazione di codice).
-  nvidiaTypstModel: 'meta/llama-3.3-70b-instruct',
-  // Correzione AI degli errori di compilazione: motore e modello dedicati
-  // (un modello "forte" da codice; la chiave NVIDIA c'è sempre, serve all'OCR).
-  fixEngine: 'nvidia',
-  fixModel: 'z-ai/glm-5.2',
+  // Motore e modello di OGNI fase: vedi phases.js. Una sola convenzione al
+  // posto delle cinque coppie sparse di prima.
+  phases: PHASE_DEFAULTS,
   // Ingestione dei PDF con layer di testo (vettoriali / già OCR'd):
   //  'auto' → usa il testo del PDF quando c'è, saltando l'OCR NVIDIA;
   //  'ocr'  → rasterizza sempre e passa da Nemotron-Parse (per estrarre figure).
@@ -77,16 +77,19 @@ export const DEFAULTS = {
   // macchina dell'utente per le fasi testuali, e un sidecar che incapsula
   // Nemotron OCR v2 per la fase immagine → testo. Nessuna chiave richiesta.
   localEndpoint: 'http://localhost:11434/v1/chat/completions',
-  localModel: 'qwen3:8b',
   localOcrEndpoint: 'http://localhost:8000/ocr',
+  // Traduzione (fase separata, mai in sovrascrittura dell'originale).
+  sourceLang: 'auto',
+  targetLang: 'en',
+  // Frasi di contesto passate prima e dopo ogni blocco da tradurre: senza,
+  // il modello non sa a cosa si riferiscono i pronomi a cavallo del taglio.
+  translateOverlap: 2,
   // Contesto del documento in una frase (dominio, autori, termini ricorrenti).
   // Serve ai modelli per NON "correggere" il lessico specialistico: senza,
   // «parentificazione» o «ipercircolarità» sembrano refusi da aggiustare.
   docContext: '',
 };
 
-// Valori ammessi per il motore Typst.
-const ENGINES = ['gemini', 'nvidia', 'local'];
 const PDF_MODES = ['auto', 'ocr'];
 const FORMAT_WORKFLOWS = ['legacy', 'strict'];
 
@@ -94,6 +97,7 @@ const LIMITS = {
   maxPages: { min: 1, max: 2000 },
   chunkSize: { min: 1000, max: 30000 },
   ocrLongSide: { min: 1000, max: 5000 },
+  translateOverlap: { min: 0, max: 6 },
 };
 
 function readInt(key, fallback, { min, max }) {
@@ -127,32 +131,92 @@ function write(key, value) {
   }
 }
 
+/**
+ * Ricostruisce `phases` dai campi sparsi delle versioni precedenti.
+ *
+ * Chi aggiorna l'app non deve riconfigurare nulla: la coppia motore/modello
+ * che aveva scelto per ogni fase viene ritrovata dov'era. La traduzione non
+ * esisteva prima, quindi parte dai suoi default.
+ */
+function migratedPhases() {
+  const geminiFallback = read(LEGACY.geminiModel, PHASE_DEFAULTS.typst.models.gemini);
+  const localFallback = read(LEGACY.localModel, PHASE_DEFAULTS.typst.models.local);
+  const legacy = {
+    ocr: {
+      engine: read(LEGACY.ocrEngine, ''),
+      models: {
+        nvidia: read(LEGACY.nvidiaModel, ''),
+        gemini: read(LEGACY.geminiOcrModel, geminiFallback),
+        local: '',
+      },
+    },
+    typst: {
+      engine: read(LEGACY.typstEngine, ''),
+      models: {
+        nvidia: read(LEGACY.nvidiaTypstModel, ''),
+        gemini: read(LEGACY.geminiTypstModel, geminiFallback),
+        local: localFallback,
+      },
+    },
+    // Rilettura e riparazione condividevano `fixEngine`/`fixModel`: restano
+    // separate d'ora in poi, ma partono dalla stessa scelta di prima.
+    proof: {
+      engine: read(LEGACY.fixEngine, ''),
+      models: { nvidia: read(LEGACY.fixModel, ''), gemini: geminiFallback, local: localFallback },
+    },
+    fix: {
+      engine: read(LEGACY.fixEngine, ''),
+      models: { nvidia: read(LEGACY.fixModel, ''), gemini: geminiFallback, local: localFallback },
+    },
+    translate: { engine: '', models: { local: localFallback } },
+  };
+
+  const out = {};
+  for (const phase of PHASES) {
+    const base = PHASE_DEFAULTS[phase];
+    const old = legacy[phase] || {};
+    const models = { ...base.models };
+    for (const engine of ENGINES) {
+      const value = String(old.models?.[engine] || '').trim();
+      if (value) models[engine] = value;
+    }
+    out[phase] = { engine: normalizeEngine(phase, old.engine || base.engine), models };
+  }
+  return out;
+}
+
+function loadPhases() {
+  let stored = null;
+  try {
+    stored = JSON.parse(read(KEYS.phases, 'null'));
+  } catch {
+    stored = null;
+  }
+  if (!stored || typeof stored !== 'object') return migratedPhases();
+  const out = {};
+  for (const phase of PHASES) {
+    const base = PHASE_DEFAULTS[phase];
+    const saved = stored[phase];
+    const models = { ...base.models };
+    for (const engine of ENGINES) {
+      const value = String(saved?.models?.[engine] || '').trim();
+      if (value) models[engine] = value;
+    }
+    out[phase] = { engine: normalizeEngine(phase, saved?.engine || base.engine), models };
+  }
+  return out;
+}
+
 export function loadSettings() {
   let nvidiaEndpoint = read(KEYS.nvidiaEndpoint, DEFAULTS.nvidiaEndpoint);
   if (LEGACY_NVIDIA_ENDPOINTS.includes(nvidiaEndpoint)) {
     nvidiaEndpoint = DEFAULTS.nvidiaEndpoint;
   }
-  // Migrazione trasparente: le installazioni precedenti avevano un solo
-  // modello Gemini condiviso dalle due fasi.
-  const legacyGeminiModel = read(KEYS.geminiModel, DEFAULTS.geminiTypstModel);
   return {
     nvidiaApiKey: read(KEYS.nvidia),
     googleApiKey: read(KEYS.google),
     nvidiaEndpoint,
-    nvidiaModel: read(KEYS.nvidiaModel, DEFAULTS.nvidiaModel),
-    geminiOcrModel: read(KEYS.geminiOcrModel, legacyGeminiModel),
-    geminiTypstModel: read(KEYS.geminiTypstModel, legacyGeminiModel),
-    ocrEngine: ENGINES.includes(read(KEYS.ocrEngine, DEFAULTS.ocrEngine))
-      ? read(KEYS.ocrEngine, DEFAULTS.ocrEngine)
-      : DEFAULTS.ocrEngine,
-    typstEngine: ENGINES.includes(read(KEYS.typstEngine, DEFAULTS.typstEngine))
-      ? read(KEYS.typstEngine, DEFAULTS.typstEngine)
-      : DEFAULTS.typstEngine,
-    nvidiaTypstModel: read(KEYS.nvidiaTypstModel, DEFAULTS.nvidiaTypstModel),
-    fixEngine: ENGINES.includes(read(KEYS.fixEngine, DEFAULTS.fixEngine))
-      ? read(KEYS.fixEngine, DEFAULTS.fixEngine)
-      : DEFAULTS.fixEngine,
-    fixModel: read(KEYS.fixModel, DEFAULTS.fixModel),
+    phases: loadPhases(),
     pdfTextMode: PDF_MODES.includes(read(KEYS.pdfTextMode, DEFAULTS.pdfTextMode))
       ? read(KEYS.pdfTextMode, DEFAULTS.pdfTextMode)
       : DEFAULTS.pdfTextMode,
@@ -166,9 +230,15 @@ export function loadSettings() {
     compareOcr: readBool(KEYS.compareOcr, DEFAULTS.compareOcr),
     refineTables: readBool(KEYS.refineTables, DEFAULTS.refineTables),
     localEndpoint: read(KEYS.localEndpoint, DEFAULTS.localEndpoint),
-    localModel: read(KEYS.localModel, DEFAULTS.localModel),
     localOcrEndpoint: read(KEYS.localOcrEndpoint, DEFAULTS.localOcrEndpoint),
     docContext: read(KEYS.docContext, DEFAULTS.docContext),
+    sourceLang: read(KEYS.sourceLang, DEFAULTS.sourceLang),
+    targetLang: read(KEYS.targetLang, DEFAULTS.targetLang),
+    translateOverlap: readInt(
+      KEYS.translateOverlap,
+      DEFAULTS.translateOverlap,
+      LIMITS.translateOverlap,
+    ),
   };
 }
 
@@ -216,14 +286,7 @@ export function saveSettings(s) {
   write(KEYS.nvidia, s.nvidiaApiKey?.trim());
   write(KEYS.google, s.googleApiKey?.trim());
   write(KEYS.nvidiaEndpoint, s.nvidiaEndpoint?.trim() || DEFAULTS.nvidiaEndpoint);
-  write(KEYS.nvidiaModel, s.nvidiaModel?.trim() || DEFAULTS.nvidiaModel);
-  write(KEYS.geminiOcrModel, s.geminiOcrModel?.trim() || DEFAULTS.geminiOcrModel);
-  write(KEYS.geminiTypstModel, s.geminiTypstModel?.trim() || DEFAULTS.geminiTypstModel);
-  write(KEYS.ocrEngine, ENGINES.includes(s.ocrEngine) ? s.ocrEngine : DEFAULTS.ocrEngine);
-  write(KEYS.typstEngine, ENGINES.includes(s.typstEngine) ? s.typstEngine : DEFAULTS.typstEngine);
-  write(KEYS.nvidiaTypstModel, s.nvidiaTypstModel?.trim() || DEFAULTS.nvidiaTypstModel);
-  write(KEYS.fixEngine, ENGINES.includes(s.fixEngine) ? s.fixEngine : DEFAULTS.fixEngine);
-  write(KEYS.fixModel, s.fixModel?.trim() || DEFAULTS.fixModel);
+  writePhases(s.phases);
   write(KEYS.pdfTextMode, PDF_MODES.includes(s.pdfTextMode) ? s.pdfTextMode : DEFAULTS.pdfTextMode);
   writeInt(KEYS.maxPages, s.maxPages, DEFAULTS.maxPages, LIMITS.maxPages);
   writeInt(KEYS.chunkSize, s.chunkSize, DEFAULTS.chunkSize, LIMITS.chunkSize);
@@ -236,7 +299,32 @@ export function saveSettings(s) {
   write(KEYS.compareOcr, s.compareOcr ? '1' : '0');
   write(KEYS.refineTables, s.refineTables ? '1' : '0');
   write(KEYS.localEndpoint, s.localEndpoint?.trim() || DEFAULTS.localEndpoint);
-  write(KEYS.localModel, s.localModel?.trim() || DEFAULTS.localModel);
   write(KEYS.localOcrEndpoint, s.localOcrEndpoint?.trim() || DEFAULTS.localOcrEndpoint);
   write(KEYS.docContext, s.docContext?.trim() || '');
+  write(KEYS.sourceLang, s.sourceLang?.trim() || DEFAULTS.sourceLang);
+  write(KEYS.targetLang, s.targetLang?.trim() || DEFAULTS.targetLang);
+  writeInt(
+    KEYS.translateOverlap,
+    s.translateOverlap,
+    DEFAULTS.translateOverlap,
+    LIMITS.translateOverlap,
+  );
+}
+
+/**
+ * Salva le fasi come un unico oggetto: aggiungere una fase o un motore non
+ * richiede più di inventare una chiave nuova nel localStorage.
+ */
+function writePhases(phases) {
+  const out = {};
+  for (const phase of PHASES) {
+    const base = PHASE_DEFAULTS[phase];
+    const saved = phases?.[phase];
+    const models = {};
+    for (const engine of ENGINES) {
+      models[engine] = String(saved?.models?.[engine] ?? base.models[engine] ?? '').trim();
+    }
+    out[phase] = { engine: normalizeEngine(phase, saved?.engine || base.engine), models };
+  }
+  write(KEYS.phases, JSON.stringify(out));
 }

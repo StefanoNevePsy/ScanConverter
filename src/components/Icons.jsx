@@ -177,3 +177,11 @@ export const IconMoon = (p) => (
     <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />
   </svg>
 );
+
+export const IconGlobe = (p) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18" />
+    <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z" />
+  </svg>
+);

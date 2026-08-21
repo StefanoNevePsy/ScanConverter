@@ -9,6 +9,8 @@ import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assem
 import { refinePageTables } from '../lib/segments.js';
 import { localOcrBlocks } from '../lib/local.js';
 import { toTypstLocal } from '../lib/engines.js';
+import { phaseConfig } from '../lib/phases.js';
+import { translateDocument as translateMarkdown, languageLabel } from '../lib/translate.js';
 import { extractPdfText } from '../lib/pdftext.js';
 import { hasPdfData, releaseDesktopPdf } from '../lib/desktop.js';
 import { isSpreadLike, preparePages, makeThumbnail } from '../lib/pagePrep.js';
@@ -177,6 +179,8 @@ export function usePipeline(settings) {
   const [spellBusy, setSpellBusy] = useState(false);
   const [proofreadBusy, setProofreadBusy] = useState(false);
   const [proofreadDetail, setProofreadDetail] = useState(''); // "3/12 paragrafi…"
+  const [translateBusy, setTranslateBusy] = useState(false);
+  const [translateDetail, setTranslateDetail] = useState(''); // "4/30 passaggi"
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [ocrProgress, setOcrProgress] = useState(null); // {done,total} | null (fase OCR)
@@ -414,6 +418,9 @@ export function usePipeline(settings) {
       strictIssueResolutions: s.strictIssueResolutions || {},
       verified: !!s.verified,
       layoutPlan: s.layoutPlan || null,
+      // Id del documento da cui questo è stato tradotto: serve a non
+      // confondere l'originale con la sua traduzione nell'elenco.
+      translatedFrom: s.translatedFrom || null,
       status: allDone ? 'done' : 'paused',
     });
   }, []);
@@ -566,43 +573,27 @@ export function usePipeline(settings) {
   // aggiunte qui in base alle impostazioni.
   const callGeminiWithRetry = useCallback(
     async (args, signal, chunkLabel) => {
-      const nvidia = settings.typstEngine === 'nvidia';
+      const { engine, model } = phaseConfig(settings, 'typst');
+      const common = {
+        rawText: args.rawText,
+        styleHint: args.styleHint,
+        continuation: args.continuation,
+        fidelityNote: args.fidelityNote,
+        fixTypos: settings.fixTypos,
+        docContext: settings.docContext,
+        signal,
+      };
       const call = () =>
-        settings.typstEngine === 'local'
-          ? toTypstLocal({
-              settings,
-              rawText: args.rawText,
-              styleHint: args.styleHint,
-              continuation: args.continuation,
-              fidelityNote: args.fidelityNote,
-              fixTypos: settings.fixTypos,
-              docContext: settings.docContext,
-              signal,
-            })
-          : nvidia
+        engine === 'local'
+          ? toTypstLocal({ settings, ...common })
+          : engine === 'nvidia'
           ? toTypstNvidia({
               apiKey: settings.nvidiaApiKey,
               endpoint: settings.nvidiaEndpoint,
-              model: settings.nvidiaTypstModel,
-              rawText: args.rawText,
-              styleHint: args.styleHint,
-              continuation: args.continuation,
-              fidelityNote: args.fidelityNote,
-              fixTypos: settings.fixTypos,
-              docContext: settings.docContext,
-              signal,
+              model,
+              ...common,
             })
-          : toTypst({
-              apiKey: settings.googleApiKey,
-              model: settings.geminiTypstModel,
-              rawText: args.rawText,
-              styleHint: args.styleHint,
-              continuation: args.continuation,
-              fidelityNote: args.fidelityNote,
-              fixTypos: settings.fixTypos,
-              docContext: settings.docContext,
-              signal,
-            });
+          : toTypst({ apiKey: settings.googleApiKey, model, ...common });
       return withRetry(call, signal, (secs) =>
         setDetail(`${chunkLabel} · servizio occupato: nuovo tentativo tra ${secs}s…`),
       );
@@ -787,6 +778,9 @@ export function usePipeline(settings) {
   const startFormat = useCallback(
     async (extracted, fileName, signal) => {
       const id = sessionRef.current?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      // La sessione viene ricostruita da zero qui sotto: la provenienza va
+      // portata avanti a mano, o una traduzione perde il legame con l'originale.
+      const translatedFrom = sessionRef.current?.translatedFrom || null;
       if (settings.formatWorkflow === 'strict') {
         let speller = null;
         try {
@@ -837,6 +831,7 @@ export function usePipeline(settings) {
         sessionRef.current = {
           id,
           fileName,
+          translatedFrom,
           rawText: extracted,
           canonicalText,
           corrections,
@@ -874,6 +869,7 @@ export function usePipeline(settings) {
       sessionRef.current = {
         id,
         fileName,
+        translatedFrom,
         rawText: extracted,
         chunks: chunkDocument(extracted, settings.chunkSize).map((t) => ({
           text: t,
@@ -931,8 +927,9 @@ export function usePipeline(settings) {
           // 'local': sidecar sulla macchina dell'utente (Nemotron OCR v2).
           // 'gemini': trascrizione multimodale, un blocco senza bbox.
           // 'nvidia': blocchi strutturati con bbox, figure e classi semantiche.
+          const ocr = phaseConfig(settings, 'ocr');
           const blocks =
-            settings.ocrEngine === 'local'
+            ocr.engine === 'local'
               ? await withRetry(
                   () =>
                     localOcrBlocks({
@@ -943,7 +940,7 @@ export function usePipeline(settings) {
                   signal,
                   onWait,
                 )
-              : settings.ocrEngine === 'gemini'
+              : ocr.engine === 'gemini'
               ? [
                   {
                     type: 'Text',
@@ -952,7 +949,7 @@ export function usePipeline(settings) {
                       () =>
                         ocrImageGemini({
                           apiKey: settings.googleApiKey,
-                          model: settings.geminiOcrModel,
+                          model: ocr.model,
                           imageDataUrl: dataUrl,
                           signal,
                         }),
@@ -966,7 +963,7 @@ export function usePipeline(settings) {
                     extractPageBlocks({
                       apiKey: settings.nvidiaApiKey,
                       endpoint: settings.nvidiaEndpoint,
-                      model: settings.nvidiaModel,
+                      model: ocr.model,
                       imageDataUrl: dataUrl,
                       signal,
                     }),
@@ -995,13 +992,14 @@ export function usePipeline(settings) {
             if (!Array.isArray(s.ocr.comparisons)) s.ocr.comparisons = [];
             setDetail(`${label} · confronto con il secondo motore…`);
             try {
+              const models = settings.phases?.ocr?.models || {};
               let alternateText;
-              if (settings.ocrEngine === 'gemini') {
+              if (ocr.engine === 'gemini') {
                 const altBlocks = await withRetry(
                   () => extractPageBlocks({
                     apiKey: settings.nvidiaApiKey,
                     endpoint: settings.nvidiaEndpoint,
-                    model: settings.nvidiaModel,
+                    model: models.nvidia,
                     imageDataUrl: dataUrl,
                     signal,
                   }),
@@ -1013,7 +1011,7 @@ export function usePipeline(settings) {
                 alternateText = await withRetry(
                   () => ocrImageGemini({
                     apiKey: settings.googleApiKey,
-                    model: settings.geminiOcrModel,
+                    model: models.gemini,
                     imageDataUrl: dataUrl,
                     signal,
                   }),
@@ -1028,8 +1026,8 @@ export function usePipeline(settings) {
               );
               s.ocr.comparisons[i] = {
                 page: i + 1,
-                primary: settings.ocrEngine,
-                alternate: settings.ocrEngine === 'gemini' ? 'nvidia' : 'gemini',
+                primary: ocr.engine,
+                alternate: ocr.engine === 'gemini' ? 'nvidia' : 'gemini',
                 agreement: cmp.sourceCount
                   ? cmp.matched / Math.max(cmp.sourceCount, cmp.outputCount, 1)
                   : 1,
@@ -1040,8 +1038,8 @@ export function usePipeline(settings) {
               if (signal.aborted || comparisonError?.name === 'AbortError') return 'aborted';
               s.ocr.comparisons[i] = {
                 page: i + 1,
-                primary: settings.ocrEngine,
-                alternate: settings.ocrEngine === 'gemini' ? 'nvidia' : 'gemini',
+                primary: ocr.engine,
+                alternate: ocr.engine === 'gemini' ? 'nvidia' : 'gemini',
                 error: comparisonError.message || 'Confronto OCR non disponibile.',
               };
             }
@@ -1269,6 +1267,7 @@ export function usePipeline(settings) {
       sessionRef.current = {
         id: meta.id,
         fileName: meta.fileName,
+        translatedFrom: meta.translatedFrom || null,
         rawText: meta.rawText,
         chunks: (meta.chunks || []).map((c) => ({ ...c })),
         preamble: meta.preamble || '',
@@ -1907,6 +1906,81 @@ export function usePipeline(settings) {
     }
   }, [getCompiledPdf, typstCode, settings, verifyStrictPdf]);
 
+  /**
+   * Traduce il documento in un SECONDO documento, lasciando intatto il primo.
+   *
+   * Non è un passaggio della pipeline ma una biforcazione: si parte dal testo
+   * OCR — non dal Typst già impaginato, che porterebbe il modello a tradurre
+   * anche i comandi — si traduce con contesto e frasi intere, e il risultato
+   * entra nella normale fase di strutturazione sotto un id nuovo. Da lì in poi
+   * è un documento come tutti gli altri: si modifica, si compila, si esporta.
+   *
+   * Le figure vengono duplicate sul nuovo id con gli stessi percorsi: il
+   * Markdown tradotto continua a puntarci, e cancellare un documento non
+   * svuota le immagini dell'altro.
+   */
+  const translateSession = useCallback(async () => {
+    const source = sessionRef.current;
+    const markdown = source?.rawText || rawText;
+    if (!markdown?.trim()) {
+      return { ok: false, message: 'Non c’è testo OCR da tradurre.' };
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setTranslateBusy(true);
+    setTranslateDetail('');
+    try {
+      const result = await translateMarkdown({
+        settings,
+        markdown,
+        signal: controller.signal,
+        onProgress: (done, total) => setTranslateDetail(`${done}/${total} passaggi`),
+      });
+      if (controller.signal.aborted) return { ok: false, message: 'Traduzione annullata.' };
+
+      const figures = figuresRef.current.length
+        ? figuresRef.current
+        : await getFigures(source.id).catch(() => []);
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const label = languageLabel(settings.targetLang || 'en');
+      const fileName = `${(source?.fileName || 'documento').replace(/\.[^.]+$/, '')} — ${label}`;
+
+      figuresRef.current = figures;
+      // Sessione nuova, non ripresa: `startFormat` riusa l'id di
+      // `sessionRef.current`, quindi va impostato prima di chiamarlo.
+      sessionRef.current = { id, fileName, translatedFrom: source?.id || null };
+      setTypstCode('');
+      setPreviewPdf(null);
+      setCompileError(null);
+      clearReview();
+      setRawText(result.markdown);
+      setStatus({ ...emptyStatus, ocr: 'done' });
+      setPhase('running');
+      await startFormat(result.markdown, fileName, controller.signal);
+      await refreshSessions();
+
+      const notes = [];
+      if (result.retried) notes.push(`${result.retried} passaggi ripetuti`);
+      if (result.failed) {
+        notes.push(`${result.failed} rimasti in lingua originale — cercali e ritraducili a mano`);
+      }
+      return {
+        ok: true,
+        message:
+          `Traduzione in ${label} completata: «${fileName}» è un documento a sé, ` +
+          `l’originale resta invariato${notes.length ? ` · ${notes.join(' · ')}` : ''}.`,
+      };
+    } catch (e) {
+      if (controller.signal.aborted || e?.name === 'AbortError') {
+        return { ok: false, message: 'Traduzione annullata.' };
+      }
+      return { ok: false, message: e.message || 'Errore nella traduzione.' };
+    } finally {
+      setTranslateBusy(false);
+      setTranslateDetail('');
+    }
+  }, [settings, rawText, startFormat, refreshSessions, clearReview]);
+
   /** Revisione interattiva di una singola voce del registro conservativo. */
   const reviewStrictCorrection = useCallback(async (index, action) => {
     const s = sessionRef.current;
@@ -2417,6 +2491,9 @@ export function usePipeline(settings) {
     proofreadBusy,
     proofreadDetail,
     proofreadAI,
+    translateBusy,
+    translateDetail,
+    translateSession,
     resume,
     reset,
     cancel,

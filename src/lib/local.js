@@ -18,6 +18,35 @@ export const DEFAULT_LOCAL_ENDPOINT = 'http://localhost:11434/v1/chat/completion
 export const DEFAULT_LOCAL_MODEL = 'qwen3:8b';
 export const DEFAULT_LOCAL_OCR_ENDPOINT = 'http://localhost:8000/ocr';
 
+/**
+ * Elenca i modelli già scaricati sul server locale.
+ *
+ * Anche `/v1/models` fa parte dell'API compatibile OpenAI, quindi si ricava
+ * dall'endpoint di chat senza chiedere all'utente un secondo indirizzo. Serve
+ * a scegliere da un elenco invece che ricordare a memoria «qwen3:8b»: i nomi
+ * dei modelli locali hanno tag e due punti, e sbagliarli dà un errore che
+ * sembra un problema di rete.
+ *
+ * @param {string} endpoint  URL chat/completions
+ * @returns {Promise<string[]>} nomi dei modelli disponibili
+ */
+export async function listLocalModels(endpoint) {
+  const base = String(endpoint || DEFAULT_LOCAL_ENDPOINT).replace(/\/chat\/completions\/?$/, '');
+  const url = `${base}/models`;
+  let res;
+  try {
+    res = await fetch(url, { headers: { Accept: 'application/json' } });
+  } catch (e) {
+    throw unreachable(url, e.message);
+  }
+  if (!res.ok) throw new Error(`Il server locale ha risposto ${res.status} su ${url}.`);
+  const data = await res.json().catch(() => ({}));
+  return (Array.isArray(data?.data) ? data.data : [])
+    .map((m) => String(m?.id || '').trim())
+    .filter(Boolean)
+    .sort();
+}
+
 /** Errore parlante: qui la causa è quasi sempre «il server non è avviato». */
 function unreachable(endpoint, detail) {
   return new Error(

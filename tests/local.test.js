@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeLocalBlocks, localChat, localOcrBlocks } from '../src/lib/local.js';
-import { engineChat, modelFor, TEXT_ENGINES } from '../src/lib/engines.js';
+import { engineChat, TEXT_ENGINES } from '../src/lib/engines.js';
 
 /* --------------------------------------------- blocchi dal sidecar OCR */
 
@@ -95,38 +95,33 @@ test('il dispatcher instrada al server locale senza chiavi', async () => {
     return { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
   };
   const out = await engineChat({
-    settings: { localEndpoint: 'http://127.0.0.1:11434/v1/chat/completions', localModel: 'mistral' },
-    engine: 'local',
+    settings: {
+      localEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+      phases: { typst: { engine: 'local', models: { local: 'mistral' } } },
+    },
+    phase: 'typst',
     user: 'testo',
   });
   assert.equal(out, 'ok');
   assert.match(url, /127\.0\.0\.1:11434/);
 });
 
-test('un motore sconosciuto ricade su NVIDIA invece di rompersi', async () => {
+test('un motore salvato ma sconosciuto ricade sul default della fase', async () => {
   let url = null;
   globalThis.fetch = async (u) => {
     url = String(u);
     return { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
   };
   await engineChat({
-    settings: { nvidiaApiKey: 'k', nvidiaEndpoint: 'https://esempio/v1/chat/completions' },
-    engine: 'sconosciuto',
+    settings: {
+      nvidiaApiKey: 'k',
+      nvidiaEndpoint: 'https://esempio/v1/chat/completions',
+      phases: { fix: { engine: 'sconosciuto', models: { nvidia: 'z-ai/glm-5.2' } } },
+    },
+    phase: 'fix',
     user: 'testo',
   });
-  assert.match(url, /esempio/);
-});
-
-test('modelFor sceglie il campo giusto per ciascun motore', () => {
-  const settings = {
-    localModel: 'qwen3:8b',
-    geminiTypstModel: 'gemini-flash-latest',
-    nvidiaTypstModel: 'meta/llama-3.3-70b-instruct',
-  };
-  assert.equal(modelFor(settings, 'local', 'ignorato'), 'qwen3:8b');
-  assert.equal(modelFor(settings, 'gemini', 'gemini-pro'), 'gemini-pro');
-  assert.equal(modelFor(settings, 'gemini'), 'gemini-flash-latest');
-  assert.equal(modelFor(settings, 'nvidia'), 'meta/llama-3.3-70b-instruct');
+  assert.match(url, /esempio/, 'il default della fase «fix» è NVIDIA');
   assert.deepEqual(TEXT_ENGINES, ['gemini', 'nvidia', 'local']);
 });
 

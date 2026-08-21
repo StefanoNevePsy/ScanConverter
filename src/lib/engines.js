@@ -15,6 +15,7 @@
 import { nvidiaChat, buildTypstUser } from './nvidia.js';
 import { geminiGenerate, SYSTEM_PROMPT, unwrapCodeBlock } from './gemini.js';
 import { localChat, DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL } from './local.js';
+import { phaseConfig } from './phases.js';
 
 /**
  * Blocco di contesto da anteporre ai prompt.
@@ -42,22 +43,17 @@ export function contextBlock(settings) {
 export const TEXT_ENGINES = ['gemini', 'nvidia', 'local'];
 
 /**
- * Modello da usare per un dato motore, con le riserve nell'ordine giusto.
- * `override` è il campo specifico della fase (es. `fixModel`).
- */
-export function modelFor(settings, engine, override) {
-  if (engine === 'local') return settings.localModel?.trim() || DEFAULT_LOCAL_MODEL;
-  if (engine === 'gemini') return override?.trim() || settings.geminiTypstModel;
-  return override?.trim() || settings.nvidiaTypstModel;
-}
-
-/**
- * Esegue una richiesta di chat sul motore scelto, uniformando i parametri.
+ * Esegue una richiesta di chat per una FASE, uniformando i parametri.
+ *
+ * Il chiamante dice cosa sta facendo (`phase`), non con chi: motore e modello
+ * escono da `phaseConfig`. `engine`/`model` restano accettati per i pochi casi
+ * in cui la scelta è imposta dal contesto e non dall'utente.
  *
  * @param {object} p
  * @param {object} p.settings
- * @param {'gemini'|'nvidia'|'local'} p.engine
- * @param {string} [p.model]      modello specifico della fase (facoltativo)
+ * @param {string} [p.phase]      'ocr'|'typst'|'translate'|'proof'|'fix'
+ * @param {'gemini'|'nvidia'|'local'} [p.engine] forza il motore
+ * @param {string} [p.model]      forza il modello
  * @param {string} [p.system]
  * @param {string} p.user
  * @param {number} [p.temperature]
@@ -68,6 +64,7 @@ export function modelFor(settings, engine, override) {
  */
 export async function engineChat({
   settings,
+  phase,
   engine,
   model,
   system,
@@ -77,8 +74,16 @@ export async function engineChat({
   json = false,
   signal,
 }) {
-  const chosen = TEXT_ENGINES.includes(engine) ? engine : 'nvidia';
-  const resolved = model || modelFor(settings, chosen);
+  const configured = phase ? phaseConfig(settings, phase) : null;
+  const candidate = engine || configured?.engine;
+  const chosen = TEXT_ENGINES.includes(candidate) ? candidate : 'nvidia';
+  // Il modello configurato vale solo se il motore è quello configurato:
+  // forzare il motore senza il modello non deve pescare il modello di un altro.
+  const resolved =
+    model?.trim() ||
+    (configured && configured.engine === chosen ? configured.model : '') ||
+    (chosen === 'local' ? DEFAULT_LOCAL_MODEL : '');
+  if (!resolved) throw new Error(`Nessun modello configurato per la fase «${phase || chosen}».`);
 
   if (chosen === 'local') {
     return localChat({
@@ -136,7 +141,7 @@ export async function toTypstLocal({
   if (!rawText?.trim()) throw new Error('Nessun testo da formattare.');
   const text = await localChat({
     endpoint: settings.localEndpoint?.trim() || DEFAULT_LOCAL_ENDPOINT,
-    model: settings.localModel?.trim() || DEFAULT_LOCAL_MODEL,
+    model: phaseConfig(settings, 'typst').model || DEFAULT_LOCAL_MODEL,
     system: SYSTEM_PROMPT,
     user: buildTypstUser({
       rawText,

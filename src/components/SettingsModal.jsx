@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, forwardRef } from 'react';
 import { DEFAULTS } from '../lib/storage.js';
+import { PHASES, PHASE_META, PHASE_DEFAULTS, phaseConfig, withPhase } from '../lib/phases.js';
 import { listGeminiModels } from '../lib/gemini.js';
 import { listNvidiaModels } from '../lib/nvidia.js';
+import { listLocalModels } from '../lib/local.js';
 import { IconX, IconEye, IconEyeOff, IconKey, IconSpinner, IconRefresh } from './Icons.jsx';
 
 /**
@@ -21,6 +23,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
   // Elenchi modelli auto-aggiornanti. `{ list, loading, error }` per fornitore.
   const [gemini, setGemini] = useState({ list: [], loading: false, error: '' });
   const [nvidia, setNvidia] = useState({ list: [], loading: false, error: '' });
+  const [local, setLocal] = useState({ list: [], loading: false, error: '' });
 
   useEffect(() => {
     if (open) {
@@ -69,26 +72,59 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
     }
   }, []);
 
+  // I modelli locali si elencano dallo stesso endpoint della chat: nessuna
+  // chiave, e l'utente sceglie fra quelli che ha davvero scaricato invece di
+  // ricordarsi a memoria tag come «qwen3:8b».
+  const fetchLocal = useCallback(async (endpoint) => {
+    setLocal((l) => ({ ...l, loading: true, error: '' }));
+    try {
+      setLocal({ list: await listLocalModels(endpoint), loading: false, error: '' });
+    } catch (e) {
+      setLocal({ list: [], loading: false, error: e.message || 'Server locale non raggiungibile.' });
+    }
+  }, []);
+
   // All'apertura, prova a popolare gli elenchi con le chiavi già salvate.
   useEffect(() => {
     if (!open) return;
     if (initial.googleApiKey) fetchGemini(initial.googleApiKey);
     if (initial.nvidiaApiKey) fetchNvidia(initial.nvidiaApiKey, initial.nvidiaEndpoint);
+    if (PHASES.some((phase) => phaseConfig(initial, phase).engine === 'local')) {
+      fetchLocal(initial.localEndpoint);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   if (!open) return null;
 
   const update = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-  const setEngine = (typstEngine) => setForm((f) => ({ ...f, typstEngine }));
+
+  // Ogni riga di fase modifica soltanto la propria voce; `withPhase` conserva
+  // i modelli degli altri motori, così tornare indietro non costa nulla.
+  const setPhaseEngine = (phase, engine) => setForm((f) => withPhase(f, phase, { engine }));
+  const setPhaseModel = (phase, engine, model) =>
+    setForm((f) => withPhase(f, phase, { engine, model }));
+
+  const ocrEngine = phaseConfig(form, 'ocr').engine;
+  const usesLocal = PHASES.some((phase) => phaseConfig(form, phase).engine === 'local');
+
+  const providers = {
+    gemini: {
+      ...gemini,
+      refresh: () => fetchGemini(form.googleApiKey),
+    },
+    nvidia: {
+      ...nvidia,
+      refresh: () => fetchNvidia(form.nvidiaApiKey, form.nvidiaEndpoint),
+    },
+    local: { ...local, refresh: () => fetchLocal(form.localEndpoint) },
+  };
 
   const submit = (e) => {
     e.preventDefault();
     onSave(form);
     onClose();
   };
-
-  const engineNvidia = form.typstEngine === 'nvidia';
 
   return (
     <div
@@ -185,6 +221,25 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             </label>
           </Section>
 
+          {/* Una riga per fase: motore e modello. Prima la stessa decisione
+              era ripetuta con cinque convenzioni diverse, sparse fra la
+              sezione principale e le opzioni avanzate. */}
+          <Section
+            title="Motori per fase"
+            note="Ogni fase è indipendente: locale dove conviene, in rete dove serve."
+          >
+            {PHASES.map((phase) => (
+              <PhaseRow
+                key={phase}
+                phase={phase}
+                form={form}
+                providers={providers}
+                onEngine={setPhaseEngine}
+                onModel={setPhaseModel}
+              />
+            ))}
+          </Section>
+
           <Section title="Come viene ricostruito il documento">
             <div>
               <span className="mb-1.5 block text-sm font-medium text-ink">
@@ -210,50 +265,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
               </div>
             </div>
 
-          {/* Motore OCR (fase 1: immagine → testo). */}
           <div>
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Motore OCR
-            </span>
-            <span className="mb-2 block text-xs text-faint">
-              Chi legge il testo dalle immagini scansionate.
-            </span>
-            <div className="grid gap-2 sm:grid-cols-3">
-              <EngineButton
-                active={form.ocrEngine === 'nvidia'}
-                onClick={() => setForm((f) => ({ ...f, ocrEngine: 'nvidia' }))}
-                title="NVIDIA Nemotron-Parse"
-                sub="estrae anche figure e tabelle"
-              />
-              <EngineButton
-                active={form.ocrEngine === 'gemini'}
-                onClick={() => setForm((f) => ({ ...f, ocrEngine: 'gemini' }))}
-                title="Google Gemini"
-                sub="più robusto su scansioni pessime"
-              />
-              <EngineButton
-                active={form.ocrEngine === 'local'}
-                onClick={() => setForm((f) => ({ ...f, ocrEngine: 'local' }))}
-                title="Locale (sidecar)"
-                sub="Nemotron OCR v2 sulla tua GPU"
-              />
-            </div>
-            {form.ocrEngine === 'gemini' && (
-              <div className="mt-3">
-                <ModelSelect
-                  label="Modello Gemini per OCR"
-                  hint="Legge l’immagine intera; non separa le figure per la revisione."
-                  value={form.geminiOcrModel}
-                  onChange={update('geminiOcrModel')}
-                  options={gemini.list}
-                  loading={gemini.loading}
-                  error={gemini.error}
-                  onRefresh={() => fetchGemini(form.googleApiKey)}
-                  placeholder={DEFAULTS.geminiOcrModel}
-                  listId="dl-gemini-ocr"
-                />
-              </div>
-            )}
             {form.formatWorkflow === 'strict' && (
               <div className="mt-3">
                 <label className="flex cursor-pointer items-start gap-3 py-0.5">
@@ -278,7 +290,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 </label>
               </div>
             )}
-            {form.ocrEngine !== 'gemini' && (
+            {ocrEngine !== 'gemini' && (
               <div className="mt-3">
                 <label className="flex cursor-pointer items-start gap-3 py-0.5">
                   <input
@@ -304,71 +316,13 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             )}
           </div>
 
-          {/* Motore per la strutturazione Typst (fase 2). */}
-          <div>
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Motore per il Typst
-            </span>
-            <span className="mb-2 block text-xs text-faint">
-              Chi trasforma il testo estratto in codice Typst.
-            </span>
-            <div className="grid gap-2 sm:grid-cols-3">
-              <EngineButton
-                active={form.typstEngine === 'gemini'}
-                onClick={() => setEngine('gemini')}
-                title="Google Gemini"
-                sub="veloce, ottimo layout"
-              />
-              <EngineButton
-                active={engineNvidia}
-                onClick={() => setEngine('nvidia')}
-                title="Modello NVIDIA"
-                sub="alternativa se Gemini è limitato"
-              />
-              <EngineButton
-                active={form.typstEngine === 'local'}
-                onClick={() => setEngine('local')}
-                title="Modello locale"
-                sub="senza rete né chiavi"
-              />
-            </div>
-          </div>
-
-          {/* Modello del motore attivo, con elenco auto-aggiornante. */}
           {form.formatWorkflow === 'strict' && (
             <div className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-muted">
-              Nel workflow «Fedeltà massima» questo modello sceglie soltanto
-              il piano editoriale (font, margini, densità e stili dei blocchi).
-              Il testo e il codice Typst sono prodotti localmente e non possono
-              essere riscritti dal modello.
+              Nel workflow «Fedeltà massima» il modello della fase Typst sceglie
+              soltanto il piano editoriale (font, margini, densità e stili dei
+              blocchi). Il testo e il codice sono prodotti localmente e non
+              possono essere riscritti dal modello.
             </div>
-          )}
-          {engineNvidia ? (
-            <ModelSelect
-              label={form.formatWorkflow === 'strict' ? 'Modello NVIDIA per il piano editoriale' : 'Modello NVIDIA per il Typst'}
-              hint="Consigliato un modello istruct generico (es. llama-3.3-70b-instruct)."
-              value={form.nvidiaTypstModel}
-              onChange={update('nvidiaTypstModel')}
-              options={nvidia.list}
-              loading={nvidia.loading}
-              error={nvidia.error}
-              onRefresh={() => fetchNvidia(form.nvidiaApiKey, form.nvidiaEndpoint)}
-              placeholder={DEFAULTS.nvidiaTypstModel}
-              listId="dl-nvidia-typst"
-            />
-          ) : (
-            <ModelSelect
-              label={form.formatWorkflow === 'strict' ? 'Modello Gemini per il piano editoriale' : 'Modello Gemini per il Typst'}
-              hint="L'elenco si aggiorna dalla tua chiave Google."
-              value={form.geminiTypstModel}
-              onChange={update('geminiTypstModel')}
-              options={gemini.list}
-              loading={gemini.loading}
-              error={gemini.error}
-              onRefresh={() => fetchGemini(form.googleApiKey)}
-              placeholder={DEFAULTS.geminiTypstModel}
-              listId="dl-gemini-typst"
-            />
           )}
 
           {/* Correzione conservativa dei refusi OCR durante la strutturazione. */}
@@ -400,10 +354,10 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
           </Section>
 
           {/* Pipeline locale: compare solo se almeno una fase la usa, così non
-              ingombra chi lavora solo con le API. */}
-          {(form.ocrEngine === 'local' ||
-            form.typstEngine === 'local' ||
-            form.fixEngine === 'local') && (
+              ingombra chi lavora solo con le API. I MODELLI ora stanno nelle
+              righe di fase; qui restano i due indirizzi, che sono di macchina
+              e non di fase. */}
+          {usesLocal && (
             <Section title="Pipeline locale" note="Nessuna chiave, nessuna quota.">
               <p className="text-xs leading-relaxed text-faint">
                 L’OCR locale riconosce i glifi velocissimo ma non capisce la
@@ -411,25 +365,15 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 troncate, con gli stessi guard usati per Gemini. Serve Ollama in
                 esecuzione (e il sidecar OCR, se scegli l’OCR locale).
               </p>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field
-                  label="Endpoint LLM locale"
-                  hint="Ollama espone l’API OpenAI su questa porta."
-                  value={form.localEndpoint}
-                  onChange={update('localEndpoint')}
-                  placeholder={DEFAULTS.localEndpoint}
-                  mono
-                />
-                <Field
-                  label="Modello locale"
-                  hint="Consigliato qwen3:8b — multilingue, entra in 10 GB."
-                  value={form.localModel}
-                  onChange={update('localModel')}
-                  placeholder={DEFAULTS.localModel}
-                  mono
-                />
-              </div>
-              {form.ocrEngine === 'local' && (
+              <Field
+                label="Endpoint LLM locale"
+                hint="Ollama espone l’API compatibile OpenAI su questa porta."
+                value={form.localEndpoint}
+                onChange={update('localEndpoint')}
+                placeholder={DEFAULTS.localEndpoint}
+                mono
+              />
+              {ocrEngine === 'local' && (
                 <Field
                   label="Endpoint sidecar OCR"
                   hint="Il servizio Python che incapsula Nemotron OCR v2 (vedi tools/local-ocr)."
@@ -454,90 +398,6 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 placeholder={DEFAULTS.nvidiaEndpoint}
                 mono
               />
-              <ModelSelect
-                label="Modello OCR NVIDIA"
-                hint="nvidia/nemotron-parse è il modello di parsing consigliato."
-                value={form.nvidiaModel}
-                onChange={update('nvidiaModel')}
-                options={nvidia.list}
-                loading={nvidia.loading}
-                error={nvidia.error}
-                onRefresh={() => fetchNvidia(form.nvidiaApiKey, form.nvidiaEndpoint)}
-                placeholder={DEFAULTS.nvidiaModel}
-                listId="dl-nvidia-ocr"
-              />
-              {/* Se il motore Typst è Gemini, offri comunque il campo Gemini qui;
-                  se è NVIDIA, offri il modello Gemini di riserva. */}
-              {engineNvidia ? (
-                <ModelSelect
-                  label="Modello Gemini (riserva)"
-                  value={form.geminiTypstModel}
-                  onChange={update('geminiTypstModel')}
-                  options={gemini.list}
-                  loading={gemini.loading}
-                  error={gemini.error}
-                  onRefresh={() => fetchGemini(form.googleApiKey)}
-                  placeholder={DEFAULTS.geminiTypstModel}
-                  listId="dl-gemini-adv"
-                />
-              ) : (
-                <ModelSelect
-                  label="Modello NVIDIA (riserva Typst)"
-                  value={form.nvidiaTypstModel}
-                  onChange={update('nvidiaTypstModel')}
-                  options={nvidia.list}
-                  loading={nvidia.loading}
-                  error={nvidia.error}
-                  onRefresh={() => fetchNvidia(form.nvidiaApiKey, form.nvidiaEndpoint)}
-                  placeholder={DEFAULTS.nvidiaTypstModel}
-                  listId="dl-nvidia-typst-adv"
-                />
-              )}
-              {/* Correzione AI degli errori di compilazione. */}
-              <div>
-                <span className="mb-1.5 block text-sm font-medium text-ink">
-                  Correzioni AI (errori di compilazione)
-                </span>
-                <span className="mb-2 block text-xs text-faint">
-                  Modello forte per il tasto «Correggi con AI»: riceve errore e
-                  solo l’estratto localizzato, restituisce sostituzioni puntiformi.
-                </span>
-                <div className="mb-3 grid gap-2 sm:grid-cols-3">
-                  <EngineButton
-                    active={form.fixEngine === 'nvidia'}
-                    onClick={() => setForm((f) => ({ ...f, fixEngine: 'nvidia' }))}
-                    title="Modello NVIDIA"
-                    sub="es. DeepSeek, GLM, Qwen"
-                  />
-                  <EngineButton
-                    active={form.fixEngine === 'gemini'}
-                    onClick={() => setForm((f) => ({ ...f, fixEngine: 'gemini' }))}
-                    title="Google Gemini"
-                    sub="es. gemini-pro di livello alto"
-                  />
-                  <EngineButton
-                    active={form.fixEngine === 'local'}
-                    onClick={() => setForm((f) => ({ ...f, fixEngine: 'local' }))}
-                    title="Modello locale"
-                    sub="rilettura senza limiti di quota"
-                  />
-                </div>
-                <ModelSelect
-                  label="Modello per le correzioni"
-                  value={form.fixModel}
-                  onChange={update('fixModel')}
-                  options={form.fixEngine === 'gemini' ? gemini.list : nvidia.list}
-                  loading={form.fixEngine === 'gemini' ? gemini.loading : nvidia.loading}
-                  error={form.fixEngine === 'gemini' ? gemini.error : nvidia.error}
-                  onRefresh={() =>
-                    form.fixEngine === 'gemini'
-                      ? fetchGemini(form.googleApiKey)
-                      : fetchNvidia(form.nvidiaApiKey, form.nvidiaEndpoint)
-                  }
-                  placeholder={DEFAULTS.fixModel}
-                  listId="dl-fix"
-                />
-              </div>
               {/* Ingestione dei PDF con testo (vettoriali / già OCR'd). */}
               <div>
                 <span className="mb-1.5 block text-sm font-medium text-ink">
@@ -608,6 +468,21 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                   mono
                 />
               </div>
+              <Field
+                label="Contesto della traduzione"
+                hint={
+                  'Frasi passate prima e dopo ogni passaggio, come contesto non ' +
+                  'traducibile: danno al modello gli antecedenti dei pronomi e la ' +
+                  'resa già scelta per i termini ricorrenti (0–6).'
+                }
+                type="number"
+                min={0}
+                max={6}
+                value={form.translateOverlap}
+                onChange={update('translateOverlap')}
+                placeholder={String(DEFAULTS.translateOverlap)}
+                mono
+              />
             </div>
           </details>
         </div>
@@ -631,6 +506,104 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
     </div>
   );
 }
+
+/**
+ * Una fase, con il suo motore e il suo modello.
+ *
+ * Motore e modello stanno sulla stessa riga perché sono una decisione sola:
+ * separarli — com'era prima, con i motori in alto e i modelli fra le opzioni
+ * avanzate — costringeva a scorrere avanti e indietro per capire cosa stesse
+ * effettivamente girando in quella fase.
+ */
+function PhaseRow({ phase, form, providers, onEngine, onModel }) {
+  const meta = PHASE_META[phase];
+  const { engine, model } = phaseConfig(form, phase);
+  const provider = providers[engine];
+  // L'OCR locale è un sidecar che sceglie da sé il proprio modello: qui non
+  // c'è niente da scegliere, e fingere il contrario confonderebbe.
+  const pickable = engine !== 'local' || meta.localModel !== false;
+
+  return (
+    <div className="rounded-lg border border-border bg-surface-2/40 p-3">
+      <span className="block text-sm font-medium text-ink">{meta.label}</span>
+      <span className="mb-2.5 block text-xs text-faint">{meta.hint}</span>
+      {/* Classe statica: Tailwind non vede le stringhe costruite a runtime,
+          e una `grid-cols-${n}` dinamica non finirebbe nel CSS generato. */}
+      <div className="grid gap-2 sm:grid-cols-3">
+        {meta.engines.map((option) => (
+          <EngineButton
+            key={option}
+            active={engine === option}
+            onClick={() => onEngine(phase, option)}
+            title={ENGINE_TITLES[option]}
+            sub={ENGINE_SUBS[phase]?.[option] || ENGINE_SUBS.default[option]}
+          />
+        ))}
+      </div>
+      {pickable && (
+        <div className="mt-3">
+          <ModelSelect
+            label={`Modello (${ENGINE_TITLES[engine]})`}
+            value={model}
+            onChange={(e) => onModel(phase, engine, e.target.value)}
+            options={provider.list}
+            loading={provider.loading}
+            error={provider.error}
+            onRefresh={provider.refresh}
+            placeholder={PHASE_DEFAULTS[phase].models[engine]}
+            listId={`dl-${phase}-${engine}`}
+          />
+        </div>
+      )}
+      {!pickable && (
+        <p className="mt-2.5 text-xs text-faint">
+          Il modello lo sceglie il sidecar: qui basta il suo indirizzo, più sotto.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const ENGINE_TITLES = {
+  gemini: 'Google Gemini',
+  nvidia: 'NVIDIA',
+  local: 'Locale',
+};
+
+// Il sottotitolo dice cosa cambia SCEGLIENDO quel motore per QUELLA fase: è
+// l'informazione che serve a decidere, e cambia da fase a fase.
+const ENGINE_SUBS = {
+  default: {
+    gemini: 'in rete, chiave Google',
+    nvidia: 'in rete, chiave NVIDIA',
+    local: 'sulla tua macchina',
+  },
+  ocr: {
+    nvidia: 'estrae figure e tabelle',
+    gemini: 'regge le scansioni peggiori',
+    local: 'sidecar sulla tua GPU',
+  },
+  typst: {
+    gemini: 'veloce, buon layout',
+    nvidia: 'se Gemini è a quota',
+    local: 'senza rete né chiavi',
+  },
+  translate: {
+    gemini: 'economico per molte chiamate',
+    nvidia: 'modelli multilingue grandi',
+    local: 'nessun limite di quota',
+  },
+  proof: {
+    nvidia: 'modelli forti sul testo',
+    gemini: 'buono sull’italiano',
+    local: 'la fase con più chiamate',
+  },
+  fix: {
+    nvidia: 'es. GLM, DeepSeek, Qwen',
+    gemini: 'un Gemini di livello alto',
+    local: 'se il locale sa il Typst',
+  },
+};
 
 /**
  * Gruppo di impostazioni affini. Prima il modale era una lista piatta di

@@ -6,8 +6,7 @@
   locale applica il piano alla fonte canonica immutabile.
 */
 
-import { geminiGenerate } from './gemini.js';
-import { nvidiaChat } from './nvidia.js';
+import { engineChat } from './engines.js';
 import { describeStrictBlocks } from './strict.js';
 
 const ALLOWED = {
@@ -115,30 +114,16 @@ export async function requestStrictLayoutPlan({ settings, markdown, signal }) {
     '"blocks":[{"id":"b-1","style":"quote"}],' +
     '"headings":[{"id":"b-2","level":2}]}';
 
-  let text;
-  if (settings.typstEngine === 'nvidia') {
-    text = await nvidiaChat({
-      apiKey: settings.nvidiaApiKey,
-      endpoint: settings.nvidiaEndpoint,
-      model: settings.nvidiaTypstModel,
-      system,
-      user,
-      temperature: 0,
-      maxTokens: 2048,
-      signal,
-    });
-  } else {
-    text = await geminiGenerate({
-      apiKey: settings.googleApiKey,
-      model: settings.geminiTypstModel,
-      system,
-      user,
-      temperature: 0,
-      maxTokens: 2048,
-      json: true,
-      signal,
-    });
-  }
+  const text = await engineChat({
+    settings,
+    phase: 'typst',
+    system,
+    user,
+    temperature: 0,
+    maxTokens: 2048,
+    json: true,
+    signal,
+  });
   return validatePlan(parseJson(text), descriptors);
 }
 
@@ -165,30 +150,16 @@ export async function requestStrictDifferenceReview({ settings, issues, signal }
     }))) +
     '\n\nFormato: {"items":[{"id":"diff-1","classification":"real_omission",' +
     '"explanation":"…"}]}';
-  let text;
-  if (settings.typstEngine === 'nvidia') {
-    text = await nvidiaChat({
-      apiKey: settings.nvidiaApiKey,
-      endpoint: settings.nvidiaEndpoint,
-      model: settings.nvidiaTypstModel,
-      system,
-      user,
-      temperature: 0,
-      maxTokens: 2048,
-      signal,
-    });
-  } else {
-    text = await geminiGenerate({
-      apiKey: settings.googleApiKey,
-      model: settings.geminiTypstModel,
-      system,
-      user,
-      temperature: 0,
-      maxTokens: 2048,
-      json: true,
-      signal,
-    });
-  }
+  const text = await engineChat({
+    settings,
+    phase: 'typst',
+    system,
+    user,
+    temperature: 0,
+    maxTokens: 2048,
+    json: true,
+    signal,
+  });
   const parsed = parseJson(text);
   const allowedIds = new Set(issues.map((i) => i.id));
   const classes = new Set(['real_omission', 'extraction_artifact', 'uncertain']);
@@ -217,30 +188,16 @@ export async function requestStrictPassageRepair({ settings, issue, context, sig
     `FONTE OCR CANONICA:\n${issue.source}\n\nPASSAGGIO PDF/TYPST:\n${issue.rendered}\n\n` +
     'Formato: {"choice":"artifact|canonical|proposal","text":"passaggio completo",' +
     '"explanation":"spiegazione breve"}';
-  let text;
-  if (settings.fixEngine === 'gemini') {
-    text = await geminiGenerate({
-      apiKey: settings.googleApiKey,
-      model: settings.fixModel,
-      system,
-      user,
-      temperature: 0,
-      maxTokens: 4096,
-      json: true,
-      signal,
-    });
-  } else {
-    text = await nvidiaChat({
-      apiKey: settings.nvidiaApiKey,
-      endpoint: settings.nvidiaEndpoint,
-      model: settings.fixModel,
-      system,
-      user,
-      temperature: 0,
-      maxTokens: 4096,
-      signal,
-    });
-  }
+  const text = await engineChat({
+    settings,
+    phase: 'proof',
+    system,
+    user,
+    temperature: 0,
+    maxTokens: 4096,
+    json: true,
+    signal,
+  });
   const parsed = parseJson(text);
   const choice = ['artifact', 'canonical', 'proposal'].includes(parsed?.choice)
     ? parsed.choice

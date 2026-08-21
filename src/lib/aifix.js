@@ -10,7 +10,7 @@
   Così il contenuto resta intatto e la modifica è verificabile.
 */
 
-import { engineChat, modelFor } from './engines.js';
+import { engineChat } from './engines.js';
 
 export const FIX_SYSTEM =
   'Sei un esperto del linguaggio di impaginazione Typst (versione 0.13). ' +
@@ -179,7 +179,7 @@ export function applyFixes(code, fixes, options = {}) {
 /**
  * Chiede al modello configurato le correzioni per un errore di compilazione.
  * @param {object} p
- * @param {object} p.settings  impostazioni correnti (chiavi, fixEngine, fixModel)
+ * @param {object} p.settings  impostazioni correnti (chiavi e fase «fix»)
  * @param {string} p.code      codice Typst che non compila
  * @param {string} p.error     messaggio d'errore (già leggibile)
  * @param {AbortSignal} [p.signal]
@@ -203,7 +203,6 @@ export async function requestTypstFix({ settings, code, error, hint, signal }) {
 }
 
 async function requestOnce({ settings, code, error, hint, signal }) {
-  const engine = settings.fixEngine || 'nvidia';
   // L'estratto centrato sulla diagnostica (invece del documento intero) tiene
   // la richiesta piccola anche su libri: `scope` dice poi ad applyFixes dove
   // può cercare le sostituzioni, così non toccano righe fuori dall'estratto.
@@ -211,8 +210,7 @@ async function requestOnce({ settings, code, error, hint, signal }) {
   const user = buildFixUser(code, error, hint, excerpt);
   const text = await engineChat({
     settings,
-    engine,
-    model: modelFor(settings, engine, settings.fixModel),
+    phase: 'fix',
     system: FIX_SYSTEM,
     user,
     temperature: 0.1,

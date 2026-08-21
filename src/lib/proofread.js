@@ -19,7 +19,7 @@
   vengono saltati e lasciati identici.
 */
 
-import { engineChat, modelFor, contextBlock } from './engines.js';
+import { engineChat, contextBlock } from './engines.js';
 import { extractJson } from './aifix.js';
 import { loadSpeller } from './spell.js';
 
@@ -246,8 +246,7 @@ export async function requestProofread({ settings, paragraphs, signal }) {
 
   const text = await engineChat({
     settings,
-    engine: settings.fixEngine,
-    model: modelFor(settings, settings.fixEngine, settings.fixModel),
+    phase: 'proof',
     system: withContext(SYSTEM, settings),
     user,
     temperature: 0,
@@ -282,8 +281,7 @@ export async function requestCorrectionReview({ settings, before, after, context
     '"text":"testo esatto scelto o proposto","explanation":"spiegazione breve"}';
   const text = await engineChat({
     settings,
-    engine: settings.fixEngine,
-    model: modelFor(settings, settings.fixEngine, settings.fixModel),
+    phase: 'proof',
     system: withContext(SYSTEM, settings),
     user,
     temperature: 0,

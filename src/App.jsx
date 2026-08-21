@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadSettings, saveSettings } from './lib/storage.js';
+import { requiredKeys } from './lib/phases.js';
 import { formatBytes } from './lib/files.js';
 import { usePipeline } from './hooks/usePipeline.js';
 import { initNativeShell, onBackButton, setNativeTheme } from './lib/native.js';
@@ -16,6 +17,7 @@ import FidelityPanel from './components/FidelityPanel.jsx';
 import StrictReportPanel from './components/StrictReportPanel.jsx';
 import SpellPanel from './components/SpellPanel.jsx';
 import OcrTextPanel from './components/OcrTextPanel.jsx';
+import TranslatePanel from './components/TranslatePanel.jsx';
 import SessionsList from './components/SessionsList.jsx';
 import {
   IconSettings,
@@ -30,6 +32,12 @@ import {
   IconSun,
   IconMoon,
 } from './components/Icons.jsx';
+
+/** Le chiavi richieste dalla configurazione sono tutte presenti. */
+function hasRequiredKeys(settings) {
+  const need = requiredKeys(settings);
+  return Boolean((!need.nvidia || settings.nvidiaApiKey) && (!need.google || settings.googleApiKey));
+}
 
 function initialTheme() {
   try {
@@ -68,22 +76,10 @@ export default function App() {
     setNativeTheme(theme);
   }, [theme]);
 
-  // Chiave Google richiesta se Gemini è motore OCR o motore Typst; chiave
-  // NVIDIA richiesta se NVIDIA è motore OCR o motore Typst.
-  const needsGoogle =
-    settings.ocrEngine === 'gemini' ||
-    settings.typstEngine === 'gemini' ||
-    (settings.formatWorkflow === 'strict' && settings.compareOcr) ||
-    (settings.ocrEngine !== 'gemini' && settings.refineTables) ||
-    (settings.formatWorkflow === 'strict' && settings.fixTypos && settings.fixEngine === 'gemini');
-  const needsNvidia =
-    settings.ocrEngine === 'nvidia' ||
-    settings.typstEngine === 'nvidia' ||
-    (settings.formatWorkflow === 'strict' && settings.compareOcr) ||
-    (settings.formatWorkflow === 'strict' && settings.fixTypos && settings.fixEngine === 'nvidia');
-  const keysReady = Boolean(
-    (!needsNvidia || settings.nvidiaApiKey) && (!needsGoogle || settings.googleApiKey),
-  );
+  // Quali chiavi servono dipende da quali motori usano le fasi che partono da
+  // sole: la regola vive in phases.js, così interfaccia e pipeline non possono
+  // dare risposte diverse.
+  const keysReady = hasRequiredKeys(settings);
 
   // Anteprima locale (thumbnail) del file sorgente.
   useEffect(() => {
@@ -114,26 +110,26 @@ export default function App() {
     [keysReady, pipe],
   );
 
+  // Le lingue si scelgono dove si traduce, non nelle impostazioni: restano
+  // comunque impostazioni salvate, così il documento successivo le ritrova.
+  const changeLanguages = useCallback(
+    (patch) => {
+      setSettings((prev) => {
+        const next = { ...prev, ...patch };
+        saveSettings(next);
+        return next;
+      });
+    },
+    [],
+  );
+
   const handleSaveSettings = useCallback(
     (next) => {
       saveSettings(next);
       setSettings(next);
       // Se un file era in attesa delle chiavi, avvia ora la pipeline — ma solo
       // se le chiavi effettivamente richieste dalla nuova configurazione ci sono.
-      const nextNeedsGoogle =
-        next.ocrEngine === 'gemini' ||
-        next.typstEngine === 'gemini' ||
-        (next.formatWorkflow === 'strict' && next.compareOcr) ||
-        (next.ocrEngine !== 'gemini' && next.refineTables) ||
-        (next.formatWorkflow === 'strict' && next.fixTypos && next.fixEngine === 'gemini');
-      const nextNeedsNvidia =
-        next.ocrEngine === 'nvidia' ||
-        next.typstEngine === 'nvidia' ||
-        (next.formatWorkflow === 'strict' && next.compareOcr) ||
-        (next.formatWorkflow === 'strict' && next.fixTypos && next.fixEngine === 'nvidia');
-      const nextReady =
-        (!nextNeedsNvidia || next.nvidiaApiKey) && (!nextNeedsGoogle || next.googleApiKey);
-      if (file && nextReady && pipe.phase === 'idle') {
+      if (file && hasRequiredKeys(next) && pipe.phase === 'idle') {
         lastCompiledRef.current = '';
         pipe.runPipeline(file);
       }
@@ -295,6 +291,9 @@ export default function App() {
             previewUrl={previewUrl}
             pipe={pipe}
             fixTypos={settings.fixTypos}
+            sourceLang={settings.sourceLang}
+            targetLang={settings.targetLang}
+            onLanguageChange={changeLanguages}
             livePreview={livePreview}
             onToggleLive={() => setLivePreview((v) => !v)}
             onCompile={manualCompile}
@@ -478,6 +477,9 @@ function Workspace({
   previewUrl,
   pipe,
   fixTypos,
+  sourceLang,
+  targetLang,
+  onLanguageChange,
   livePreview,
   onToggleLive,
   onCompile,
@@ -548,6 +550,12 @@ function Workspace({
     const res = await pipe.proofreadAI();
     setAutofixMsg(res?.message || null);
     setTimeout(() => setAutofixMsg(null), 18000);
+  }, [pipe]);
+
+  const handleTranslate = useCallback(async () => {
+    const res = await pipe.translateSession();
+    setAutofixMsg(res?.message || null);
+    setTimeout(() => setAutofixMsg(null), 20000);
   }, [pipe]);
 
   // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
@@ -708,6 +716,15 @@ function Workspace({
             />
           )}
           <OcrTextPanel text={pipe.rawText} styleHint={styleHint} fixTypos={fixTypos} />
+          <TranslatePanel
+            sourceLang={sourceLang}
+            targetLang={targetLang}
+            onLanguageChange={onLanguageChange}
+            onTranslate={handleTranslate}
+            busy={pipe.translateBusy}
+            detail={pipe.translateDetail}
+            disabled={pipe.phase === 'running'}
+          />
         </div>
       )}
 
