@@ -6,7 +6,7 @@
   delle immagini) in modo asincrono, con capienza molto maggiore, sia su web
   sia nella WebView Android di Capacitor.
 
-  Due object store:
+  Cinque object store:
     - `session`: metadati testuali (chunk, corpi Typst, preambolo, outline).
       Riscritto a ogni chunk completato (leggero).
     - `figure`: byte delle immagini ritagliate. Scritti una sola volta.
@@ -184,6 +184,29 @@ export async function savePart(id, index, text) {
   }
 }
 
+/** Importa più parti OCR in una sola transazione. */
+export async function saveParts(id, parts) {
+  const records = (parts || [])
+    .map((text, index) => ({ text, index }))
+    .filter((item) => typeof item.text === 'string' && item.text.length > 0);
+  if (!records.length) return;
+  try {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const t = db.transaction('part', 'readwrite');
+      const os = t.objectStore('part');
+      for (const item of records) {
+        os.put({ key: `${id}::${item.index}`, id, index: item.index, text: item.text });
+      }
+      t.oncomplete = () => resolve();
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error);
+    });
+  } catch {
+    /* la sessione resta comunque importabile senza cache OCR */
+  }
+}
+
 /**
  * Parti OCR salvate, come array indicizzato per pagina.
  * @returns {Promise<Array<string|null>>}
@@ -321,6 +344,32 @@ export async function savePages(id, dataUrls, onProgress) {
     }
   } catch {
     /* persistenza non disponibile: l'OCR resta comunque in memoria */
+  }
+}
+
+/** Importa pagine indicizzate, anche quando l’insieme contiene dei buchi. */
+export async function savePageRecords(id, pages) {
+  const records = (pages || []).filter(
+    (page) => Number.isInteger(page?.index) && typeof page.dataUrl === 'string',
+  );
+  if (!records.length) return;
+  const BATCH = 10;
+  try {
+    const db = await openDB();
+    for (let start = 0; start < records.length; start += BATCH) {
+      await new Promise((resolve, reject) => {
+        const t = db.transaction('page', 'readwrite');
+        const os = t.objectStore('page');
+        for (const page of records.slice(start, start + BATCH)) {
+          os.put({ key: `${id}::${page.index}`, id, index: page.index, dataUrl: page.dataUrl });
+        }
+        t.oncomplete = () => resolve();
+        t.onerror = () => reject(t.error);
+        t.onabort = () => reject(t.error);
+      });
+    }
+  } catch {
+    /* la sessione resta comunque importabile senza cache pagine */
   }
 }
 

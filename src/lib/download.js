@@ -12,6 +12,8 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
+import { isDesktopPdfArtifact, saveDesktopPdf } from './desktop.js';
+import { projectArchiveMime } from './projectArchive.js';
 
 // Plugin locale Android (android/.../SaveFilePlugin.java): ACTION_CREATE_DOCUMENT.
 const SaveFile = registerPlugin('SaveFile');
@@ -27,6 +29,18 @@ function bytesToBase64(bytes) {
 
 const withPdfExt = (name) => (name.endsWith('.pdf') ? name : `${name}.pdf`);
 
+function downloadBytes(bytes, name, mime) {
+  const blob = new Blob([bytes], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
 /**
  * Salva il PDF sul dispositivo.
  * - Web: download classico via blob.
@@ -37,6 +51,12 @@ const withPdfExt = (name) => (name.endsWith('.pdf') ? name : `${name}.pdf`);
  */
 export async function savePdf(bytes, fileName) {
   const name = withPdfExt(fileName);
+
+  if (isDesktopPdfArtifact(bytes)) {
+    const result = await saveDesktopPdf(bytes, name);
+    if (result) return result;
+    throw new Error('Il bridge desktop non è disponibile per salvare il PDF.');
+  }
 
   if (Capacitor.isNativePlatform()) {
     try {
@@ -54,15 +74,28 @@ export async function savePdf(bytes, fileName) {
   }
 
   // Web: download classico via blob.
-  const blob = new Blob([bytes], { type: 'application/pdf' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  downloadBytes(bytes, name, 'application/pdf');
+  return {};
+}
+
+/** Salva un progetto portatile `.scanconverter` con il dialogo disponibile. */
+export async function saveProjectArchive(bytes, fileName) {
+  const name = fileName.endsWith('.scanconverter') ? fileName : `${fileName}.scanconverter`;
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await SaveFile.save({
+        name,
+        mime: projectArchiveMime,
+        data: bytesToBase64(bytes),
+      });
+      return {};
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (/cancel/i.test(msg)) return { cancelled: true };
+      throw new Error(`Esportazione non riuscita: ${msg}`);
+    }
+  }
+  downloadBytes(bytes, name, projectArchiveMime);
   return {};
 }
 
@@ -74,6 +107,10 @@ export async function savePdf(bytes, fileName) {
  */
 export async function sharePdf(bytes, fileName) {
   const name = withPdfExt(fileName);
+
+  // macOS/Windows usano il dialogo nativo "Salva con nome" senza riportare
+  // il PDF nel renderer. Il foglio Share resta specifico di Capacitor.
+  if (isDesktopPdfArtifact(bytes)) return savePdf(bytes, name);
 
   if (!Capacitor.isNativePlatform()) return savePdf(bytes, fileName);
 

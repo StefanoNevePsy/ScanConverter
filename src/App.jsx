@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadSettings, saveSettings } from './lib/storage.js';
 import { formatBytes } from './lib/files.js';
 import { usePipeline } from './hooks/usePipeline.js';
-import { initNativeShell, onBackButton } from './lib/native.js';
+import { initNativeShell, onBackButton, setNativeTheme } from './lib/native.js';
 import { getSharedFile, onSharedFile } from './lib/incoming.js';
 import SettingsModal from './components/SettingsModal.jsx';
 import Dropzone from './components/Dropzone.jsx';
@@ -25,7 +25,21 @@ import {
   IconCheck,
   IconX,
   IconArrowLeft,
+  IconDownload,
+  IconUpload,
+  IconSun,
+  IconMoon,
 } from './components/Icons.jsx';
+
+function initialTheme() {
+  try {
+    const stored = localStorage.getItem('scanconverter:theme');
+    if (stored === 'light' || stored === 'dark') return stored;
+  } catch {
+    /* storage non disponibile */
+  }
+  return globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
 
 export default function App() {
   const [settings, setSettings] = useState(loadSettings);
@@ -33,10 +47,26 @@ export default function App() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [livePreview, setLivePreview] = useState(false);
+  const [projectNotice, setProjectNotice] = useState(null);
+  const [theme, setTheme] = useState(initialTheme);
 
   const pipe = usePipeline(settings);
   const lastCompiledRef = useRef('');
   const previewUrlRef = useRef(null);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute(
+      'content',
+      theme === 'dark' ? '#10110f' : '#f0eee8',
+    );
+    try {
+      localStorage.setItem('scanconverter:theme', theme);
+    } catch {
+      /* preferenza non persistibile */
+    }
+    setNativeTheme(theme);
+  }, [theme]);
 
   // Chiave Google richiesta se Gemini è motore OCR o motore Typst; chiave
   // NVIDIA richiesta se NVIDIA è motore OCR o motore Typst.
@@ -159,6 +189,41 @@ export default function App() {
     [pipe],
   );
 
+  const exportProject = useCallback(async (summary = null) => {
+    setProjectNotice(null);
+    try {
+      const result = await pipe.exportProject(summary);
+      if (!result.cancelled) {
+        setProjectNotice({
+          kind: 'success',
+          text: `Progetto esportato: ${result.fileName} · ${result.figures} figure${result.pages ? ` · ${result.pages} pagine da riprendere` : ''}.`,
+        });
+      }
+    } catch (error) {
+      setProjectNotice({ kind: 'error', text: error.message || 'Esportazione non riuscita.' });
+    }
+  }, [pipe]);
+
+  const importProject = useCallback(async (projectFile) => {
+    setProjectNotice(null);
+    try {
+      const meta = await pipe.importProject(projectFile);
+      if (meta.status === 'ocr' && !keysReady) {
+        setProjectNotice({
+          kind: 'success',
+          text: `“${meta.fileName}” importato. Configura le chiavi API, poi riprendilo dall’elenco.`,
+        });
+        return;
+      }
+      setFile({ name: meta.fileName || 'documento', size: 0, type: '' });
+      lastCompiledRef.current = '';
+      await pipe.openSession(meta);
+      setProjectNotice({ kind: 'success', text: `Progetto “${meta.fileName}” importato.` });
+    } catch (error) {
+      setProjectNotice({ kind: 'error', text: error.message || 'Importazione non riuscita.' });
+    }
+  }, [keysReady, pipe]);
+
   const hasWorkspace = file && pipe.phase !== 'idle';
 
   // Gestione del tasto/gesture "indietro" di Android. Un ref tiene sempre
@@ -206,6 +271,8 @@ export default function App() {
         onDashboard={hasWorkspace ? startOver : null}
         status={pipe.status}
         running={pipe.phase === 'running'}
+        theme={theme}
+        onToggleTheme={() => setTheme((value) => value === 'light' ? 'dark' : 'light')}
       />
 
       <main className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
@@ -217,6 +284,10 @@ export default function App() {
             sessions={pipe.sessions}
             onOpenSession={openSavedSession}
             onDeleteSession={pipe.deleteSavedSession}
+            onExportSession={exportProject}
+            onImportProject={importProject}
+            projectBusy={pipe.projectBusy}
+            projectNotice={projectNotice}
           />
         ) : (
           <Workspace
@@ -230,6 +301,9 @@ export default function App() {
             onDownload={download}
             onStartOver={startOver}
             onRetry={() => pipe.runPipeline(file)}
+            onExportProject={() => exportProject(null)}
+            projectBusy={pipe.projectBusy}
+            projectNotice={projectNotice}
           />
         )}
       </main>
@@ -246,10 +320,10 @@ export default function App() {
 
 /* ---------------------------------------------------------------- Top bar */
 
-function TopBar({ keysReady, onOpenSettings, onDashboard, status, running }) {
+function TopBar({ keysReady, onOpenSettings, onDashboard, status, running, theme, onToggleTheme }) {
   return (
     <header
-      className="safe-top sticky top-0 border-b border-border bg-bg/80 backdrop-blur-md"
+      className="safe-top scan-topbar sticky top-0"
       style={{ zIndex: 'var(--z-sticky)' }}
     >
       <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
@@ -257,22 +331,20 @@ function TopBar({ keysReady, onOpenSettings, onDashboard, status, running }) {
           {onDashboard && (
             <button
               onClick={onDashboard}
-              aria-label="Torna alla dashboard"
-              title="Torna alla dashboard"
+              aria-label="Torna alla home"
+              title="Torna alla home"
               className="grid size-9 shrink-0 place-items-center rounded-lg border border-border bg-surface text-muted transition-colors hover:bg-surface-2 hover:text-ink"
             >
               <IconArrowLeft width={18} height={18} />
             </button>
           )}
-          <span className="grid size-9 place-items-center rounded-xl bg-primary-soft text-lg">
-            📜
-          </span>
+          <BrandMark />
           <div className="leading-tight">
-            <h1 className="text-[15px] font-semibold tracking-tight text-ink">
+            <h1 className="brand-wordmark">
               ScanConverter
             </h1>
-            <p className="hidden text-xs text-muted sm:block">
-              Fotocopia → OCR → Typst → PDF vettoriale
+            <p className="hidden text-[11px] text-muted sm:block">
+              Scansione · testo · pagina
             </p>
           </div>
         </div>
@@ -285,14 +357,24 @@ function TopBar({ keysReady, onOpenSettings, onDashboard, status, running }) {
             </span>
           )}
           <button
+            type="button"
+            onClick={onToggleTheme}
+            className="topbar-icon-button"
+            aria-label={theme === 'light' ? 'Attiva il tema scuro' : 'Attiva il tema chiaro'}
+            title={theme === 'light' ? 'Tema scuro' : 'Tema chiaro'}
+          >
+            {theme === 'light' ? <IconMoon width={16} height={16} /> : <IconSun width={16} height={16} />}
+          </button>
+          <button
             onClick={onOpenSettings}
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface-2"
+            className="topbar-settings"
+            aria-label={`Apri impostazioni. ${keysReady ? 'Chiavi API configurate' : 'Chiavi API mancanti'}`}
           >
             <IconSettings width={16} height={16} />
             <span className="hidden sm:inline">Impostazioni</span>
             <span
               className={`size-2 rounded-full ${keysReady ? 'bg-success' : 'bg-warning'}`}
-              title={keysReady ? 'Chiavi API configurate' : 'Chiavi API mancanti'}
+              aria-hidden="true"
             />
           </button>
         </div>
@@ -303,7 +385,18 @@ function TopBar({ keysReady, onOpenSettings, onDashboard, status, running }) {
 
 /* ---------------------------------------------------------------- Landing */
 
-function Landing({ keysReady, onFile, onOpenSettings, sessions, onOpenSession, onDeleteSession }) {
+function Landing({
+  keysReady,
+  onFile,
+  onOpenSettings,
+  sessions,
+  onOpenSession,
+  onDeleteSession,
+  onExportSession,
+  onImportProject,
+  projectBusy,
+  projectNotice,
+}) {
   // Chi torna ha già letto la spiegazione: quando c'è lavoro in sospeso la
   // pagina guida alla ripresa, e «riprendi» e «nuovo documento» stanno
   // affiancate come azioni di pari grado invece che impilate.
@@ -319,14 +412,14 @@ function Landing({ keysReady, onFile, onOpenSettings, sessions, onOpenSession, o
       }`}
     >
       <header className={hasSessions ? 'mb-6' : 'mb-10 text-center'}>
-        <h2 className="text-balance text-2xl font-semibold tracking-tight text-ink sm:text-[28px]">
+        <h2 className="landing-title text-balance text-ink">
           {hasSessions ? 'Riprendi o inizia un documento' : 'Ridà vita ai documenti accademici'}
         </h2>
         {!hasSessions && (
           <p className="mx-auto mt-3 max-w-xl text-pretty text-[15px] leading-relaxed text-muted">
-            Carica una pagina scansionata: la estraiamo con Nemotron-Parse, la
-            re-impaginiamo in Typst con Gemini e la compiliamo in un PDF
-            vettoriale pulito — con margini ampi pronti per le tue annotazioni.
+            Carica scansioni, dispense o un libro completo. L’app estrae il testo,
+            ricostruisce un sorgente Typst modificabile e compila un PDF vettoriale
+            pulito — con uno stato che puoi interrompere, esportare e riprendere.
           </p>
         )}
       </header>
@@ -344,12 +437,20 @@ function Landing({ keysReady, onFile, onOpenSettings, sessions, onOpenSession, o
         </button>
       )}
 
+      {projectNotice && <ProjectNotice notice={projectNotice} />}
+
+      <div className="mb-5 flex items-center justify-end">
+        <ProjectImportButton onImport={onImportProject} busy={projectBusy === 'import'} />
+      </div>
+
       <div className={hasSessions ? 'grid gap-5 lg:grid-cols-[1.15fr_1fr] lg:items-start' : ''}>
         {hasSessions && (
           <SessionsList
             sessions={sessions}
             onOpen={onOpenSession}
             onDelete={onDeleteSession}
+            onExport={onExportSession}
+            exportBusy={projectBusy === 'export'}
           />
         )}
         <Dropzone onFile={onFile} />
@@ -360,10 +461,10 @@ function Landing({ keysReady, onFile, onOpenSettings, sessions, onOpenSession, o
           schede identiche che ripetono la stessa forma. */}
       {!hasSessions && (
         <p className="mt-8 text-center text-[13px] leading-relaxed text-faint">
-          <span className="text-muted">Nemotron-Parse</span> legge titoli, note e
-          tabelle · <span className="text-muted">Gemini</span> ricostruisce
-          l’impaginazione in Typst · <span className="text-muted">Typst WASM</span>{' '}
-          compila il PDF, tutto nel tuo browser
+          <span className="text-muted">OCR strutturato</span> legge titoli, note e
+          tabelle · <span className="text-muted">Motore di layout</span> ricostruisce
+          l’impaginazione in Typst · <span className="text-muted">Typst locale</span>{' '}
+          compila e diagnostica senza server intermedi
         </p>
       )}
     </div>
@@ -383,6 +484,9 @@ function Workspace({
   onDownload,
   onStartOver,
   onRetry,
+  onExportProject,
+  projectBusy,
+  projectNotice,
 }) {
   const doneCount = useMemo(
     () => Object.values(pipe.status).filter((s) => s === 'done').length,
@@ -481,21 +585,33 @@ function Workspace({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={onExportProject}
+            disabled={!!projectBusy}
+            aria-label="Esporta progetto"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface-2 disabled:opacity-50"
+            title="Esporta sorgente, stato, figure e pagine ancora da elaborare"
+          >
+            {projectBusy === 'export' ? <span className="size-3.5 animate-spin rounded-full border border-current border-r-transparent" /> : <IconDownload width={15} height={15} />}
+            <span className="hidden xl:inline">Esporta progetto</span>
+          </button>
           <label className="mr-1 flex cursor-pointer items-center gap-2 text-xs text-muted">
             <span className="hidden sm:inline">Anteprima live</span>
             <span className="relative inline-flex">
               <input
                 type="checkbox"
+                aria-label="Attiva anteprima live"
                 checked={livePreview}
                 onChange={onToggleLive}
                 className="peer sr-only"
               />
-              <span className="h-5 w-9 rounded-full bg-surface-3 transition-colors peer-checked:bg-primary" />
+              <span className="h-5 w-9 rounded-full bg-surface-3 transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary peer-checked:bg-primary" />
               <span className="absolute left-0.5 top-0.5 size-4 rounded-full bg-ink transition-transform peer-checked:translate-x-4" />
             </span>
           </label>
           <button
             onClick={onStartOver}
+            aria-label="Nuovo documento"
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-ink"
           >
             <IconX width={15} height={15} />
@@ -504,6 +620,7 @@ function Workspace({
           <button
             onClick={onRetry}
             disabled={pipe.phase === 'running'}
+            aria-label="Rielabora documento"
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface-2 disabled:opacity-50"
           >
             <IconRefresh width={15} height={15} />
@@ -511,6 +628,8 @@ function Workspace({
           </button>
         </div>
       </div>
+
+      {projectNotice && <ProjectNotice notice={projectNotice} />}
 
       {pipe.error && (
         <div
@@ -576,12 +695,13 @@ function Workspace({
       {/* Strumenti secondari affiancati: due fisarmoniche chiuse impilate
           rubavano due righe intere allo spazio dell'editor, che è il lavoro. */}
       {pipe.rawText && (
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="workspace-tools grid gap-3 lg:grid-cols-2 lg:items-start">
           {!pipe.figureReview && (
             <RestylePanel
               onRestyle={pipe.strictReport ? null : (hint) => pipe.restyle(hint)}
               onApplyLocal={(sel) => pipe.applyLocalStyle(sel)}
               onHintChange={setStyleHint}
+              initialSelection={pipe.layoutOptions}
               busy={pipe.phase === 'running'}
               disabled={pipe.phase === 'running'}
               strict={!!pipe.strictReport}
@@ -641,6 +761,61 @@ function Workspace({
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+function ProjectImportButton({ onImport, busy }) {
+  const inputRef = useRef(null);
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".scanconverter,application/vnd.scanconverter.project+zip,application/zip"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => {
+          const projectFile = event.target.files?.[0];
+          event.target.value = '';
+          if (projectFile) onImport(projectFile);
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={busy}
+        className="button-secondary"
+      >
+        {busy ? <span className="size-3.5 animate-spin rounded-full border border-current border-r-transparent" /> : <IconUpload width={15} height={15} />}
+        {busy ? 'Importazione…' : 'Importa progetto'}
+      </button>
+    </>
+  );
+}
+
+function BrandMark() {
+  return (
+    <span className="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 40 40">
+        <path d="M10 5.5h17l4 4v25H10z" />
+        <path d="M27 5.5v5h4" />
+        <path d="M15 14h10M15 19h11M15 24h8" />
+        <path className="brand-margin" d="M12.5 5.5v29" />
+      </svg>
+    </span>
+  );
+}
+
+function ProjectNotice({ notice }) {
+  return (
+    <div
+      role={notice.kind === 'error' ? 'alert' : 'status'}
+      className={`project-notice ${notice.kind === 'error' ? 'is-error' : 'is-success'}`}
+    >
+      {notice.kind === 'error' ? <IconAlert width={17} height={17} /> : <IconCheck width={17} height={17} />}
+      <span>{notice.text}</span>
     </div>
   );
 }

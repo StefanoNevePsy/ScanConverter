@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { IconRefresh, IconTrash, IconCheck, IconClock, IconFile } from './Icons.jsx';
+import { IconRefresh, IconTrash, IconCheck, IconClock, IconFile, IconDownload } from './Icons.jsx';
 
 /*
   Elenco delle sessioni salvate su IndexedDB: riprendi/riapri o elimina.
@@ -19,13 +19,13 @@ function relTime(ts) {
   return `${d} g fa`;
 }
 
-export default function SessionsList({ sessions, onOpen, onDelete }) {
+export default function SessionsList({ sessions, onOpen, onDelete, onExport, exportBusy }) {
   const [confirmId, setConfirmId] = useState(null);
 
   return (
-    <section className="overflow-hidden rounded-xl border border-border bg-surface/60">
-      <header className="border-b border-border px-4 py-2.5">
-        <h3 className="text-sm font-medium text-ink">
+    <section className="overflow-hidden rounded-xl border border-border-strong bg-surface/60">
+      <header className="border-b border-border-strong px-4 py-3">
+        <h3 className="font-display text-xl font-medium tracking-[-0.02em] text-ink">
           Sessioni salvate{' '}
           <span className="text-faint">({sessions.length})</span>
         </h3>
@@ -42,10 +42,10 @@ export default function SessionsList({ sessions, onOpen, onDelete }) {
             ? `Estrazione OCR · ${done}/${total} pagine`
             : `In sospeso · ${done}/${total} sezioni`;
           return (
-            <li key={s.id} className="flex items-center gap-3 px-4 py-3">
+            <li key={s.id} className="flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-lime-soft">
               <span
-                className={`grid size-9 shrink-0 place-items-center rounded-lg ${
-                  complete ? 'bg-success/15 text-success' : 'bg-primary-soft text-primary'
+                className={`grid size-9 shrink-0 place-items-center ${
+                  complete ? 'bg-success/15 text-success' : 'bg-lime text-[#11110f]'
                 }`}
               >
                 {complete ? (
@@ -85,6 +85,15 @@ export default function SessionsList({ sessions, onOpen, onDelete }) {
                 </div>
               ) : (
                 <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    onClick={() => onExport?.(s)}
+                    disabled={exportBusy}
+                    aria-label={`Esporta ${s.fileName || 'documento'}`}
+                    title="Esporta progetto"
+                    className="rounded-lg p-1.5 text-faint transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+                  >
+                    <IconDownload width={16} height={16} />
+                  </button>
                   <button
                     onClick={() => onOpen(s)}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-ink transition-colors hover:bg-primary-strong"

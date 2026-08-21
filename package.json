@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Digitalizzazione e re-impaginazione di documenti accademici: OCR (Nvidia Nemotron-Parse) → Typst (Google Gemini) → PDF vettoriale (Typst WASM).",
+  "description": "Digitalizzazione e re-impaginazione di documenti accademici: OCR (Nvidia Nemotron-Parse) → Typst (Google Gemini) → PDF vettoriale (Typst nativo/WASM).",
   "author": "ScanConverter",
   "main": "electron/main.cjs",
   "scripts": {
@@ -15,7 +15,11 @@
     "build:android": "vite build && cap sync android",
     "open:android": "cap open android",
     "electron": "electron .",
-    "build:desktop": "vite build && electron-builder"
+    "download:typst": "node scripts/download-typst.mjs",
+    "test:native-engine": "node scripts/smoke-typst-engine.mjs",
+    "test:layout-engine": "node scripts/smoke-layout-options.mjs",
+    "test:desktop-bridge": "node scripts/smoke-electron.mjs",
+    "build:desktop": "npm run download:typst && vite build && electron-builder"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.0",
@@ -24,9 +28,12 @@
     "@capacitor/keyboard": "^8.0.5",
     "@capacitor/share": "^8.0.1",
     "@capacitor/status-bar": "^8.0.2",
+    "@fontsource/barlow-condensed": "^5.3.0",
+    "@fontsource/manrope": "^5.3.0",
     "@myriaddreamin/typst-ts-renderer": "^0.7.0",
     "@myriaddreamin/typst-ts-web-compiler": "^0.7.0",
     "@myriaddreamin/typst.ts": "^0.7.0",
+    "fflate": "^0.8.3",
     "pdfjs-dist": "^6.1.200",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
@@ -53,6 +60,30 @@
       "electron/**/*",
       "dist/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "native/typst",
+        "to": "typst",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "src/assets/fonts",
+        "to": "fonts",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "electron",
+        "to": "native-engine",
+        "filter": [
+          "typst-engine.cjs",
+          "typst-runner.cjs"
+        ]
+      }
     ],
     "mac": {
       "target": [

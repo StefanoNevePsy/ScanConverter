@@ -10,3 +10,9 @@ yarn-error.log*
 # APK di build (consegnato a parte)
 *.apk
 release/
+
+# Binari Typst nativi scaricati in modo riproducibile dalla build desktop.
+native/typst/
+
+# Archivi di lavoro esportati dall'app (possono contenere libri e scansioni).
+*.scanconverter

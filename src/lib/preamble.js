@@ -1,7 +1,6 @@
 /*
-  Costruzione DETERMINISTICA del preambolo Typst dalle scelte di impaginazione,
-  senza interpellare l'LLM. Permette di cambiare font, margini, colonne, ecc.
-  a posteriori sostituendo solo il preambolo del documento già generato.
+  Costruzione DETERMINISTICA del preambolo Typst. Tutti i valori liberi
+  passano da allowlist e limiti numerici prima di entrare nel sorgente.
 */
 
 const FONTS = {
@@ -11,7 +10,7 @@ const FONTS = {
   ptsans: { body: 'PT Sans', head: 'PT Sans' },
   dejavu: { body: 'DejaVu Sans', head: 'DejaVu Sans' },
 };
-// Famiglie selezionabili per i titoli, indipendenti dal corpo.
+
 const HEAD_FAMILIES = {
   dejavu: 'DejaVu Sans',
   ptsans: 'PT Sans',
@@ -19,104 +18,263 @@ const HEAD_FAMILIES = {
   libertinus: 'Libertinus Serif',
   ptserif: 'PT Serif',
 };
-const PAPER = { a4: 'a4', a5: 'a5', letter: 'us-letter' };
-const TEXT_SIZE = { small: '10pt', normal: '11pt', large: '12pt', xlarge: '13pt' };
-const HEADING_SIZE = {
-  small: ['16pt', '13pt', '11.5pt', '10.5pt'],
-  normal: ['17pt', '14pt', '12pt', '11pt'],
-  large: ['19pt', '15.5pt', '13pt', '12pt'],
-  xlarge: ['21pt', '17pt', '14pt', '13pt'],
+
+const PAPER = {
+  a4: 'a4',
+  a5: 'a5',
+  b5: 'iso-b5',
+  letter: 'us-letter',
+  legal: 'us-legal',
 };
+
+const TEXT_SIZE = { small: 10, normal: 11, large: 12, xlarge: 13 };
+const HEADING_SIZE = {
+  small: [16, 13, 11.5, 10.5],
+  normal: [17, 14, 12, 11],
+  large: [19, 15.5, 13, 12],
+  xlarge: [21, 17, 14, 13],
+};
+
+export const DEFAULT_LAYOUT_OPTIONS = Object.freeze({
+  font: 'libertinus',
+  bodySizePt: 11,
+  bodyWeight: 400,
+  language: 'it',
+  trackingPt: 0,
+  hyphenate: false,
+  headfont: 'dejavu',
+  heading1Pt: 17,
+  heading2Pt: 14,
+  heading3Pt: 12,
+  heading4Pt: 11,
+  headingWeight: 700,
+  headingalign: 'left',
+  headingAboveEm: 1.4,
+  headingBelowEm: 0.75,
+  headingNumbering: 'none',
+  paper: 'a4',
+  pageWidthMm: 210,
+  pageHeightMm: 297,
+  orientation: 'portrait',
+  marginMode: 'preset',
+  marginPreset: 'wide',
+  marginTopCm: 2.5,
+  marginRightCm: 4,
+  marginBottomCm: 2.5,
+  marginLeftCm: 2.5,
+  marginInsideCm: 3,
+  marginOutsideCm: 2,
+  binding: 'left',
+  columns: 1,
+  align: 'justify',
+  linebreaks: 'optimized',
+  leadingEm: 0.65,
+  paragraphSpacingEm: 1.1,
+  indentEm: 1.2,
+  indentAll: false,
+  pageNumbering: 'none',
+  pageNumberPosition: 'bottom-center',
+  headerMode: 'none',
+  headerText: '',
+  headerAlign: 'center',
+  headerSizePt: 8.5,
+  figureAlign: 'center',
+  captionPosition: 'bottom',
+  captionSizePt: 9,
+  footnoteSizePt: 9,
+  footnoteGapEm: 0.5,
+});
+
+function clamp(value, fallback, min, max) {
+  const parsed = typeof value === 'number' ? value : Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function rounded(value) {
+  return Number(value.toFixed(3));
+}
+
+function oneOf(value, allowed, fallback) {
+  return allowed.includes(value) ? value : fallback;
+}
+
+function esc(s) {
+  return String(s || '').replace(/\\/gu, '\\\\').replace(/"/gu, '\\"');
+}
 
 /** Estrae il titolo (primo titolo `= …`) dal corpo, per la testatina. */
 export function extractTitle(body) {
-  const m = body.match(/^=\s+(.+)$/m);
-  return m ? m[1].trim() : '';
+  const match = String(body || '').match(/^=\s+(.+)$/mu);
+  return match ? match[1].trim() : '';
 }
 
-/** Escape del testo per inserirlo in una stringa Typst `"..."`. */
-function esc(s) {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-/**
- * Costruisce un preambolo Typst valido dalle selezioni del pannello stile.
- * @param {Record<string,string>} sel  es. { font:'ptserif', paper:'a4', margin:'wide', ... }
- * @param {{title?:string}} [opts]
- * @returns {string}
- */
-export function buildPreamble(sel = {}, opts = {}) {
-  const f = FONTS[sel.font] || FONTS.libertinus;
-  const paper = PAPER[sel.paper] || 'a4';
-  // I titoli seguono la scelta dedicata; "body" = stesso font del corpo;
-  // in assenza di scelta, l'abbinamento predefinito della famiglia del corpo.
-  const headFont =
-    sel.headfont === 'body' ? f.body : HEAD_FAMILIES[sel.headfont] || f.head;
-  // Extra multi-selezione (retro-compatibile con il vecchio valore singolo).
+/** Migra le selezioni a chip precedenti nel nuovo schema numerico. */
+export function normalizeLayoutOptions(selection = {}) {
   const extras = new Set(
-    Array.isArray(sel.extras) ? sel.extras : sel.extras ? [sel.extras] : [],
+    Array.isArray(selection.extras)
+      ? selection.extras
+      : selection.extras
+        ? [selection.extras]
+        : [],
   );
+  const textKey = TEXT_SIZE[selection.textsize] ? selection.textsize : 'normal';
+  const density = selection.density;
+  const legacyIndent = {
+    none: 0,
+    small: 0.7,
+    normal: 1.2,
+    deep: 1.8,
+  }[selection.indent];
+  const legacyMargin = oneOf(selection.margin, ['wide', 'xwide', 'sym', 'narrow'], 'wide');
+  const columns = { one: 1, two: 2, three: 3 }[selection.columns] ?? selection.columns;
+  const headingDefaults = HEADING_SIZE[textKey];
 
-  let margin;
-  if (sel.margin === 'xwide') margin = '(right: 6cm, top: 2.5cm, bottom: 2.5cm, left: 2.5cm)';
-  else if (sel.margin === 'narrow') margin = '2cm';
-  else if (sel.margin === 'sym') margin = '2.5cm';
-  else margin = '(right: 4cm, top: 2.5cm, bottom: 2.5cm, left: 2.5cm)';
+  return {
+    font: oneOf(selection.font, Object.keys(FONTS), DEFAULT_LAYOUT_OPTIONS.font),
+    bodySizePt: rounded(clamp(selection.bodySizePt, TEXT_SIZE[textKey], 8, 24)),
+    bodyWeight: rounded(clamp(selection.bodyWeight, 400, 300, 700)),
+    language: oneOf(selection.language, ['it', 'en', 'fr', 'de', 'es', 'pt'], 'it'),
+    trackingPt: rounded(clamp(selection.trackingPt, 0, -0.2, 1.5)),
+    hyphenate: selection.hyphenate === true || extras.has('hyphenate'),
+    headfont: oneOf(selection.headfont, ['body', ...Object.keys(HEAD_FAMILIES)], 'dejavu'),
+    heading1Pt: rounded(clamp(selection.heading1Pt, headingDefaults[0], 10, 42)),
+    heading2Pt: rounded(clamp(selection.heading2Pt, headingDefaults[1], 9, 36)),
+    heading3Pt: rounded(clamp(selection.heading3Pt, headingDefaults[2], 8, 30)),
+    heading4Pt: rounded(clamp(selection.heading4Pt, headingDefaults[3], 8, 26)),
+    headingWeight: rounded(clamp(selection.headingWeight, 700, 400, 900)),
+    headingalign: oneOf(selection.headingalign, ['left', 'center', 'right'], 'left'),
+    headingAboveEm: rounded(clamp(selection.headingAboveEm, 1.4, 0, 5)),
+    headingBelowEm: rounded(clamp(selection.headingBelowEm, 0.75, 0, 4)),
+    headingNumbering: extras.has('numbered')
+      ? 'decimal'
+      : oneOf(selection.headingNumbering, ['none', 'decimal', 'decimal-dot', 'roman'], 'none'),
+    paper: oneOf(selection.paper, [...Object.keys(PAPER), 'custom'], 'a4'),
+    pageWidthMm: rounded(clamp(selection.pageWidthMm, 210, 80, 500)),
+    pageHeightMm: rounded(clamp(selection.pageHeightMm, 297, 80, 700)),
+    orientation: oneOf(selection.orientation, ['portrait', 'landscape'], 'portrait'),
+    marginMode: oneOf(selection.marginMode, ['preset', 'custom', 'mirrored'], 'preset'),
+    marginPreset: oneOf(selection.marginPreset || legacyMargin, ['wide', 'xwide', 'sym', 'narrow'], 'wide'),
+    marginTopCm: rounded(clamp(selection.marginTopCm, 2.5, 0.5, 12)),
+    marginRightCm: rounded(clamp(selection.marginRightCm, legacyMargin === 'xwide' ? 6 : legacyMargin === 'narrow' ? 2 : legacyMargin === 'sym' ? 2.5 : 4, 0.5, 12)),
+    marginBottomCm: rounded(clamp(selection.marginBottomCm, 2.5, 0.5, 12)),
+    marginLeftCm: rounded(clamp(selection.marginLeftCm, legacyMargin === 'narrow' ? 2 : 2.5, 0.5, 12)),
+    marginInsideCm: rounded(clamp(selection.marginInsideCm, 3, 0.5, 12)),
+    marginOutsideCm: rounded(clamp(selection.marginOutsideCm, 2, 0.5, 12)),
+    binding: oneOf(selection.binding, ['left', 'right'], 'left'),
+    columns: Math.round(clamp(columns, 1, 1, 3)),
+    align: oneOf(selection.align, ['justify', 'ragged'], 'justify'),
+    linebreaks: oneOf(selection.linebreaks, ['optimized', 'simple'], 'optimized'),
+    leadingEm: rounded(clamp(selection.leadingEm, density === 'airy' ? 0.85 : density === 'compact' ? 0.55 : 0.65, 0.35, 2)),
+    paragraphSpacingEm: rounded(clamp(selection.paragraphSpacingEm, density === 'airy' ? 1.4 : density === 'compact' ? 0.8 : 1.1, 0, 4)),
+    indentEm: rounded(clamp(selection.indentEm, extras.has('noindent') ? 0 : legacyIndent ?? 1.2, 0, 5)),
+    indentAll: selection.indentAll === true,
+    pageNumbering: extras.has('pagenums')
+      ? 'arabic'
+      : oneOf(selection.pageNumbering, ['none', 'arabic', 'roman-lower', 'roman-upper'], 'none'),
+    pageNumberPosition: oneOf(selection.pageNumberPosition, ['bottom-left', 'bottom-center', 'bottom-right'], 'bottom-center'),
+    headerMode: extras.has('runninghead')
+      ? 'title'
+      : oneOf(selection.headerMode, ['none', 'title', 'custom'], 'none'),
+    headerText: String(selection.headerText || '').slice(0, 180),
+    headerAlign: oneOf(selection.headerAlign, ['left', 'center', 'right'], 'center'),
+    headerSizePt: rounded(clamp(selection.headerSizePt, 8.5, 6, 16)),
+    figureAlign: oneOf(selection.figureAlign, ['left', 'center', 'right'], 'center'),
+    captionPosition: oneOf(selection.captionPosition, ['top', 'bottom'], 'bottom'),
+    captionSizePt: rounded(clamp(selection.captionSizePt, 9, 6, 16)),
+    footnoteSizePt: rounded(clamp(selection.footnoteSizePt, 9, 6, 16)),
+    footnoteGapEm: rounded(clamp(selection.footnoteGapEm, 0.5, 0, 3)),
+  };
+}
 
-  const pageParts = [`paper: "${paper}"`, `margin: ${margin}`];
-  if (sel.orientation === 'landscape') pageParts.push('flipped: true');
-  if (sel.columns === 'two') pageParts.push('columns: 2');
-  if (sel.columns === 'three') pageParts.push('columns: 3');
-  if (extras.has('pagenums')) pageParts.push('numbering: "1"');
-  if (extras.has('runninghead') && opts.title) {
+function marginValue(options) {
+  if (options.marginMode === 'custom') {
+    return `(top: ${options.marginTopCm}cm, right: ${options.marginRightCm}cm, bottom: ${options.marginBottomCm}cm, left: ${options.marginLeftCm}cm)`;
+  }
+  if (options.marginMode === 'mirrored') {
+    return `(top: ${options.marginTopCm}cm, bottom: ${options.marginBottomCm}cm, inside: ${options.marginInsideCm}cm, outside: ${options.marginOutsideCm}cm)`;
+  }
+  if (options.marginPreset === 'xwide') return '(right: 6cm, top: 2.5cm, bottom: 2.5cm, left: 2.5cm)';
+  if (options.marginPreset === 'narrow') return '2cm';
+  if (options.marginPreset === 'sym') return '2.5cm';
+  return '(right: 4cm, top: 2.5cm, bottom: 2.5cm, left: 2.5cm)';
+}
+
+/** Costruisce un preambolo Typst valido dalle selezioni del pannello stile. */
+export function buildPreamble(selection = {}, opts = {}) {
+  const options = normalizeLayoutOptions(selection);
+  const family = FONTS[options.font];
+  const headFont = options.headfont === 'body'
+    ? family.body
+    : HEAD_FAMILIES[options.headfont] || family.head;
+  const pageParts = [];
+
+  if (options.paper === 'custom') {
+    const width = options.orientation === 'landscape' ? options.pageHeightMm : options.pageWidthMm;
+    const height = options.orientation === 'landscape' ? options.pageWidthMm : options.pageHeightMm;
+    pageParts.push(`width: ${width}mm`, `height: ${height}mm`);
+  } else {
+    pageParts.push(`paper: "${PAPER[options.paper]}"`);
+    if (options.orientation === 'landscape') pageParts.push('flipped: true');
+  }
+  pageParts.push(`margin: ${marginValue(options)}`);
+  if (options.marginMode === 'mirrored') pageParts.push(`binding: ${options.binding}`);
+  if (options.columns > 1) pageParts.push(`columns: ${options.columns}`);
+
+  const pageNumberPatterns = {
+    arabic: '1',
+    'roman-lower': 'i',
+    'roman-upper': 'I',
+  };
+  if (options.pageNumbering !== 'none') {
+    const alignment = {
+      'bottom-left': 'left + bottom',
+      'bottom-center': 'center + bottom',
+      'bottom-right': 'right + bottom',
+    }[options.pageNumberPosition];
+    pageParts.push(`numbering: "${pageNumberPatterns[options.pageNumbering]}"`);
+    pageParts.push(`number-align: ${alignment}`);
+  }
+
+  const headerValue = options.headerMode === 'title'
+    ? opts.title
+    : options.headerMode === 'custom'
+      ? options.headerText
+      : '';
+  if (headerValue) {
     pageParts.push(
-      `header: align(center)[#text(size: 9pt, style: "italic", fill: luma(90))[${
-        // titolo come contenuto: usa testo grezzo escapando le parentesi quadre
-        opts.title.replace(/([\[\]])/g, '\\$1')
-      }]]`,
+      `header: align(${options.headerAlign}, text("${esc(headerValue)}", size: ${options.headerSizePt}pt, style: "italic", fill: luma(35%)))`,
     );
   }
 
-  const justify = sel.align === 'ragged' ? 'false' : 'true';
-  const leading = sel.density === 'airy' ? '0.85em' : sel.density === 'compact' ? '0.55em' : '0.65em';
-  const spacing = sel.density === 'airy' ? '1.4em' : sel.density === 'compact' ? '0.8em' : '1.1em';
-  const indent = extras.has('noindent') || sel.indent === 'none'
-    ? '0em'
-    : sel.indent === 'small'
-      ? '0.7em'
-      : sel.indent === 'deep'
-        ? '1.8em'
-        : '1.2em';
-  const sizeKey = TEXT_SIZE[sel.textsize] ? sel.textsize : 'normal';
-  const headingSizes = HEADING_SIZE[sizeKey];
-  const textOptions = [
-    `font: "${esc(f.body)}"`,
-    `size: ${TEXT_SIZE[sizeKey]}`,
-    'lang: "it"',
-    // Typst può sillabare automaticamente in base alla lingua. La scelta
-    // predefinita dell'app è esplicitamente NO: si abilita solo dall'opzione
-    // «Sillabazione» nel pannello di impaginazione.
-    `hyphenate: ${extras.has('hyphenate') ? 'true' : 'false'}`,
-  ];
+  const indent = options.indentAll
+    ? `(amount: ${options.indentEm}em, all: true)`
+    : `${options.indentEm}em`;
+  const headingNumbering = {
+    decimal: '1.1',
+    'decimal-dot': '1.1.',
+    roman: 'I.1',
+  }[options.headingNumbering];
 
   const lines = [
     `#set page(${pageParts.join(', ')})`,
-    `#set text(${textOptions.join(', ')})`,
-    // Scala tipografica ESPLICITA per livello: gerarchia visiva coerente
-    // qualunque sia il font scelto per i titoli.
-    `#show heading: set text(font: "${esc(headFont)}")`,
-    `#show heading.where(level: 1): set text(size: ${headingSizes[0]})`,
-    `#show heading.where(level: 2): set text(size: ${headingSizes[1]})`,
-    `#show heading.where(level: 3): set text(size: ${headingSizes[2]})`,
-    `#show heading.where(level: 4): set text(size: ${headingSizes[3]})`,
+    `#set text(font: "${esc(family.body)}", size: ${options.bodySizePt}pt, weight: ${options.bodyWeight}, tracking: ${options.trackingPt}pt, lang: "${options.language}", hyphenate: ${options.hyphenate})`,
+    `#set par(justify: ${options.align === 'justify'}, linebreaks: "${options.linebreaks}", leading: ${options.leadingEm}em, spacing: ${options.paragraphSpacingEm}em, first-line-indent: ${indent})`,
+    `#show heading: set text(font: "${esc(headFont)}", weight: ${options.headingWeight})`,
+    `#show heading: set block(above: ${options.headingAboveEm}em, below: ${options.headingBelowEm}em)`,
+    `#show heading: set align(${options.headingalign})`,
+    `#show heading.where(level: 1): set text(size: ${options.heading1Pt}pt)`,
+    `#show heading.where(level: 2): set text(size: ${options.heading2Pt}pt)`,
+    `#show heading.where(level: 3): set text(size: ${options.heading3Pt}pt)`,
+    `#show heading.where(level: 4): set text(size: ${options.heading4Pt}pt)`,
+    `#show figure: set align(${options.figureAlign})`,
+    `#show figure.caption: set text(size: ${options.captionSizePt}pt)`,
+    `#show figure.caption: set align(${options.figureAlign})`,
+    `#show figure.caption: set figure.caption(position: ${options.captionPosition})`,
+    `#show footnote.entry: set text(size: ${options.footnoteSizePt}pt)`,
+    `#set footnote.entry(gap: ${options.footnoteGapEm}em)`,
   ];
-  if (sel.headingalign === 'center') lines.push('#show heading: it => align(center, it)');
-  if (sel.headingalign === 'right') lines.push('#show heading: it => align(right, it)');
-  if (extras.has('numbered')) lines.push('#set heading(numbering: "1.1")');
-  lines.push(
-    `#set par(justify: ${justify}, leading: ${leading}, first-line-indent: ${indent})`,
-    `#show par: set block(spacing: ${spacing})`,
-  );
+  if (headingNumbering) lines.push(`#set heading(numbering: "${headingNumbering}")`);
   return lines.join('\n');
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { IconArrowLeft, IconDownload, IconSpinner, IconFile, IconShare } from './Icons.jsx';
 import { isNativeApp } from '../lib/download.js';
 import { loadPdfDocument } from '../lib/pdf.js';
+import { hasPdfData } from '../lib/desktop.js';
 import {
   choosePdfSearchPage,
   countPdfTextOccurrences,
@@ -53,8 +54,8 @@ function highlightRects(items, viewport, query) {
 /**
  * Anteprima paginata del PDF già compilato. Mantiene nel DOM un solo canvas:
  * anche un libro di centinaia di pagine non genera più un SVG monolitico con
- * centinaia di migliaia di nodi. Gli stessi byte vengono poi riusati per il
- * download, che non richiede una seconda compilazione Typst.
+ * centinaia di migliaia di nodi. Lo stesso artefatto (handle file desktop o
+ * byte web) viene riusato dal download senza una seconda compilazione Typst.
  */
 export default function PdfPreview({ pdfBytes, compiling, downloading, onDownload, searchTarget }) {
   const native = isNativeApp();
@@ -106,7 +107,7 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
     setLocatedSearch(null);
     setPreviewError('');
     textCacheRef.current.clear();
-    if (!pdfBytes?.length) return undefined;
+    if (!hasPdfData(pdfBytes)) return undefined;
 
     let active = true;
     const loadingTask = loadPdfDocument(pdfBytes);
@@ -289,7 +290,7 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
             <button
               type="button"
               onClick={() => onDownload('share')}
-              disabled={!pdfBytes?.length || downloading}
+              disabled={!hasPdfData(pdfBytes) || downloading}
               title="Condividi il PDF (foglio di condivisione)"
               className="inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -300,7 +301,7 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
           <button
             type="button"
             onClick={() => onDownload('save')}
-            disabled={!pdfBytes?.length || downloading}
+            disabled={!hasPdfData(pdfBytes) || downloading}
             title={native ? 'Salva in Files: scegli cartella e nome' : 'Scarica il PDF'}
             className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -311,7 +312,7 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
       </header>
 
       <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-auto bg-surface-2 [contain:strict]">
-        {pdfBytes?.length ? (
+        {hasPdfData(pdfBytes) ? (
           <div className="mx-auto max-w-3xl p-3">
             <div
               className="relative mx-auto overflow-hidden rounded-lg bg-white shadow-lg"

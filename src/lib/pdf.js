@@ -11,6 +11,7 @@
 // es. Map#getOrInsertComputed, non ancora disponibili ovunque).
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
+import { isDesktopPdfArtifact } from './desktop.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -43,6 +44,11 @@ export function copyBytes(data) {
  * @returns {import('pdfjs-dist').PDFDocumentLoadingTask}
  */
 export function loadPdfDocument(data) {
+  if (isDesktopPdfArtifact(data)) {
+    // Il protocollo Electron supporta le richieste Range: pdf.js legge dal
+    // file nativo soltanto i blocchi necessari, senza clonare l'intero libro.
+    return pdfjsLib.getDocument({ url: data.url, wasmUrl: WASM_URL });
+  }
   return pdfjsLib.getDocument({ data: copyBytes(data), wasmUrl: WASM_URL });
 }
 

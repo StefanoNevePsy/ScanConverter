@@ -2,12 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractPageBlocks, toTypstNvidia } from '../lib/nvidia.js';
 import { toTypst, ocrImageGemini } from '../lib/gemini.js';
 import { compileToPdf, diagnoseTypst, initTypst, locateTypstError } from '../lib/typst.js';
-import { savePdf, sharePdf } from '../lib/download.js';
+import { savePdf, saveProjectArchive, sharePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assemble.js';
 import { refinePageTables } from '../lib/segments.js';
 import { extractPdfText } from '../lib/pdftext.js';
+import { hasPdfData, releaseDesktopPdf } from '../lib/desktop.js';
 import { isSpreadLike, preparePages, makeThumbnail } from '../lib/pagePrep.js';
 import {
   chunkDocument,
@@ -17,7 +18,13 @@ import {
   normalizeHeadingLevels,
   enforceHeadingLevels,
 } from '../lib/session.js';
-import { buildPreamble, ensureExplicitHyphenation, extractTitle } from '../lib/preamble.js';
+import {
+  buildPreamble,
+  DEFAULT_LAYOUT_OPTIONS,
+  ensureExplicitHyphenation,
+  extractTitle,
+  normalizeLayoutOptions,
+} from '../lib/preamble.js';
 import {
   diagnosticProgress,
   repairTypstDeterministically,
@@ -58,6 +65,7 @@ import {
 } from '../lib/layoutPlan.js';
 import { createPdfSearchTarget } from '../lib/pdfPreview.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
+import { createProjectArchive, inspectProjectArchive } from '../lib/projectArchive.js';
 import {
   saveSession,
   saveFigures,
@@ -68,8 +76,11 @@ import {
   savePages,
   getPage,
   savePart,
+  saveParts,
   getParts,
   getSession,
+  getPages,
+  savePageRecords,
   deletePage,
   deletePagesFor,
   requestPersistentStorage,
@@ -121,7 +132,7 @@ async function withRetry(fn, signal, onWait, { max = 6, start = 15000, cap = 120
 export const STEPS = [
   { id: 'ocr', label: 'Estrazione testo', hint: 'NVIDIA Nemotron-Parse' },
   { id: 'format', label: 'Formattazione layout', hint: 'Gemini/NVIDIA → Typst' },
-  { id: 'compile', label: 'Compilazione PDF', hint: 'Typst WASM · locale' },
+  { id: 'compile', label: 'Compilazione PDF', hint: 'Typst nativo/WASM · locale' },
 ];
 
 const emptyStatus = { ocr: 'pending', format: 'pending', compile: 'pending' };
@@ -153,10 +164,12 @@ export function usePipeline(settings) {
 
   const [rawText, setRawText] = useState('');
   const [typstCode, setTypstCode] = useState('');
-  const [previewPdf, setPreviewPdf] = useState(null); // byte PDF, renderizzati una pagina alla volta
+  const [layoutOptions, setLayoutOptions] = useState(DEFAULT_LAYOUT_OPTIONS);
+  const [previewPdf, setPreviewPdf] = useState(null); // byte web o handle file desktop
   const [compileError, setCompileError] = useState(null);
   const [compiling, setCompiling] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [projectBusy, setProjectBusy] = useState(null); // 'export' | 'import' | null
   const [aiFixing, setAiFixing] = useState(false);
   const [spellReport, setSpellReport] = useState(null); // {suspects, error?} | null
   const [spellBusy, setSpellBusy] = useState(false);
@@ -183,7 +196,7 @@ export function usePipeline(settings) {
   const figuresRef = useRef([]); // figure ritagliate dal documento originale
   // Il PDF mostrato in anteprima è anche quello consegnato al download. La
   // coppia sorgente/riferimento figure impedisce di riusare byte obsoleti.
-  const compiledPdfRef = useRef({ source: '', figures: null, bytes: null });
+  const compiledPdfRef = useRef({ source: '', figures: null, pdf: null });
   const sessionRef = useRef(null); // { id, fileName, rawText, chunks, preamble, styleHint }
   const pendingRef = useRef(null); // { extracted, fileName } in attesa di conferma figure
   const searchPreviewRef = useRef(0); // scarta compilazioni di ricerca ormai superate
@@ -230,12 +243,13 @@ export function usePipeline(settings) {
   /** Compila una sola volta il PDF corrente e lo conserva per il download. */
   const getCompiledPdf = useCallback(async (source) => {
     const cached = compiledPdfRef.current;
-    if (cached.source === source && cached.figures === figuresRef.current && cached.bytes?.length) {
-      return cached.bytes;
+    if (cached.source === source && cached.figures === figuresRef.current && hasPdfData(cached.pdf)) {
+      return cached.pdf;
     }
-    const bytes = await compileToPdf(source, figuresRef.current);
-    compiledPdfRef.current = { source, figures: figuresRef.current, bytes };
-    return bytes;
+    const pdf = await compileToPdf(source, figuresRef.current);
+    compiledPdfRef.current = { source, figures: figuresRef.current, pdf };
+    releaseDesktopPdf(cached.pdf);
+    return pdf;
   }, []);
 
   /** Compila e pubblica l'anteprima PDF paginata. */
@@ -249,6 +263,11 @@ export function usePipeline(settings) {
   const verifyStrictPdf = useCallback(async (source, existingBytes = null) => {
     const s = sessionRef.current;
     if (s?.workflow !== 'strict') return existingBytes;
+    // Download e riapertura dell'anteprima riusano lo stesso artefatto: non
+    // riestrarre centinaia di pagine se questo identico PDF è già verificato.
+    if (existingBytes && s.verifiedPdfSource === source && s.verifiedPdfArtifact === existingBytes) {
+      return existingBytes;
+    }
     s.verified = false;
     const pdfBytes = existingBytes || await compileToPdf(source, figuresRef.current);
     // Il PDF riformattato può avere più pagine dell'input: non applicare qui
@@ -262,6 +281,8 @@ export function usePipeline(settings) {
         layoutPlan: s.layoutPlan || null,
         pdf: { contentOk: false, unverifiable: true, missing: [], added: [], missingInvariants: [] },
       });
+      s.verifiedPdfSource = source;
+      s.verifiedPdfArtifact = pdfBytes;
       return pdfBytes;
     }
     const expected = sourcePlainText(s.canonicalText || s.rawText);
@@ -326,6 +347,8 @@ export function usePipeline(settings) {
       },
     });
     s.verified = contentOk;
+    s.verifiedPdfSource = source;
+    s.verifiedPdfArtifact = pdfBytes;
     return pdfBytes;
   }, [settings]);
 
@@ -375,6 +398,7 @@ export function usePipeline(settings) {
       // e fix di punteggiatura senza dover ricostruire i vecchi chunk.
       editorCode: s.editorCode || null,
       styleHint: s.styleHint || null,
+      layoutOptions: s.layoutOptions || null,
       chunks: s.chunks.map((c) => ({
         text: c.text,
         body: c.body,
@@ -420,8 +444,81 @@ export function usePipeline(settings) {
         comparisons: s.ocr.comparisons || [],
       },
       styleHint: s.styleHint || null,
+      layoutOptions: s.layoutOptions || null,
     });
   }, []);
+
+  /**
+   * Esporta una sessione come progetto portatile versionato. Lo snapshot
+   * corrente viene forzato prima di leggere IndexedDB, così anche l’ultima
+   * modifica nell’editor entra nell’archivio senza attendere il debounce.
+   */
+  const exportProject = useCallback(async (summary = null) => {
+    setProjectBusy('export');
+    try {
+      const active = !summary && sessionRef.current;
+      const id = summary?.id || active?.id;
+      if (!id) throw new Error('Il documento non ha ancora uno stato esportabile.');
+      if (active) {
+        if (typstCode.trim()) active.editorCode = typstCode;
+        if (active.ocr && active.ocr.done < active.ocr.total) await persistOcr('ocr');
+        else await persist();
+      }
+      const session = await getSession(id);
+      if (!session) throw new Error('Non riesco a leggere la sessione salvata.');
+      // Letture sequenziali: sui libri grandi evita tre picchi IndexedDB
+      // concorrenti prima che l'archivio venga costruito.
+      const parts = await getParts(id, session.ocr?.total || 0);
+      const figures = await getFigures(id);
+      const pages = await getPages(id);
+      const archive = await createProjectArchive({ session, parts, figures, pages });
+      const result = await saveProjectArchive(archive.bytes, archive.fileName);
+      return { ...archive.summary, fileName: archive.fileName, cancelled: !!result?.cancelled };
+    } finally {
+      setProjectBusy(null);
+    }
+  }, [persist, persistOcr, typstCode]);
+
+  /** Importa una copia indipendente della sessione e restituisce il suo riepilogo. */
+  const importProject = useCallback(async (file) => {
+    setProjectBusy('import');
+    try {
+      const archive = await inspectProjectArchive(file);
+      let id;
+      do {
+        id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      } while (await getSession(id));
+
+      const importedAt = new Date().toISOString();
+      const session = {
+        ...archive.session,
+        id,
+        fileName: archive.fileName || archive.session.fileName || 'documento',
+        importedFrom: {
+          sessionId: archive.manifest.document?.sourceSessionId || archive.session.id || null,
+          exportedAt: archive.manifest.exportedAt,
+          importedAt,
+        },
+      };
+      await saveSession(session);
+      // Ricostruisce uno store alla volta per contenere memoria e contesa
+      // fra transazioni quando l'archivio è voluminoso.
+      await saveParts(id, archive.parts);
+      await saveFigures(id, archive.figures);
+      await savePageRecords(id, archive.pages);
+      const stored = await getSession(id);
+      if (!stored) throw new Error('L’importazione non è stata salvata sul dispositivo.');
+      await refreshSessions();
+      return {
+        id,
+        fileName: stored.fileName,
+        status: stored.status,
+        updatedAt: stored.updatedAt,
+      };
+    } finally {
+      setProjectBusy(null);
+    }
+  }, [refreshSessions]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -432,6 +529,7 @@ export function usePipeline(settings) {
     setError(null);
     setRawText('');
     setTypstCode('');
+    setLayoutOptions(DEFAULT_LAYOUT_OPTIONS);
     setPreviewPdf(null);
     setCompileError(null);
     setDetail('');
@@ -442,7 +540,8 @@ export function usePipeline(settings) {
     setStrictReport(null);
     setSpellReport(null);
     figuresRef.current = [];
-    compiledPdfRef.current = { source: '', figures: null, bytes: null };
+    releaseDesktopPdf(compiledPdfRef.current.pdf);
+    compiledPdfRef.current = { source: '', figures: null, pdf: null };
     sessionRef.current = null;
     refreshSessions(); // riallinea l'elenco al ritorno sulla home
   }, [refreshSessions, clearReview]);
@@ -1123,10 +1222,12 @@ export function usePipeline(settings) {
             comparisons: meta.ocr.comparisons || new Array(meta.ocr.total).fill(null),
           },
           styleHint: meta.styleHint || undefined,
+          layoutOptions: normalizeLayoutOptions(meta.layoutOptions || {}),
           lastError: '',
         };
         setRawText('');
         setTypstCode('');
+        setLayoutOptions(normalizeLayoutOptions(meta.layoutOptions || {}));
         setStatus({ ocr: 'active', format: 'pending', compile: 'pending' });
         setOcrProgress({ done: meta.ocr.done, total: meta.ocr.total });
         setPhase('running');
@@ -1143,6 +1244,7 @@ export function usePipeline(settings) {
         chunks: (meta.chunks || []).map((c) => ({ ...c })),
         preamble: meta.preamble || '',
         styleHint: meta.styleHint || undefined,
+        layoutOptions: normalizeLayoutOptions(meta.layoutOptions || {}),
         lastError: '',
         workflow: meta.workflow || 'legacy',
         canonicalText: meta.canonicalText || meta.rawText,
@@ -1155,6 +1257,7 @@ export function usePipeline(settings) {
         verified: meta.verified === true,
       };
       setRawText(meta.rawText || '');
+      setLayoutOptions(normalizeLayoutOptions(meta.layoutOptions || {}));
       const restoredCode = ensureExplicitHyphenation(
         meta.editorCode || combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || '')),
       );
@@ -1213,8 +1316,8 @@ export function usePipeline(settings) {
       setCompiling(true);
       setCompileError(null);
       try {
-        // Lascia al browser un frame per mostrare lo stato di caricamento
-        // prima che il compilatore WASM occupi il main thread.
+        // Lascia un frame per mostrare lo stato di caricamento prima di
+        // invocare il processo desktop o, sul web, il compilatore WASM.
         await new Promise((resolve) => requestAnimationFrame(() => resolve()));
         const pdfBytes = await getCompiledPdf(source);
         if (sessionRef.current?.workflow === 'strict') await verifyStrictPdf(source, pdfBytes);
@@ -1241,7 +1344,7 @@ export function usePipeline(settings) {
     async (match) => {
       const requestId = ++searchPreviewRef.current;
       if (!match) return null;
-      if (!typstCode.trim() || !previewPdf?.length) return false;
+      if (!typstCode.trim() || !hasPdfData(previewPdf)) return false;
       const target = createPdfSearchTarget(typstCode, match);
       if (requestId !== searchPreviewRef.current) return false;
       return target || false;
@@ -1285,11 +1388,16 @@ export function usePipeline(settings) {
     async (sel) => {
       if (!typstCode.trim()) return false;
       const { body } = splitPreamble(typstCode);
-      const preamble = buildPreamble(sel, { title: extractTitle(body) });
+      const normalized = normalizeLayoutOptions(sel);
+      const preamble = buildPreamble(normalized, { title: extractTitle(body) });
       const next = combineDocument(preamble, [body]);
       setTypstCode(next);
+      setLayoutOptions(normalized);
       // salva anche nel corpo della sessione (se attiva) per la persistenza
-      if (sessionRef.current) sessionRef.current.preamble = preamble;
+      if (sessionRef.current) {
+        sessionRef.current.preamble = preamble;
+        sessionRef.current.layoutOptions = normalized;
+      }
       return recompile(next);
     },
     [typstCode, recompile],
@@ -1644,8 +1752,7 @@ export function usePipeline(settings) {
           }
           let beforeOk = false;
           try {
-            await compileToPdf(before, figuresRef.current);
-            beforeOk = true;
+            beforeOk = (await diagnoseTypst(before, figuresRef.current)).ok;
           } catch {
             /* era già rotto prima: le correzioni non c'entrano */
           }
@@ -1740,8 +1847,7 @@ export function usePipeline(settings) {
         }
         let beforeOk = false;
         try {
-          await compileToPdf(before, figuresRef.current);
-          beforeOk = true;
+          beforeOk = (await diagnoseTypst(before, figuresRef.current)).ok;
         } catch {
           /* era già rotto prima */
         }
@@ -2139,7 +2245,8 @@ export function usePipeline(settings) {
       setOcrProgress(null);
       clearReview();
       figuresRef.current = [];
-      compiledPdfRef.current = { source: '', figures: null, bytes: null };
+      releaseDesktopPdf(compiledPdfRef.current.pdf);
+      compiledPdfRef.current = { source: '', figures: null, pdf: null };
 
       try {
         // [1/3] Estrazione testo (NVIDIA). Nemotron-Parse accetta solo
@@ -2237,9 +2344,11 @@ export function usePipeline(settings) {
     rawText,
     typstCode,
     setTypstCode,
+    layoutOptions,
     previewPdf,
     downloadPdf,
     downloading,
+    projectBusy,
     compileError,
     compiling,
     chunkProgress,
@@ -2259,6 +2368,8 @@ export function usePipeline(settings) {
     openSession,
     deleteSavedSession,
     refreshSessions,
+    exportProject,
+    importProject,
     runPipeline,
     recompile,
     previewSearchMatch,

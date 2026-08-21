@@ -16,6 +16,7 @@
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { copyBytes } from './pdf.js';
+import { isDesktopPdfArtifact } from './desktop.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 const WASM_URL = `${import.meta.env.BASE_URL}pdfjs/`;
@@ -83,10 +84,11 @@ function buildLevelMap(sizes, body) {
  */
 export async function extractPdfText(data, opts = {}) {
   const { maxPages = 2000, onProgress } = opts;
-  // Copia: pdf.js detacha il buffer passato: senza copia la successiva
-  // rasterizzazione sullo stesso buffer fallirebbe (detached ArrayBuffer).
-  const bytes = copyBytes(data);
-  const loadingTask = pdfjsLib.getDocument({ data: bytes, wasmUrl: WASM_URL });
+  // Sul desktop il PDF compilato resta su file ed è letto a intervalli. Per i
+  // PDF caricati dall'utente conserva la copia che evita il detach del buffer.
+  const loadingTask = isDesktopPdfArtifact(data)
+    ? pdfjsLib.getDocument({ url: data.url, wasmUrl: WASM_URL })
+    : pdfjsLib.getDocument({ data: copyBytes(data), wasmUrl: WASM_URL });
   const pdf = await loadingTask.promise;
   try {
     const total = Math.min(pdf.numPages, maxPages);

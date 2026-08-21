@@ -1,0 +1,553 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-21T18:07:57.5686917Z",
+  "title": "Design System: ScanConverter",
+  "extensions": {
+    "colorMeta": {
+      "mineral-canvas": {
+        "role": "neutral",
+        "displayName": "Carta minerale",
+        "canonical": "#f0eee8",
+        "tonalRamp": [
+          "oklch(15% 0.008 91.5)",
+          "oklch(26% 0.008 91.5)",
+          "oklch(37% 0.008 91.5)",
+          "oklch(48% 0.008 91.5)",
+          "oklch(59% 0.008 91.5)",
+          "oklch(71% 0.008 91.5)",
+          "oklch(83% 0.008 91.5)",
+          "oklch(95% 0.008 91.5)"
+        ]
+      },
+      "paper-surface": {
+        "role": "neutral",
+        "displayName": "Carta chiara",
+        "canonical": "#f8f6f0",
+        "tonalRamp": [
+          "oklch(15% 0.008 91.5)",
+          "oklch(26% 0.008 91.5)",
+          "oklch(37% 0.008 91.5)",
+          "oklch(48% 0.008 91.5)",
+          "oklch(59% 0.008 91.5)",
+          "oklch(71% 0.008 91.5)",
+          "oklch(83% 0.008 91.5)",
+          "oklch(95% 0.008 91.5)"
+        ]
+      },
+      "paper-surface-muted": {
+        "role": "neutral",
+        "displayName": "Carta intermedia",
+        "canonical": "#e7e4dc",
+        "tonalRamp": [
+          "oklch(15% 0.011 89.7)",
+          "oklch(26% 0.011 89.7)",
+          "oklch(37% 0.011 89.7)",
+          "oklch(48% 0.011 89.7)",
+          "oklch(59% 0.011 89.7)",
+          "oklch(71% 0.011 89.7)",
+          "oklch(83% 0.011 89.7)",
+          "oklch(95% 0.011 89.7)"
+        ]
+      },
+      "paper-surface-deep": {
+        "role": "neutral",
+        "displayName": "Carta profonda",
+        "canonical": "#d9d5cb",
+        "tonalRamp": [
+          "oklch(15% 0.014 88.7)",
+          "oklch(26% 0.014 88.7)",
+          "oklch(37% 0.014 88.7)",
+          "oklch(48% 0.014 88.7)",
+          "oklch(59% 0.014 88.7)",
+          "oklch(71% 0.014 88.7)",
+          "oklch(83% 0.014 88.7)",
+          "oklch(95% 0.014 88.7)"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Regola minerale",
+        "canonical": "#9a968c",
+        "tonalRamp": [
+          "oklch(15% 0.015 88.7)",
+          "oklch(26% 0.015 88.7)",
+          "oklch(37% 0.015 88.7)",
+          "oklch(48% 0.015 88.7)",
+          "oklch(59% 0.015 88.7)",
+          "oklch(71% 0.015 88.7)",
+          "oklch(83% 0.015 88.7)",
+          "oklch(95% 0.015 88.7)"
+        ]
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Regola forte",
+        "canonical": "#4c4a45",
+        "tonalRamp": [
+          "oklch(15% 0.009 88.7)",
+          "oklch(26% 0.009 88.7)",
+          "oklch(37% 0.009 88.7)",
+          "oklch(48% 0.009 88.7)",
+          "oklch(59% 0.009 88.7)",
+          "oklch(71% 0.009 88.7)",
+          "oklch(83% 0.009 88.7)",
+          "oklch(95% 0.009 88.7)"
+        ]
+      },
+      "graphite-ink": {
+        "role": "neutral",
+        "displayName": "Inchiostro grafite",
+        "canonical": "#11110f",
+        "tonalRamp": [
+          "oklch(15% 0.004 106.8)",
+          "oklch(26% 0.004 106.8)",
+          "oklch(37% 0.004 106.8)",
+          "oklch(48% 0.004 106.8)",
+          "oklch(59% 0.004 106.8)",
+          "oklch(71% 0.004 106.8)",
+          "oklch(83% 0.004 106.8)",
+          "oklch(95% 0.004 106.8)"
+        ]
+      },
+      "graphite-muted": {
+        "role": "neutral",
+        "displayName": "Grafite attenuata",
+        "canonical": "#4f4d47",
+        "tonalRamp": [
+          "oklch(15% 0.010 91.6)",
+          "oklch(26% 0.010 91.6)",
+          "oklch(37% 0.010 91.6)",
+          "oklch(48% 0.010 91.6)",
+          "oklch(59% 0.010 91.6)",
+          "oklch(71% 0.010 91.6)",
+          "oklch(83% 0.010 91.6)",
+          "oklch(95% 0.010 91.6)"
+        ]
+      },
+      "graphite-faint": {
+        "role": "neutral",
+        "displayName": "Grafite lieve",
+        "canonical": "#66635c",
+        "tonalRamp": [
+          "oklch(15% 0.012 87.5)",
+          "oklch(26% 0.012 87.5)",
+          "oklch(37% 0.012 87.5)",
+          "oklch(48% 0.012 87.5)",
+          "oklch(59% 0.012 87.5)",
+          "oklch(71% 0.012 87.5)",
+          "oklch(83% 0.012 87.5)",
+          "oklch(95% 0.012 87.5)"
+        ]
+      },
+      "operational-violet": {
+        "role": "primary",
+        "displayName": "Violetto operativo",
+        "canonical": "#6858e8",
+        "tonalRamp": [
+          "oklch(15% 0.209 282.3)",
+          "oklch(26% 0.209 282.3)",
+          "oklch(37% 0.209 282.3)",
+          "oklch(48% 0.209 282.3)",
+          "oklch(59% 0.209 282.3)",
+          "oklch(71% 0.209 282.3)",
+          "oklch(83% 0.209 282.3)",
+          "oklch(95% 0.209 282.3)"
+        ]
+      },
+      "operational-violet-strong": {
+        "role": "primary",
+        "displayName": "Violetto operativo forte",
+        "canonical": "#7c6cff",
+        "tonalRamp": [
+          "oklch(15% 0.210 283.4)",
+          "oklch(26% 0.210 283.4)",
+          "oklch(37% 0.210 283.4)",
+          "oklch(48% 0.210 283.4)",
+          "oklch(59% 0.210 283.4)",
+          "oklch(71% 0.210 283.4)",
+          "oklch(83% 0.210 283.4)",
+          "oklch(95% 0.210 283.4)"
+        ]
+      },
+      "operational-violet-soft": {
+        "role": "primary",
+        "displayName": "Violetto operativo tenue",
+        "canonical": "rgb(104 88 232 / 0.12)",
+        "tonalRamp": [
+          "oklch(15% 0.209 282.3 / 0.12)",
+          "oklch(26% 0.209 282.3 / 0.12)",
+          "oklch(37% 0.209 282.3 / 0.12)",
+          "oklch(48% 0.209 282.3 / 0.12)",
+          "oklch(59% 0.209 282.3 / 0.12)",
+          "oklch(71% 0.209 282.3 / 0.12)",
+          "oklch(83% 0.209 282.3 / 0.12)",
+          "oklch(95% 0.209 282.3 / 0.12)"
+        ]
+      },
+      "inverse-ink": {
+        "role": "neutral",
+        "displayName": "Inchiostro inverso",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(26% 0 0)",
+          "oklch(37% 0 0)",
+          "oklch(48% 0 0)",
+          "oklch(59% 0 0)",
+          "oklch(71% 0 0)",
+          "oklch(83% 0 0)",
+          "oklch(95% 0 0)"
+        ]
+      },
+      "local-lime": {
+        "role": "secondary",
+        "displayName": "Lime locale",
+        "canonical": "#d7ff3f",
+        "tonalRamp": [
+          "oklch(15% 0.208 121.1)",
+          "oklch(26% 0.208 121.1)",
+          "oklch(37% 0.208 121.1)",
+          "oklch(48% 0.208 121.1)",
+          "oklch(59% 0.208 121.1)",
+          "oklch(71% 0.208 121.1)",
+          "oklch(83% 0.208 121.1)",
+          "oklch(95% 0.208 121.1)"
+        ]
+      },
+      "local-lime-soft": {
+        "role": "secondary",
+        "displayName": "Lime locale tenue",
+        "canonical": "rgb(215 255 63 / 0.18)",
+        "tonalRamp": [
+          "oklch(15% 0.208 121.1 / 0.18)",
+          "oklch(26% 0.208 121.1 / 0.18)",
+          "oklch(37% 0.208 121.1 / 0.18)",
+          "oklch(48% 0.208 121.1 / 0.18)",
+          "oklch(59% 0.208 121.1 / 0.18)",
+          "oklch(71% 0.208 121.1 / 0.18)",
+          "oklch(83% 0.208 121.1 / 0.18)",
+          "oklch(95% 0.208 121.1 / 0.18)"
+        ]
+      },
+      "annotation-lime": {
+        "role": "secondary",
+        "displayName": "Lime annotazione",
+        "canonical": "#bfdc24",
+        "tonalRamp": [
+          "oklch(15% 0.191 119.1)",
+          "oklch(26% 0.191 119.1)",
+          "oklch(37% 0.191 119.1)",
+          "oklch(48% 0.191 119.1)",
+          "oklch(59% 0.191 119.1)",
+          "oklch(71% 0.191 119.1)",
+          "oklch(83% 0.191 119.1)",
+          "oklch(95% 0.191 119.1)"
+        ]
+      },
+      "success": {
+        "role": "tertiary",
+        "displayName": "Verde esito",
+        "canonical": "#177653",
+        "tonalRamp": [
+          "oklch(15% 0.102 162.7)",
+          "oklch(26% 0.102 162.7)",
+          "oklch(37% 0.102 162.7)",
+          "oklch(48% 0.102 162.7)",
+          "oklch(59% 0.102 162.7)",
+          "oklch(71% 0.102 162.7)",
+          "oklch(83% 0.102 162.7)",
+          "oklch(95% 0.102 162.7)"
+        ]
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "Ambra avviso",
+        "canonical": "#9b6500",
+        "tonalRamp": [
+          "oklch(15% 0.118 72.8)",
+          "oklch(26% 0.118 72.8)",
+          "oklch(37% 0.118 72.8)",
+          "oklch(48% 0.118 72.8)",
+          "oklch(59% 0.118 72.8)",
+          "oklch(71% 0.118 72.8)",
+          "oklch(83% 0.118 72.8)",
+          "oklch(95% 0.118 72.8)"
+        ]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Rosso errore",
+        "canonical": "#b32633",
+        "tonalRamp": [
+          "oklch(15% 0.176 21.9)",
+          "oklch(26% 0.176 21.9)",
+          "oklch(37% 0.176 21.9)",
+          "oklch(48% 0.176 21.9)",
+          "oklch(59% 0.176 21.9)",
+          "oklch(71% 0.176 21.9)",
+          "oklch(83% 0.176 21.9)",
+          "oklch(95% 0.176 21.9)"
+        ]
+      },
+      "danger-soft": {
+        "role": "tertiary",
+        "displayName": "Rosso errore tenue",
+        "canonical": "rgb(179 38 51 / 0.11)",
+        "tonalRamp": [
+          "oklch(15% 0.176 21.9 / 0.11)",
+          "oklch(26% 0.176 21.9 / 0.11)",
+          "oklch(37% 0.176 21.9 / 0.11)",
+          "oklch(48% 0.176 21.9 / 0.11)",
+          "oklch(59% 0.176 21.9 / 0.11)",
+          "oklch(71% 0.176 21.9 / 0.11)",
+          "oklch(83% 0.176 21.9 / 0.11)",
+          "oklch(95% 0.176 21.9 / 0.11)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display editoriale",
+        "purpose": "Titolo della landing, breve e ad alto contrasto."
+      },
+      "wordmark": {
+        "displayName": "Wordmark",
+        "purpose": "Nome ScanConverter nella barra superiore."
+      },
+      "title": {
+        "displayName": "Titolo operativo",
+        "purpose": "Titoli di pannello e intestazioni degli strumenti."
+      },
+      "body": {
+        "displayName": "Corpo operativo",
+        "purpose": "Comandi, descrizioni, metadati e messaggi di stato."
+      },
+      "label": {
+        "displayName": "Etichetta compatta",
+        "purpose": "Campi, unità, sintesi e badge."
+      },
+      "button-label": {
+        "displayName": "Etichetta pulsante",
+        "purpose": "Azioni locali, secondarie e quiete del banco."
+      },
+      "operational-control": {
+        "displayName": "Controllo operativo",
+        "purpose": "Azioni operative dominanti come la ripresa della pipeline."
+      },
+      "code": {
+        "displayName": "Sorgente tecnico",
+        "purpose": "Editor Typst, diagnostica e valori tecnici."
+      }
+    },
+    "shadows": [
+      {
+        "name": "selection-low",
+        "value": "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)",
+        "purpose": "Separa una figura selezionata dalle altre miniature."
+      },
+      {
+        "name": "document-page",
+        "value": "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+        "purpose": "Solleva il foglio PDF bianco dalla superficie dell'anteprima."
+      },
+      {
+        "name": "modal-layer",
+        "value": "0 25px 50px -12px rgb(0 0 0 / 0.25)",
+        "purpose": "Distingue le impostazioni dal documento sottostante."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-color",
+        "value": "180ms ease-out",
+        "purpose": "Cambio di colore per hover, focus e stato."
+      },
+      {
+        "name": "state-lift",
+        "value": "180ms cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Sollevamento di 1 px per pulsanti e controlli della top bar."
+      },
+      {
+        "name": "disclosure",
+        "value": "220ms cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Rotazione dell'indicatore di apertura dell'Atelier."
+      },
+      {
+        "name": "shimmer",
+        "value": "1.6s cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Attesa indeterminata nelle superfici skeleton."
+      },
+      {
+        "name": "ellipsis",
+        "value": "1.4s steps(4, end)",
+        "purpose": "Puntini di avanzamento per operazioni in corso."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "atelier-mobile-max",
+        "value": "720px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Local Action Button",
+      "kind": "button",
+      "refersTo": "button-local",
+      "description": "Azione deterministica eseguita localmente, come applicare lo stile e compilare.",
+      "html": "<button type=\"button\" class=\"ds-button-local\"><svg class=\"ds-button-local-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15\"/></svg><span class=\"ds-button-local-label\">Applica e compila</span></button>",
+      "css": ".ds-button-local { display:inline-flex; min-height:38px; align-items:center; justify-content:center; gap:7px; padding:8px 13px; border:1px solid #11110f; border-radius:8px; background:var(--color-lime); color:#11110f; font-family:var(--font-sans); font-size:13px; font-weight:700; transition:background-color 180ms ease-out, transform 180ms var(--ease-out-quint); } .ds-button-local-icon { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; } .ds-button-local:hover { background:color-mix(in srgb, var(--color-lime) 86%, white); transform:translateY(-1px); } .ds-button-local:focus-visible { outline:3px solid var(--color-primary); outline-offset:3px; } .ds-button-local:active { transform:translateY(0); } @media (pointer:coarse) { .ds-button-local { min-height:44px; } }"
+    },
+    {
+      "name": "Operational Button",
+      "kind": "button",
+      "refersTo": "button-operational",
+      "description": "Azione operativa dominante, usata per ripresa, generazione o download.",
+      "html": "<button type=\"button\" class=\"ds-button-operational\"><svg class=\"ds-button-operational-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15\"/></svg><span class=\"ds-button-operational-label\">Riprendi</span></button>",
+      "css": ".ds-button-operational { display:inline-flex; min-height:36px; align-items:center; justify-content:center; gap:6px; padding:8px 14px; border:0; border-radius:8px; background:var(--color-primary); color:var(--color-primary-ink); font-family:var(--font-sans); font-size:14px; font-weight:600; transition:background-color 180ms ease-out, transform 180ms var(--ease-out-quint); } .ds-button-operational-icon { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; } .ds-button-operational:hover { background:var(--color-primary-strong); transform:translateY(-1px); } .ds-button-operational:focus-visible { outline:3px solid var(--color-primary); outline-offset:3px; } .ds-button-operational:active { transform:translateY(0); } @media (pointer:coarse) { .ds-button-operational { min-height:44px; } }"
+    },
+    {
+      "name": "Secondary Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Comando secondario che resta leggibile senza competere con l'azione dominante.",
+      "html": "<button type=\"button\" class=\"ds-button-outline\"><svg class=\"ds-button-outline-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12\"/></svg><span class=\"ds-button-outline-label\">Importa progetto</span></button>",
+      "css": ".ds-button-outline { display:inline-flex; min-height:38px; align-items:center; justify-content:center; gap:7px; padding:8px 13px; border:1px solid var(--color-ink); border-radius:8px; background:transparent; color:var(--color-ink); font-family:var(--font-sans); font-size:13px; font-weight:700; transition:background-color 180ms ease-out, color 180ms ease-out, transform 180ms var(--ease-out-quint); } .ds-button-outline-icon { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; } .ds-button-outline:hover { background:var(--color-ink); color:var(--color-bg); transform:translateY(-1px); } .ds-button-outline:focus-visible { outline:3px solid var(--color-primary); outline-offset:3px; } .ds-button-outline:active { transform:translateY(0); } @media (pointer:coarse) { .ds-button-outline { min-height:44px; } }"
+    },
+    {
+      "name": "Quiet Reset Button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "Azione subordinata e reversibile, come il ripristino dei valori dell'Atelier.",
+      "html": "<button type=\"button\" class=\"ds-button-quiet\">Ripristina valori</button>",
+      "css": ".ds-button-quiet { display:inline-flex; min-height:38px; align-items:center; justify-content:center; padding:8px 13px; border:0; border-radius:0; background:transparent; color:var(--color-muted); font-family:var(--font-sans); font-size:13px; font-weight:700; text-decoration:underline; text-underline-offset:4px; transition:color 180ms ease-out; } .ds-button-quiet:hover { color:var(--color-ink); } .ds-button-quiet:focus-visible { outline:3px solid var(--color-primary); outline-offset:3px; } .ds-button-quiet:active { color:var(--color-primary); } @media (pointer:coarse) { .ds-button-quiet { min-height:44px; } }"
+    },
+    {
+      "name": "Underline Select Field",
+      "kind": "input",
+      "refersTo": "field-underline",
+      "description": "Campo compatto dell'Atelier, definito da una sola regola inferiore.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">Formato</span><select class=\"ds-field-select\"><option class=\"ds-field-option\">A4</option><option class=\"ds-field-option\">A5</option><option class=\"ds-field-option\">B5</option></select><small class=\"ds-field-hint\">Formato della pagina compilata</small></label>",
+      "css": ".ds-field { display:block; min-width:0; color:var(--color-ink); font-family:var(--font-sans); } .ds-field-label { display:block; margin-bottom:5px; color:var(--color-muted); font-size:10px; font-weight:700; } .ds-field-select { width:100%; height:35px; padding:6px 2px; border:0; border-bottom:1px solid var(--color-border-strong); border-radius:0; background:transparent; color:var(--color-ink); font:inherit; font-size:13px; outline:none; } .ds-field-select:hover { border-bottom-color:var(--color-ink); } .ds-field-select:focus-visible { border-bottom-color:var(--color-primary); box-shadow:inset 0 -1px 0 var(--color-primary); outline:3px solid var(--color-primary); outline-offset:3px; } .ds-field-hint { display:block; margin-top:4px; color:var(--color-faint); font-size:9px; line-height:1.35; }"
+    },
+    {
+      "name": "Local Toggle",
+      "kind": "input",
+      "refersTo": "toggle-on",
+      "description": "Interruttore locale dell'Atelier o dell'anteprima live.",
+      "html": "<label class=\"ds-toggle\"><span class=\"ds-toggle-copy\"><strong class=\"ds-toggle-label\">Sillabazione</strong><small class=\"ds-toggle-hint\">Usa le regole della lingua scelta</small></span><input class=\"ds-toggle-input\" type=\"checkbox\" checked><span class=\"ds-toggle-rail\" aria-hidden=\"true\"><span class=\"ds-toggle-thumb\"></span></span></label>",
+      "css": ".ds-toggle { position:relative; display:flex; min-width:min(220px, 100%); align-items:center; justify-content:space-between; gap:16px; color:var(--color-ink); font-family:var(--font-sans); cursor:pointer; } .ds-toggle-copy { display:block; } .ds-toggle-label { display:block; font-size:12px; } .ds-toggle-hint { display:block; margin-top:4px; color:var(--color-faint); font-size:9px; line-height:1.35; } .ds-toggle-input { position:absolute; opacity:0; } .ds-toggle-rail { position:relative; display:block; width:36px; height:20px; flex:0 0 auto; border:1px solid var(--color-ink); border-radius:999px; background:transparent; transition:background-color 180ms ease-out; } .ds-toggle-thumb { position:absolute; top:3px; left:3px; width:12px; height:12px; border-radius:50%; background:var(--color-ink); transition:transform 180ms var(--ease-out-quint); } .ds-toggle-input:checked + .ds-toggle-rail { background:var(--color-lime); } .ds-toggle-input:checked + .ds-toggle-rail .ds-toggle-thumb { transform:translateX(16px); } .ds-toggle-input:focus-visible + .ds-toggle-rail { outline:2px solid var(--color-primary); outline-offset:3px; } .ds-toggle:hover .ds-toggle-rail { border-color:var(--color-primary); }"
+    },
+    {
+      "name": "Processing Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip",
+      "description": "Stato compatto della pipeline con testo e indicatore cromatico ridondanti.",
+      "html": "<span class=\"ds-status-chip\"><span class=\"ds-status-dot\" aria-hidden=\"true\"></span><span class=\"ds-status-label\">Elaborazione in corso</span></span>",
+      "css": ".ds-status-chip { display:inline-flex; align-items:center; gap:8px; padding:6px 12px; border:1px solid var(--color-border); border-radius:999px; background:var(--color-surface); color:var(--color-muted); font-family:var(--font-sans); font-size:12px; } .ds-status-dot { width:6px; height:6px; flex:0 0 auto; border-radius:50%; background:var(--color-primary); animation:ds-status-pulse 1.4s ease-in-out infinite; } .ds-status-label { display:inline; } @keyframes ds-status-pulse { 50% { opacity:.45; } } @media (prefers-reduced-motion:reduce) { .ds-status-dot { animation-duration:.01ms; animation-iteration-count:1; } }"
+    },
+    {
+      "name": "Document Status Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Superficie compatta che unisce sorgente, avanzamento e azioni del documento.",
+      "html": "<section class=\"ds-document-card\"><span class=\"ds-document-thumb\" aria-hidden=\"true\"><svg class=\"ds-document-icon\" viewBox=\"0 0 24 24\"><path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6\"/></svg></span><span class=\"ds-document-copy\"><strong class=\"ds-document-name\">Libro-demo.pdf</strong><small class=\"ds-document-meta\">0 B · 3/3 fasi completate</small></span><span class=\"ds-document-step\" aria-label=\"Compilazione completata\">✓</span></section>",
+      "css": ".ds-document-card { display:flex; align-items:center; gap:12px; padding:12px; border:1px solid var(--color-border); border-radius:12px; background:var(--color-surface); color:var(--color-ink); font-family:var(--font-sans); transition:border-color 180ms ease-out, background-color 180ms ease-out; } .ds-document-card:hover { border-color:var(--color-border-strong); } .ds-document-thumb { display:grid; width:44px; height:44px; flex:0 0 auto; place-items:center; border:1px solid var(--color-border); border-radius:8px; background:var(--color-surface-2); color:var(--color-faint); } .ds-document-icon { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; } .ds-document-copy { min-width:0; flex:1; } .ds-document-name { display:block; overflow:hidden; font-size:14px; font-weight:500; text-overflow:ellipsis; white-space:nowrap; } .ds-document-meta { display:block; margin-top:2px; color:var(--color-faint); font-size:12px; } .ds-document-step { display:grid; width:32px; height:32px; place-items:center; border-radius:50%; background:var(--color-primary); color:var(--color-primary-ink); font-size:14px; font-weight:700; }"
+    },
+    {
+      "name": "Top Bar Navigation",
+      "kind": "nav",
+      "refersTo": "topbar-button",
+      "description": "Barra sticky con marchio, identità, tema e accesso alle impostazioni.",
+      "html": "<nav class=\"ds-topbar\" aria-label=\"Navigazione principale\"><span class=\"ds-brand-mark\" aria-hidden=\"true\"><svg class=\"ds-brand-icon\" viewBox=\"0 0 40 40\"><path d=\"M10 5.5h17l4 4v25H10zM27 5.5v5h4M15 14h10M15 19h11M15 24h8\"/><path class=\"ds-brand-margin\" d=\"M12.5 5.5v29\"/></svg></span><span class=\"ds-brand-copy\"><strong class=\"ds-brand-wordmark\">ScanConverter</strong><small class=\"ds-brand-tagline\">Scansione · testo · pagina</small></span><span class=\"ds-topbar-spacer\"></span><button type=\"button\" class=\"ds-topbar-button\"><svg class=\"ds-topbar-icon\" viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z\"/></svg><span class=\"ds-topbar-label\">Impostazioni</span><span class=\"ds-topbar-status\" aria-label=\"Chiavi API mancanti\"></span></button></nav>",
+      "css": ".ds-topbar { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--color-ink); background:color-mix(in srgb, var(--color-bg) 94%, transparent); color:var(--color-ink); font-family:var(--font-sans); backdrop-filter:blur(14px); } .ds-brand-mark { display:grid; width:36px; height:36px; flex:0 0 auto; place-items:center; background:var(--color-lime); color:#11110f; } .ds-brand-icon { width:31px; height:31px; fill:none; stroke:currentColor; stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round; } .ds-brand-margin { stroke:var(--color-primary); stroke-width:2.4; } .ds-brand-copy { display:block; line-height:1; } .ds-brand-wordmark { display:block; font-family:var(--font-display); font-size:24px; font-weight:500; letter-spacing:-.025em; line-height:.9; } .ds-brand-tagline { display:block; margin-top:3px; color:var(--color-muted); font-size:11px; } .ds-topbar-spacer { flex:1; } .ds-topbar-button { display:inline-flex; min-height:38px; align-items:center; gap:8px; padding:7px 12px; border:1px solid var(--color-ink); background:transparent; color:var(--color-ink); font:inherit; font-size:13px; font-weight:600; transition:background-color 180ms ease-out, color 180ms ease-out, transform 180ms var(--ease-out-quint); } .ds-topbar-icon { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; } .ds-topbar-status { width:8px; height:8px; border-radius:50%; background:var(--color-warning); } .ds-topbar-button:hover { background:var(--color-ink); color:var(--color-bg); transform:translateY(-1px); } .ds-topbar-button:focus-visible { outline:3px solid var(--color-primary); outline-offset:3px; } .ds-topbar-button:active { transform:translateY(0); }"
+    },
+    {
+      "name": "Atelier Panel Trigger",
+      "kind": "custom",
+      "refersTo": "panel-trigger",
+      "description": "Ingresso del pannello firma per pagina, margini, testo, titoli e apparati.",
+      "html": "<section class=\"ds-atelier\"><button type=\"button\" class=\"ds-atelier-trigger\" aria-expanded=\"true\"><span class=\"ds-atelier-mark\" aria-hidden=\"true\"><span class=\"ds-atelier-rule ds-atelier-rule-ink\"></span><span class=\"ds-atelier-rule ds-atelier-rule-violet\"></span><span class=\"ds-atelier-rule ds-atelier-rule-lime\"></span><span class=\"ds-atelier-dot\"></span></span><span class=\"ds-atelier-copy\"><strong class=\"ds-atelier-title\">Atelier di impaginazione</strong><small class=\"ds-atelier-summary\">Pagina, margini, testo, titoli e apparati · tutto applicabile in locale</small></span><span class=\"ds-atelier-count\">30+ controlli</span><span class=\"ds-atelier-chevron\" aria-hidden=\"true\">↑</span></button><div class=\"ds-atelier-section\"><strong class=\"ds-atelier-section-title\">Pagina e margini</strong><small class=\"ds-atelier-section-summary\">formato, orientamento, colonne, rilegatura</small><span class=\"ds-atelier-section-state\" aria-hidden=\"true\">×</span></div></section>",
+      "css": ".ds-atelier { overflow:hidden; border:1px solid var(--color-border); border-radius:12px; background:var(--color-surface); color:var(--color-ink); font-family:var(--font-sans); } .ds-atelier-trigger { display:flex; width:100%; align-items:center; gap:13px; padding:14px 16px; border:0; background:transparent; color:inherit; text-align:left; transition:background-color 180ms ease-out; } .ds-atelier-trigger:hover { background:var(--color-lime-soft); } .ds-atelier-trigger:focus-visible { outline:3px solid var(--color-primary); outline-offset:-3px; } .ds-atelier-trigger:active { background:var(--color-surface-2); } .ds-atelier-mark { position:relative; display:block; width:35px; height:28px; flex:0 0 auto; } .ds-atelier-rule { position:absolute; left:0; display:block; height:2px; } .ds-atelier-rule-ink { top:3px; width:34px; background:var(--color-ink); } .ds-atelier-rule-violet { top:13px; width:24px; background:var(--color-primary); } .ds-atelier-rule-lime { top:23px; width:29px; background:var(--color-lime); } .ds-atelier-dot { position:absolute; top:9px; left:27px; width:7px; height:7px; border-radius:50%; background:var(--color-primary); } .ds-atelier-copy { min-width:0; flex:1; } .ds-atelier-title { display:block; font-size:14px; font-weight:700; } .ds-atelier-summary { display:block; margin-top:2px; color:var(--color-faint); font-size:11px; line-height:1.4; } .ds-atelier-count { flex:0 0 auto; padding:4px 8px; border:1px solid var(--color-border); border-radius:999px; color:var(--color-muted); font-size:10px; font-weight:700; } .ds-atelier-chevron { color:var(--color-muted); font-size:16px; } .ds-atelier-section { display:grid; grid-template-columns:minmax(0,1fr) auto 22px; align-items:center; gap:12px; padding:12px 16px; border-top:1px solid var(--color-ink); border-bottom:1px solid var(--color-border); } .ds-atelier-section-title { font-size:13px; font-weight:700; } .ds-atelier-section-summary { color:var(--color-faint); font-size:10px; text-align:right; } .ds-atelier-section-state { font-size:16px; text-align:center; } @media (max-width:720px) { .ds-atelier-count, .ds-atelier-section-summary { display:none; } .ds-atelier-section { grid-template-columns:minmax(0,1fr) 22px; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Il Banco Editoriale",
+    "overview": "ScanConverter è un banco editoriale operativo: una superficie continua su cui un documento passa da scansione a testo, da testo a sorgente Typst e da sorgente a pagina verificabile. L’interfaccia deve sembrare un luogo di lavoro preciso e durevole, non una dashboard di riquadri intercambiabili.\n\nIl riferimento a Soglia vive nella cura tipografica, nel contrasto asciutto, nelle superfici minerali e nelle micro-interazioni misurate. Qui quel linguaggio diventa più tecnico e leggibile: carta chiara o grafite, regole sottili, gerarchie nette e accenti rari che chiariscono il tipo di azione.\n\nIl documento resta sempre il protagonista. Stato, importazione, ripresa, Atelier di impaginazione, editor e anteprima devono comporre un unico flusso di lavoro, con controlli densi ma mai compressi e con la differenza fra azioni locali e operative sempre percepibile.",
+    "keyCharacteristics": [
+      "Banco continuo, non mosaico di card.",
+      "Carta minerale e grafite strutturate da regole da 1 px.",
+      "Violetto per stato e azioni operative; lime per interventi locali e deterministici.",
+      "Barlow Condensed per identità e grandi gerarchie; Manrope per il lavoro quotidiano.",
+      "Editor, diagnostica e anteprima trattati come strumenti coordinati dello stesso documento."
+    ],
+    "rules": [
+      {
+        "name": "The Two Speeds Rule",
+        "body": "Il violetto comunica stato e azione operativa; il lime comunica un intervento locale e deterministico. Non scambiarne i ruoli.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paper Before Panels Rule",
+        "body": "Prima di aggiungere un colore di riempimento, prova una regola sottile o un passaggio fra le superfici di carta già esistenti.",
+        "section": "colors"
+      },
+      {
+        "name": "The Narrow Voice Rule",
+        "body": "Barlow Condensed appartiene al wordmark e alle gerarchie editoriali ampie; i controlli operativi restano in Manrope.",
+        "section": "typography"
+      },
+      {
+        "name": "The Continuous Bench Rule",
+        "body": "Le sezioni correlate condividono una superficie e sono separate da regole; non annidare card dentro card quando basta una divisione editoriale.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat-by-Default Rule",
+        "body": "Card, Atelier, toolbar e pannelli restano senza ombra; una superficie si solleva solo quando il suo comportamento introduce un vero livello sopra il banco.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Soft Instrument Rule",
+        "body": "Arrotonda l’oggetto interattivo, non ogni divisione interna: le regole e i campi lineari preservano il carattere di strumento.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Motion Has a Job Rule",
+        "body": "Le transizioni di stato durano 180–220 ms e possono sollevare un controllo di 1 px; shimmer e puntini sono riservati all’attesa, e prefers-reduced-motion li riduce quasi a zero.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do mantenere stato, ripresa, importazione, Atelier, editor e anteprima nello stesso percorso leggibile.",
+      "Do usare regole da 1 px e passaggi fra superfici di carta per strutturare il banco.",
+      "Do riservare il lime alle azioni locali e deterministiche e il violetto a stato e azioni operative.",
+      "Do preservare focus visibile, target touch da 44 px e riduzione del movimento.",
+      "Do lasciare che codice Typst e pagina compilata restino visibili o raggiungibili come due viste dello stesso documento."
+    ],
+    "donts": [
+      "Don't trasformare il workspace in una dashboard di card indipendenti o annidate.",
+      "Don't usare ombre per decorare superfici a riposo o per sostituire una gerarchia tonale chiara.",
+      "Don't usare Barlow Condensed per campi, note, diagnostica o testo operativo denso.",
+      "Don't affidare stato, errore o successo al solo colore.",
+      "Don't introdurre metriche, testimonianze o promesse prestazionali che il prodotto non possiede."
+    ]
+  }
+}

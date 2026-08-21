@@ -18,8 +18,47 @@ test('genera le nuove opzioni di impaginazione localmente', () => {
   assert.match(preamble, /columns: 3/);
   assert.match(preamble, /size: 12pt/);
   assert.match(preamble, /hyphenate: true/);
-  assert.match(preamble, /align\(center, it\)/);
+  assert.match(preamble, /show heading: set align\(center\)/);
   assert.match(preamble, /first-line-indent: 0.7em/);
+});
+
+test('normalizza margini e tipografia granulari senza accettare valori fuori scala', () => {
+  const preamble = buildPreamble({
+    paper: 'custom',
+    pageWidthMm: 170,
+    pageHeightMm: 240,
+    marginMode: 'mirrored',
+    marginTopCm: 2.1,
+    marginBottomCm: 2.2,
+    marginInsideCm: 3.4,
+    marginOutsideCm: 1.8,
+    binding: 'left',
+    bodySizePt: 999,
+    leadingEm: 0.8,
+    paragraphSpacingEm: 0.6,
+    indentEm: 1.5,
+    indentAll: true,
+    heading1Pt: 24,
+    headingNumbering: 'decimal-dot',
+    pageNumbering: 'roman-upper',
+    pageNumberPosition: 'bottom-right',
+    headerMode: 'custom',
+    headerText: 'Archivio "A"',
+    figureAlign: 'left',
+    captionPosition: 'top',
+    footnoteSizePt: 8,
+  });
+  assert.match(preamble, /width: 170mm, height: 240mm/);
+  assert.match(preamble, /inside: 3.4cm, outside: 1.8cm/);
+  assert.match(preamble, /binding: left/);
+  assert.match(preamble, /size: 24pt, weight: 400/);
+  assert.doesNotMatch(preamble, /999pt/);
+  assert.match(preamble, /first-line-indent: \(amount: 1.5em, all: true\)/);
+  assert.match(preamble, /numbering: "I"/);
+  assert.match(preamble, /number-align: right \+ bottom/);
+  assert.match(preamble, /text\("Archivio \\"A\\""/);
+  assert.match(preamble, /figure\.caption\(position: top\)/);
+  assert.match(preamble, /footnote\.entry: set text\(size: 8pt\)/);
 });
 
 test('disattiva la sillabazione salvo scelta esplicita e migra i vecchi documenti', () => {

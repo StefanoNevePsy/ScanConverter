@@ -23,6 +23,7 @@ import {
   formatTypstDiagnostics,
   normalizeTypstDiagnostics,
 } from './typstdiag.js';
+import { compileWithNativeTypst, hasNativeTypstEngine } from './desktop.js';
 
 export { normalizeTypstDiagnostics, parseTypstRange } from './typstdiag.js';
 
@@ -58,7 +59,7 @@ function serializedCompile(task) {
  * Inizializza compilatore e renderer una sola volta (idempotente).
  * Le opzioni vanno impostate PRIMA della prima compilazione.
  */
-export function initTypst() {
+function initWasmTypst() {
   if (!initPromise) {
     initPromise = (async () => {
       // $typst è un singleton condiviso: se un'altra istanza del modulo (es.
@@ -81,6 +82,16 @@ export function initTypst() {
     })();
   }
   return initPromise;
+}
+
+/**
+ * Sul desktop il warm-up del grosso compilatore WASM non serve: il binario
+ * Typst viene inizializzato nel processo isolato alla prima richiesta. Web e
+ * Android mantengono invece esattamente il backend precedente.
+ */
+export async function initTypst() {
+  if (await hasNativeTypstEngine()) return;
+  await initWasmTypst();
 }
 
 /**
@@ -120,9 +131,9 @@ function compileError(diagnostics, fallback) {
   return error;
 }
 
-async function compileArtifact(source, figures, format = CompileFormatEnum.vector) {
+async function compileWasmArtifact(source, figures, format = CompileFormatEnum.vector) {
   validateSource(source);
-  await initTypst();
+  await initWasmTypst();
   await prepareFigures(figures);
   const compiler = await $typst.getCompiler();
   await compiler.reset();
@@ -143,6 +154,15 @@ async function compileArtifact(source, figures, format = CompileFormatEnum.vecto
   return { artifact: result.result, diagnostics };
 }
 
+async function compileNativeArtifact(source, figures, diagnoseOnly) {
+  validateSource(source);
+  const result = await compileWithNativeTypst(source, figures, diagnoseOnly);
+  if (result == null) return null;
+  const diagnostics = normalizeTypstDiagnostics(result.diagnostics);
+  if (!result.ok) throw compileError(diagnostics, result.error);
+  return { artifact: result.artifact || null, diagnostics };
+}
+
 /**
  * Controlla sintassi e semantica senza renderizzare: è il percorso economico
  * usato dal correttore per provare molte patch su documenti molto lunghi.
@@ -150,7 +170,8 @@ async function compileArtifact(source, figures, format = CompileFormatEnum.vecto
 export async function diagnoseTypst(source, figures = []) {
   return serializedCompile(async () => {
     try {
-      const compiled = await compileArtifact(source, figures);
+      const native = await compileNativeArtifact(source, figures, true);
+      const compiled = native || await compileWasmArtifact(source, figures);
       return { ok: true, diagnostics: compiled.diagnostics };
     } catch (error) {
       return {
@@ -163,12 +184,14 @@ export async function diagnoseTypst(source, figures = []) {
 }
 
 export async function compileToPdf(source, figures = []) {
-  const { artifact: bytes } = await serializedCompile(() =>
-    compileArtifact(source, figures, CompileFormatEnum.pdf));
-  if (!bytes || !bytes.length) {
+  const { artifact } = await serializedCompile(async () => {
+    const native = await compileNativeArtifact(source, figures, false);
+    return native || compileWasmArtifact(source, figures, CompileFormatEnum.pdf);
+  });
+  if (!artifact || (!artifact.length && artifact.kind !== 'desktop-pdf')) {
     throw new Error('Il compilatore Typst non ha prodotto alcun output PDF.');
   }
-  return bytes;
+  return artifact;
 }
 
 /**
@@ -204,7 +227,7 @@ export function formatTypstError(err) {
  */
 export async function compileToSvg(source, figures = []) {
   return serializedCompile(async () => {
-    const { artifact } = await compileArtifact(source, figures);
+    const { artifact } = await compileWasmArtifact(source, figures);
     try {
       // Riusa l'artefatto vettoriale appena validato: nessuna seconda
       // compilazione del sorgente prima del rendering SVG.
