@@ -264,7 +264,68 @@ function pdfFileName(value) {
   return name.toLowerCase().endsWith('.pdf') ? name : `${name}.pdf`;
 }
 
+
+/*
+  Esito dell'installazione locale, scritto dagli script in tools/setup.
+
+  Lo script sa dove ha messo le cose; l'app no, e finora l'utente doveva
+  ridigitare gli indirizzi a mano. Il file contiene soltanto percorsi e
+  indirizzi locali — nessuna chiave, nessun dato dei documenti — e viene
+  letto in sola lettura all'avvio.
+*/
+function localSetupCandidates() {
+  const parent = path.dirname(app.getPath('userData'));
+  return [
+    // In sviluppo il nome dell'app è minuscolo e non coincide con quello
+    // che gli script usano: si guardano entrambi.
+    path.join(app.getPath('userData'), 'local-setup.json'),
+    path.join(parent, 'ScanConverter', 'local-setup.json'),
+  ];
+}
+
+function readLocalSetup() {
+  for (const candidate of localSetupCandidates()) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      if (parsed?.schemaVersion !== 1) continue;
+      return {
+        found: true,
+        path: candidate,
+        root: String(parsed.root || ''),
+        model: String(parsed.model || ''),
+        components: String(parsed.components || ''),
+        localEndpoint: String(parsed.localEndpoint || ''),
+        localOcrEndpoint: String(parsed.localOcrEndpoint || ''),
+        typstPath: String(parsed.typstPath || ''),
+        // Un disco esterno scollegato è il caso normale, non un errore:
+        // l'app deve poterlo dire invece di fallire senza spiegazioni.
+        rootAvailable: Boolean(parsed.root) && fs.existsSync(String(parsed.root)),
+      };
+    } catch {
+      /* assente o illeggibile: si prova il candidato successivo */
+    }
+  }
+  return { found: false };
+}
+
 function registerDesktopIpc() {
+  ipcMain.handle('desktop:local-setup', async (event) => {
+    assertTrustedRenderer(event);
+    return readLocalSetup();
+  });
+
+  // Scegliere una cartella a mano è penoso e sbagliarla costa un download
+  // da gigabyte: sul desktop si apre il selettore di sistema.
+  ipcMain.handle('desktop:choose-folder', async (event) => {
+    assertTrustedRenderer(event);
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Dove installare gli accessori locali',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || !result.filePaths?.length) return { cancelled: true };
+    return { cancelled: false, path: result.filePaths[0] };
+  });
+
   ipcMain.handle('desktop:capabilities', async (event) => {
     assertTrustedRenderer(event);
     return {

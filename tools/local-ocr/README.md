@@ -9,6 +9,36 @@ verificato che ti serva.
 
 ---
 
+## La strada corta: lo script
+
+Quello che segue nelle prossime sezioni è il lavoro fatto a mano, spiegato
+passo per passo. Se vuoi solo che funzioni, lo stesso lavoro è in uno script
+parametrico sulla cartella di destinazione:
+
+```
+cd tools\setup
+.\Install-ScanConverter.ps1 -Root D:\ScanConverter
+```
+
+(su macOS e Linux: `./install-scanconverter.sh --root /Volumes/Esterno/SC`)
+
+Crea le cartelle, installa Ollama dove dici tu, scarica il modello, prende il
+compilatore Typst nativo e imposta le variabili d'ambiente perché tutto punti
+lì. **Niente finisce su C:** se non glielo chiedi.
+
+Il comando esatto, con il percorso già dentro, te lo scrive l'app:
+Impostazioni → Pipeline locale → «Dove installare». Lì c'è anche il tasto che
+verifica se i servizi rispondono davvero, che è l'unico modo di saperlo.
+
+Lo script è **rieseguibile**: quello che c'è già lo salta. Se un disco esterno
+cambia lettera — succede — rilancialo con quella nuova: non riscarica niente,
+rimette solo a posto i percorsi.
+
+Il resto di questa guida serve se vuoi capire cosa fa, o se preferisci farlo
+a mano.
+
+---
+
 ## Pezzo 1 — Il modello linguistico (comincia da qui)
 
 Serve per la rilettura: accenti, parole troncate, refusi. È la fase con più
@@ -54,18 +84,22 @@ Sulla tua RTX 3080 da 10 GB, `qwen3:8b` entra comodamente e lascia margine.
 
 ### Configurazione nell'app
 
-Impostazioni → nella sezione **Correzioni AI** scegli **Modello locale**.
-Compare la sezione «Pipeline locale» con i campi già compilati
-(`http://localhost:11434/v1/chat/completions` e `qwen3:8b`): se non hai
-cambiato nulla in Ollama, vanno bene così.
+Impostazioni → **Motori per fase**. Ogni fase ha la sua riga, con il motore e
+il modello: scegli **Locale** su «Rilettura e ortografia». L'elenco dei modelli
+si popola da solo con quelli che hai scaricato — non devi ricordarne i tag.
 
-Lascia pure l'OCR su Gemini e il Typst su Gemini. **Questo è già il 90% del
-beneficio pratico**, e non perdi né la struttura né le figure.
+Lascia pure l'OCR e il Typst su Gemini. **Questo è già il 90% del beneficio
+pratico**, e non perdi né la struttura né le figure.
+
+La stessa riga esiste per la **traduzione**, che è una fase a sé: produce un
+secondo documento e non tocca l'originale. Anche quella può girare in locale,
+ed è la fase in cui conviene di più — sono molte chiamate su molto testo.
 
 ### Se su C: hai poco spazio
 
-Tutto si può spostare, ma va fatto **prima** di scaricare i modelli — altrimenti
-li riscarichi.
+Lo script in cima a questa guida fa già tutto quello che segue. Qui sotto c'è
+cosa fa, se preferisci farlo a mano. In ogni caso va fatto **prima** di
+scaricare i modelli — altrimenti li riscarichi.
 
 **I modelli di Ollama** (la parte pesante, ~5 GB). Imposta una variabile
 d'ambiente di sistema e riavvia Ollama:
@@ -148,7 +182,7 @@ con CUDA. Non è un capriccio del nostro codice: è il requisito di NVIDIA.
    Il modello (poche centinaia di MB) si scarica al primo avvio in
    `~/.cache/huggingface`.
 
-4. Nell'app: Impostazioni → **Motore OCR** → **Locale (sidecar)**.
+4. Nell'app: Impostazioni → **Motori per fase** → riga «Lettura (OCR)» → **Locale**.
 
 ### Verifica
 
@@ -169,10 +203,51 @@ digitalizzando, per esempio:
 Non è un dettaglio estetico. Senza, lo spellchecker segnala «parentificazione»
 come parola sconosciuta e la manda al modello, che può "correggerla" in
 qualcosa di più comune. Dichiarare il dominio la rende **attesa**, e vale per
-tutte e tre le fasi: ortografia, rilettura e conversione in Typst.
+tutte le fasi: ortografia, rilettura, conversione in Typst e traduzione — dove
+serve anche a scegliere il traducente giusto per un termine tecnico.
 
 Vale la pena aggiornarlo quando cambi argomento, ma se la tua biblioteca è
 tutta della stessa area lo scrivi una volta sola.
+
+---
+
+## La traduzione
+
+È una fase **separata**, non un passaggio della pipeline, e la ragione è
+strutturale: ogni verifica di questo progetto — inventario dei token,
+sottosequenza, guardia sulle tabelle — esiste per impedire che il testo cambi.
+Una traduzione cambia ogni parola. Farla passare di lì vorrebbe dire spegnere
+proprio le difese che rendono affidabile il resto.
+
+Quindi la traduzione produce un **secondo documento**, che percorre poi la
+stessa strutturazione dell'originale. Nell'elenco li trovi entrambi, e
+l'originale non viene toccato.
+
+Si avvia dal workspace: pannello **Traduci**, sotto l'editor.
+
+### Come viene tagliato il testo
+
+Qui si decide quasi tutta la qualità, molto più che nella scelta del modello.
+
+- **Nessuna frase spezzata a metà.** Un modello che riceve «…e per questo
+  motivo la famiglia» non ha modo di sapere come finisce, e completa a caso.
+  I tagli cadono fra blocchi; dentro un blocco troppo grande, fra frasi. Le
+  abbreviazioni sono riconosciute, così «cfr. Bateson» e «p. 42» non diventano
+  due frasi.
+- **Contesto prima e dopo.** Ogni passaggio porta con sé qualche frase
+  precedente e seguente, dichiarate come contesto da leggere e *non* da
+  tradurre. Senza, all'inizio di ogni pezzo i pronomi non hanno antecedente
+  («questo approccio» — quale?) e i termini ricorrenti cambiano resa a ogni
+  pezzo. Quante frasi lo decidi in Impostazioni → Opzioni avanzate →
+  «Contesto della traduzione» (default 2).
+- **Struttura verificata, non sperata.** I blocchi viaggiano etichettati e la
+  risposta viene ricontrollata: se ne manca uno, quel blocco viene ritradotto
+  da solo. Se proprio non torna, resta in lingua originale e te lo dice — non
+  sparisce in silenzio. I percorsi delle figure vengono ripristinati se il
+  modello li ha "tradotti".
+
+Il **contesto del documento** (sotto) vale anche qui, e serve a scegliere il
+traducente giusto: senza, «ipotizzazione» diventa quello che capita.
 
 ---
 

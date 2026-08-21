@@ -4,6 +4,7 @@ import { PHASES, PHASE_META, PHASE_DEFAULTS, phaseConfig, withPhase } from '../l
 import { listGeminiModels } from '../lib/gemini.js';
 import { listNvidiaModels } from '../lib/nvidia.js';
 import { listLocalModels } from '../lib/local.js';
+import LocalSetupPanel from './LocalSetupPanel.jsx';
 import { IconX, IconEye, IconEyeOff, IconKey, IconSpinner, IconRefresh } from './Icons.jsx';
 
 /**
@@ -365,6 +366,17 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 troncate, con gli stessi guard usati per Gemini. Serve Ollama in
                 esecuzione (e il sidecar OCR, se scegli l’OCR locale).
               </p>
+              <LocalSetupPanel
+                localEndpoint={form.localEndpoint}
+                localOcrEndpoint={form.localOcrEndpoint}
+                onApplySetup={(setup) =>
+                  setForm((f) => ({
+                    ...f,
+                    localEndpoint: setup.localEndpoint || f.localEndpoint,
+                    localOcrEndpoint: setup.localOcrEndpoint || f.localOcrEndpoint,
+                  }))
+                }
+              />
               <Field
                 label="Endpoint LLM locale"
                 hint="Ollama espone l’API compatibile OpenAI su questa porta."

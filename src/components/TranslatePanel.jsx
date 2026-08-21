@@ -50,7 +50,7 @@ export default function TranslatePanel({
             <label className="flex flex-col gap-1 text-xs text-faint">
               Lingua del documento
               <select
-                className="input"
+                className="w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink transition-colors focus:border-primary focus:outline-none"
                 value={sourceLang}
                 onChange={(e) => onLanguageChange({ sourceLang: e.target.value })}
                 disabled={busy}
@@ -63,7 +63,7 @@ export default function TranslatePanel({
             <label className="flex flex-col gap-1 text-xs text-faint">
               Tradurre in
               <select
-                className="input"
+                className="w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink transition-colors focus:border-primary focus:outline-none"
                 value={targetLang}
                 onChange={(e) => onLanguageChange({ targetLang: e.target.value })}
                 disabled={busy}
@@ -77,7 +77,7 @@ export default function TranslatePanel({
 
           <button
             type="button"
-            className="btn btn-primary w-full justify-center"
+            className="button-primary w-full"
             onClick={onTranslate}
             disabled={busy || disabled || sourceLang === targetLang}
           >

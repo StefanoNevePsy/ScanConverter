@@ -344,18 +344,26 @@ export async function translateDocument({ settings, markdown, onProgress, signal
     }
     if (!translatable.length) continue;
 
-    const answer = await engineChat({
-      settings,
-      phase: 'translate',
-      system: SYSTEM,
-      user: buildUser({ group: { ...group, blocks: translatable }, sourceLang, targetLang, settings }),
-      // Zero: una traduzione non guadagna nulla dalla varianza, e la
-      // ripetibilità permette di riprendere un documento interrotto.
-      temperature: 0,
-      maxTokens: 8192,
-      signal,
-    });
-    const parsed = parseMarked(answer);
+    // Un gruppo che fallisce non deve buttare via il documento: si ripiega
+    // sui blocchi singoli, che è già la strada per i blocchi mancanti. Su un
+    // libro, perdere tutto per una risposta vuota a metà è il danno peggiore.
+    let parsed = new Map();
+    try {
+      const answer = await engineChat({
+        settings,
+        phase: 'translate',
+        system: SYSTEM,
+        user: buildUser({ group: { ...group, blocks: translatable }, sourceLang, targetLang, settings }),
+        // Zero: una traduzione non guadagna nulla dalla varianza, e la
+        // ripetibilità permette di riprendere un documento interrotto.
+        temperature: 0,
+        maxTokens: 8192,
+        signal,
+      });
+      parsed = parseMarked(answer);
+    } catch (error) {
+      if (signal?.aborted || error?.name === 'AbortError') throw error;
+    }
 
     for (const block of translatable) {
       const value = parsed.get(block.id);
