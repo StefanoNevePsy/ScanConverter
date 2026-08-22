@@ -86,6 +86,16 @@ test('normalizza il grassetto Markdown senza toccare il testo', () => {
   assert.equal(autofixTypst('#let __nome__ = 1').fixed, '#let __nome__ = 1');
 });
 
+test('converte le celle multirow LaTeX senza scambiare {asterisco} per grassetto', () => {
+  const source = '#table(columns: 2, [\\\\multirow{4}{*}{Obbligato a}], [Valore])';
+  const repaired = autofixTypst(source);
+  assert.equal(
+    repaired.fixed,
+    '#table(columns: 2, table.cell(rowspan: 4)[Obbligato a], [Valore])',
+  );
+  assert.match(repaired.changes[0], /multirow/);
+});
+
 test('il motore iterativo supera il vecchio limite di quattro errori', async () => {
   const source = Array.from({ length: 9 }, (_, i) => `Blocco ${i + 1}.\n#newpage()`).join('\n\n');
   const diagnose = async (code) => {

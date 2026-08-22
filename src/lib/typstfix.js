@@ -780,6 +780,21 @@ export function autofixTypst(source) {
   const changes = [];
   const count = (re) => (s.match(re) || []).length;
 
+  // Tabelle OCR/LaTeX: `multirow` porta spesso con sé l'argomento `{*}`.
+  // In Typst quell'asterisco non significa «larghezza naturale»: apre un
+  // grassetto che attraversa il resto del documento e viene diagnosticato
+  // come `unclosed delimiter`. Quando la macro occupa una cella completa
+  // possiamo conservarne anche il rowspan con la sintassi Typst nativa.
+  const latexMultirowCell = /\[\\+multirow\s*\{\s*(\d+)\s*\}\s*\{\s*\*\s*\}\s*\{([^{}\n]*)\}\]/g;
+  const multirowCells = count(latexMultirowCell);
+  if (multirowCells) {
+    s = s.replace(
+      latexMultirowCell,
+      (_, rows, content) => `table.cell(rowspan: ${Math.max(1, Number(rows))})[${content}]`,
+    );
+    changes.push(`${multirowCells} cella/e LaTeX multirow → rowspan Typst`);
+  }
+
   // Markdown grassetto residuo: Typst usa un solo `*` per lato. Le forme a
   // doppio delimitatore possono confondere il parser nei chunk prodotti da
   // modelli abituati al Markdown.
