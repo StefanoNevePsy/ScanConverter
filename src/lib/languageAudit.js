@@ -40,6 +40,111 @@ function duplicateKey(value) {
     .trim();
 }
 
+function wordCount(value) {
+  return duplicateKey(value).split(' ').filter(Boolean).length;
+}
+
+function sentenceRanges(value) {
+  const text = String(value || '');
+  const ranges = [];
+  const pushRange = (rawStart, rawEnd) => {
+    let start = rawStart;
+    let end = rawEnd;
+    while (start < end && /\s/u.test(text[start])) start++;
+    while (end > start && /\s/u.test(text[end - 1])) end--;
+    if (start < end) ranges.push({ start, end, text: text.slice(start, end) });
+  };
+  if (typeof Intl?.Segmenter === 'function') {
+    const segmenter = new Intl.Segmenter('it', { granularity: 'sentence' });
+    for (const segment of segmenter.segment(text)) {
+      pushRange(segment.index, segment.index + segment.segment.length);
+    }
+    return ranges;
+  }
+  const matcher = /[^.!?…]+(?:[.!?…]+[\])}"'»”’]*|$)/gu;
+  for (const match of text.matchAll(matcher)) pushRange(match.index, match.index + match[0].length);
+  return ranges;
+}
+
+function wordTokens(value) {
+  const text = String(value || '');
+  return [...text.matchAll(/[\p{L}\p{N}][\p{L}\p{M}\p{N}'’\-]*/gu)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+    key: match[0]
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .toLocaleLowerCase(),
+  }));
+}
+
+function repeatedSentenceItems(passage) {
+  const sentences = sentenceRanges(passage.text);
+  const items = [];
+  for (let index = 1; index < sentences.length; index++) {
+    const previous = sentences[index - 1];
+    const current = sentences[index];
+    const key = duplicateKey(current.text);
+    if (key.length < 45 || wordCount(current.text) < 8 || key !== duplicateKey(previous.text)) continue;
+    let end = current.end;
+    while (end < passage.text.length && /\s/u.test(passage.text[end])) end++;
+    items.push({
+      id: `duplicate-sentence-${passage.start + current.start}-${passage.start + end}`,
+      type: 'sentence',
+      page: passage.page,
+      start: passage.start + current.start,
+      end: passage.start + end,
+      duplicateOfStart: passage.start + previous.start,
+      text: current.text,
+      sample: plainText(current.text).replace(/\s+/g, ' ').trim().slice(0, 240),
+      recommended: true,
+    });
+  }
+  return items;
+}
+
+function repeatedFragmentItems(passage) {
+  const tokens = wordTokens(passage.text);
+  const items = [];
+  const recent = new Map();
+  const minimumWords = 8;
+  const maximumWords = 48;
+  for (let index = 0; index + minimumWords <= tokens.length; index++) {
+    const anchor = tokens.slice(index, index + minimumWords).map((token) => token.key).join(' ');
+    const previous = recent.get(anchor);
+    recent.set(anchor, index);
+    if (previous == null) continue;
+    const length = index - previous;
+    if (length < minimumWords || length > maximumWords || index + length > tokens.length) continue;
+    let equal = true;
+    for (let offset = 0; offset < length; offset++) {
+      if (tokens[previous + offset].key !== tokens[index + offset].key) {
+        equal = false;
+        break;
+      }
+    }
+    if (!equal) continue;
+    const firstText = passage.text.slice(tokens[previous].start, tokens[index - 1].end);
+    if (duplicateKey(firstText).length < 45) continue;
+    // Si elimina il separatore dopo la prima copia insieme alla seconda copia,
+    // conservando invece la punteggiatura finale della seconda occorrenza.
+    const localStart = tokens[index - 1].end;
+    const localEnd = tokens[index + length - 1].end;
+    items.push({
+      id: `duplicate-fragment-${passage.start + localStart}-${passage.start + localEnd}`,
+      type: 'fragment',
+      page: passage.page,
+      start: passage.start + localStart,
+      end: passage.start + localEnd,
+      duplicateOfStart: passage.start + tokens[previous].start,
+      text: firstText,
+      sample: plainText(firstText).replace(/\s+/g, ' ').trim().slice(0, 240),
+      recommended: true,
+    });
+  }
+  return items;
+}
+
 function classify(text) {
   const first = text.trimStart();
   if (/^#{1,6}\s/.test(first)) return 'heading';
@@ -216,6 +321,49 @@ export function findAdjacentDuplicatePassages(markdown) {
     duplicates.push({ ...passage, duplicateOf: previous.id });
   }
   return duplicates;
+}
+
+/**
+ * Cerca ripetizioni esatte consecutive ad alta confidenza, senza LLM.
+ * L'ordine di precedenza evita suggerimenti sovrapposti: un intero paragrafo
+ * duplicato non viene segnalato anche come frase o frammento duplicato.
+ */
+export function auditDocumentDuplicates(markdown) {
+  const passages = documentLanguagePassages(markdown).filter((passage) => (
+    passage.translate && passage.kind === 'prose' && !passage.referenceSection
+  ));
+  const candidates = [];
+  for (const duplicate of findAdjacentDuplicatePassages(markdown)) {
+    candidates.push({
+      ...duplicate,
+      id: `duplicate-paragraph-${duplicate.start}-${duplicate.end}`,
+      type: 'paragraph',
+      duplicateOfStart: passages.find((item) => item.id === duplicate.duplicateOf)?.start ?? null,
+      sample: plainText(duplicate.text).replace(/\s+/g, ' ').trim().slice(0, 240),
+      recommended: true,
+    });
+  }
+  for (const passage of passages) {
+    candidates.push(...repeatedSentenceItems(passage), ...repeatedFragmentItems(passage));
+  }
+  const priority = { paragraph: 0, sentence: 1, fragment: 2 };
+  const accepted = [];
+  for (const candidate of candidates.sort((a, b) => (
+    priority[a.type] - priority[b.type] || a.start - b.start || b.end - a.end
+  ))) {
+    if (accepted.some((item) => candidate.start < item.end && candidate.end > item.start)) continue;
+    accepted.push(candidate);
+  }
+  const items = accepted.sort((a, b) => a.start - b.start);
+  return {
+    totalPassages: passages.length,
+    items,
+    counts: {
+      paragraphs: items.filter((item) => item.type === 'paragraph').length,
+      sentences: items.filter((item) => item.type === 'sentence').length,
+      fragments: items.filter((item) => item.type === 'fragment').length,
+    },
+  };
 }
 
 /** Accetta `251, 285-286, 306`; rifiuta input ambiguo o intervalli enormi. */

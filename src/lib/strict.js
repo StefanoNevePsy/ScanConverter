@@ -739,13 +739,39 @@ export function rebaseCanonicalRevision(editorCode, currentCanonical, nextCanoni
   const afterEnd = after.length - suffix;
   // Prova prima il diff minimo: preserva anche modifiche manuali molto vicine.
   // Se è ambiguo, amplia gradualmente il contesto fino a renderlo univoco.
-  for (const context of [0, 20, 50, 100, 220]) {
+  for (const context of [0, 20, 50, 100, 220, 500, 1000, 2000, 5000]) {
     const left = Math.max(0, prefix - context);
     const rightContext = Math.min(context, suffix);
     const find = before.slice(left, beforeEnd + rightContext);
     const replacement = after.slice(left, afterEnd + rightContext);
     const rebased = replaceUniqueText(editorCode, find, replacement);
     if (rebased != null) return rebased;
+  }
+  // Se il testo del passaggio è stato già ritoccato nell'editor, la sequenza
+  // canonica da sostituire non esiste più byte per byte. Due ancore univoche
+  // ai lati permettono comunque di localizzare la sola regione richiesta.
+  // È il caso tipico dei libri riletti manualmente e dei paragrafi duplicati:
+  // l'unicità viene dal contesto della pagina, non dalla frase isolata.
+  for (const context of [100, 220, 500, 1000, 2000, 5000]) {
+    const leftStart = Math.max(0, prefix - context);
+    const rightEnd = Math.min(before.length, beforeEnd + context);
+    const leftAnchor = before.slice(leftStart, prefix);
+    const rightAnchor = before.slice(beforeEnd, rightEnd);
+    if (leftAnchor.length < 40 || rightAnchor.length < 40) continue;
+    const leftPos = editorCode.indexOf(leftAnchor);
+    const rightPos = editorCode.indexOf(rightAnchor);
+    if (
+      leftPos < 0 ||
+      rightPos < 0 ||
+      editorCode.indexOf(leftAnchor, leftPos + 1) >= 0 ||
+      editorCode.indexOf(rightAnchor, rightPos + 1) >= 0
+    ) continue;
+    const replaceStart = leftPos + leftAnchor.length;
+    if (rightPos < replaceStart) continue;
+    const expectedLength = beforeEnd - prefix;
+    const locatedLength = rightPos - replaceStart;
+    if (locatedLength > Math.max(expectedLength * 3, expectedLength + 5000)) continue;
+    return editorCode.slice(0, replaceStart) + after.slice(prefix, afterEnd) + editorCode.slice(rightPos);
   }
   return null;
 }
@@ -771,13 +797,130 @@ export function rebaseStrictPassage(editorCode, beforeMarkdown, afterMarkdown) {
   ) suffix++;
   const beforeEnd = before.length - suffix;
   const afterEnd = after.length - suffix;
-  for (const context of [0, 20, 50, 100, 220]) {
+  for (const context of [0, 20, 50, 100, 220, 500, 1000, 2000, 5000]) {
     const left = Math.max(0, prefix - context);
     const rightContext = Math.min(context, suffix);
     const find = before.slice(left, beforeEnd + rightContext);
     const replacement = after.slice(left, afterEnd + rightContext);
     const rebased = replaceUniqueText(editorCode, find, replacement);
     if (rebased != null) return rebased;
+  }
+  return null;
+}
+
+function normalizedTokenSpans(value) {
+  return [...String(value || '').matchAll(/[\p{L}\p{N}]+/gu)].map((match) => ({
+    index: match.index,
+    end: match.index + match[0].length,
+    key: match[0]
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .toLocaleLowerCase('it'),
+  }));
+}
+
+/**
+ * Ultimo ripiego per un passaggio già corretto nell'editor: individua la sua
+ * prima e ultima sequenza di parole, entrambe univoche nell'intero Typst. Non
+ * viene usato su testi duplicati o con estremi modificati, quindi fallisce in
+ * modo chiuso invece di rischiare una sostituzione nel punto sbagliato.
+ */
+export function rebaseStrictPassageFuzzy(editorCode, beforeMarkdown, afterMarkdown) {
+  const source = normalizedTokenSpans(beforeMarkdown);
+  if (source.length < 14) return null;
+  const editor = normalizedTokenSpans(editorCode);
+  const width = Math.min(8, Math.floor(source.length / 3));
+  const keyOf = (tokens) => tokens.map((token) => token.key).join('\u0000');
+  const firstKey = keyOf(source.slice(0, width));
+  const lastKey = keyOf(source.slice(-width));
+  let firstIndex = -1;
+  let lastIndex = -1;
+  let firstMatches = 0;
+  let lastMatches = 0;
+  for (let index = 0; index + width <= editor.length; index++) {
+    const key = keyOf(editor.slice(index, index + width));
+    if (key === firstKey) {
+      firstIndex = index;
+      firstMatches++;
+    }
+    if (key === lastKey) {
+      lastIndex = index;
+      lastMatches++;
+    }
+  }
+  if (firstMatches !== 1 || lastMatches !== 1 || lastIndex < firstIndex) return null;
+  const locatedWords = lastIndex + width - firstIndex;
+  if (locatedWords < source.length * 0.7 || locatedWords > source.length * 1.4) return null;
+  const start = editor[firstIndex].index;
+  let end = editor[lastIndex + width - 1].end;
+  while (end < editorCode.length && /[.,;:!?…»”’"]/u.test(editorCode[end])) end++;
+  const rendered = markdownToStrictTypst(afterMarkdown);
+  return editorCode.slice(0, start) + rendered + editorCode.slice(end);
+}
+
+function uniquePosition(source, value) {
+  if (!value || value.length < 40) return -1;
+  const first = source.indexOf(value);
+  return first >= 0 && source.indexOf(value, first + 1) < 0 ? first : -1;
+}
+
+/**
+ * Ripristina un passaggio che la fonte canonica contiene ma che è già assente
+ * dal Typst. Richiede un'ancora univoca immediatamente prima e una seconda
+ * ancora univoca più avanti: senza entrambe non inserisce nulla.
+ */
+export function rebaseMissingCanonicalPassage(
+  editorCode,
+  currentCanonical,
+  nextCanonical,
+  layoutPlan = {},
+  beforeMarkdown = '',
+  afterMarkdown = '',
+) {
+  const before = buildStrictDocument(currentCanonical, layoutPlan).body;
+  const after = buildStrictDocument(nextCanonical, layoutPlan).body;
+  if (before === after) return editorCode;
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < before.length - prefix &&
+    suffix < after.length - prefix &&
+    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) suffix++;
+  const beforeEnd = before.length - suffix;
+  const afterEnd = after.length - suffix;
+  if (beforeEnd - prefix < 40 || afterEnd <= prefix) return null;
+  let insertion = after.slice(prefix, afterEnd);
+  if (beforeMarkdown && afterMarkdown) {
+    const renderedBefore = markdownToStrictTypst(beforeMarkdown);
+    const renderedAfter = markdownToStrictTypst(afterMarkdown);
+    const oldPosition = before.indexOf(renderedBefore, Math.max(0, prefix - 500));
+    if (oldPosition >= 0) {
+      const separator = before.slice(oldPosition + renderedBefore.length).match(/^\s+/u)?.[0] || '';
+      insertion = renderedAfter + separator;
+    }
+  }
+
+  for (const leftSize of [60, 100, 220, 500, 1000]) {
+    const leftAnchor = before.slice(Math.max(0, prefix - leftSize), prefix);
+    const leftPos = uniquePosition(editorCode, leftAnchor);
+    if (leftPos < 0) continue;
+    const insertionPoint = leftPos + leftAnchor.length;
+    // L'ancora seguente può non essere immediata: anche il paragrafo subito
+    // dopo potrebbe essere stato riletto. Si cercano finestre più avanti senza
+    // includere nel match la zona già divergente.
+    for (const distance of [0, 40, 80, 120, 180, 260, 400, 700, 1000, 2000, 5000, 10000]) {
+      const start = beforeEnd + distance;
+      if (start >= before.length) break;
+      const rightAnchor = before.slice(start, Math.min(before.length, start + 100));
+      const rightPos = uniquePosition(editorCode, rightAnchor);
+      if (rightPos < insertionPoint) continue;
+      if (rightPos - insertionPoint > Math.max(20000, distance * 4 + 5000)) continue;
+      return editorCode.slice(0, insertionPoint) +
+        insertion +
+        editorCode.slice(insertionPoint);
+    }
   }
   return null;
 }

@@ -571,13 +571,27 @@ export async function translateDocument({
     if (!groupedBySource.has(sourceId)) groupedBySource.set(sourceId, []);
     groupedBySource.get(sourceId).push(pieces.get(id));
   }
-  const blockTranslations = splitBlocks(markdown).map((block) => ({
-    id: block.id,
-    before: block.text,
-    // Le unità nascono da frasi dello stesso paragrafo: uno spazio le
-    // ricompone senza introdurre nuovi capoversi nel rebase selettivo.
-    after: (groupedBySource.get(block.id) || [block.text]).join(' ').trim(),
-  }));
+  const failedSet = new Set(failedBlockIds);
+  const unitsBySource = new Map();
+  for (const unit of units.values()) {
+    const sourceId = unit.sourceId ?? unit.id;
+    if (!unitsBySource.has(sourceId)) unitsBySource.set(sourceId, []);
+    unitsBySource.get(sourceId).push(unit.id);
+  }
+  const blockTranslations = splitBlocks(markdown).map((block) => {
+    const failedUnitIds = (unitsBySource.get(block.id) || []).filter((id) => failedSet.has(id));
+    return {
+      id: block.id,
+      before: block.text,
+      // Le unità nascono da frasi dello stesso paragrafo: uno spazio le
+      // ricompone senza introdurre nuovi capoversi nel rebase selettivo.
+      after: (groupedBySource.get(block.id) || [block.text]).join(' ').trim(),
+      // Il rebase selettivo deve poter scartare il solo paragrafo che contiene
+      // una frase non sicura, senza buttare via gli altri paragrafi del lotto.
+      failed: failedUnitIds.length > 0,
+      failedUnitIds,
+    };
+  });
   return {
     markdown: ordered.map((id) => pieces.get(id)).join('\n\n'),
     blocks: ordered.length,

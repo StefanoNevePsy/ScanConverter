@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  auditDocumentDuplicates,
   auditDocumentLanguage,
   detectPassageLanguage,
   documentLanguagePassages,
@@ -76,4 +77,34 @@ test('non elimina ripetizioni brevi o separate da una pagina', () => {
   const short = 'Nota ripetuta intenzionalmente.';
   const source = `<!-- pagina 1 -->\n\n${short}\n\n${short}\n\n<!-- pagina 2 -->\n\n${short}`;
   assert.deepEqual(findAdjacentDuplicatePassages(source), []);
+});
+
+test('rileva localmente paragrafi, frasi e frammenti consecutivi duplicati', () => {
+  const paragraph = 'La famiglia è un sistema relazionale nel quale obblighi e lealtà attraversano più generazioni.';
+  const sentence = 'Questa frase abbastanza lunga descrive con precisione il legame tra genitori e figli.';
+  const fragment = 'gli obblighi invisibili attraversano le generazioni e influenzano tutte le relazioni familiari';
+  const source = [
+    '<!-- pagina 12 -->',
+    paragraph,
+    paragraph,
+    `Prima osservazione. ${sentence} ${sentence} Chiusura del ragionamento.`,
+    `Nel testo ${fragment}, ${fragment} senza che i membri ne siano consapevoli.`,
+  ].join('\n\n');
+  const audit = auditDocumentDuplicates(source);
+  assert.deepEqual(audit.counts, { paragraphs: 1, sentences: 1, fragments: 1 });
+  assert.deepEqual(audit.items.map((item) => item.type), ['paragraph', 'sentence', 'fragment']);
+  for (const item of audit.items) assert.ok(source.slice(item.start, item.end).length > 0);
+});
+
+test('ignora ripetizioni brevi, non consecutive e riferimenti bibliografici', () => {
+  const source = [
+    '<!-- pagina 4 -->',
+    'Molto bene. Molto bene.',
+    'Una frase abbastanza lunga compare qui ma non deve essere considerata duplicata in modo automatico.',
+    'Un passaggio diverso separa intenzionalmente le due occorrenze nel testo.',
+    'Una frase abbastanza lunga compare qui ma non deve essere considerata duplicata in modo automatico.',
+    '## Bibliografia',
+    'Bowlby J. Attachment and loss. London, 1969. Bowlby J. Attachment and loss. London, 1969.',
+  ].join('\n\n');
+  assert.deepEqual(auditDocumentDuplicates(source).items, []);
 });

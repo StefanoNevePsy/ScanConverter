@@ -17,6 +17,7 @@ import {
   splitSentences,
 } from '../lib/translate.js';
 import {
+  auditDocumentDuplicates,
   auditDocumentLanguage,
   detectPassageLanguage,
   documentLanguagePassages,
@@ -71,7 +72,9 @@ import {
   missingInvariants,
   repairBoundaryOverlaps,
   rebaseCanonicalRevision,
+  rebaseMissingCanonicalPassage,
   rebaseStrictPassage,
+  rebaseStrictPassageFuzzy,
   replaceUniqueText,
   restoreCanonicalPassage,
   sourcePlainText,
@@ -241,6 +244,10 @@ export function usePipeline(settings) {
   const [languageAudit, setLanguageAudit] = useState(null);
   const [languageRepairBusy, setLanguageRepairBusy] = useState(false);
   const [languageRepairDetail, setLanguageRepairDetail] = useState('');
+  const [languageRepairReport, setLanguageRepairReport] = useState(null);
+  const [duplicateAudit, setDuplicateAudit] = useState(null);
+  const [duplicateRepairBusy, setDuplicateRepairBusy] = useState(false);
+  const [duplicateRepairDetail, setDuplicateRepairDetail] = useState('');
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [ocrProgress, setOcrProgress] = useState(null); // {done,total} | null (fase OCR)
@@ -472,6 +479,7 @@ export function usePipeline(settings) {
     const source = session?.canonicalText || session?.rawText || '';
     if (!session?.translatedFrom || !source.trim()) {
       setLanguageAudit(null);
+      setDuplicateAudit(null);
       return null;
     }
     const targetLanguage = session.targetLanguage || inferDocumentLanguage(
@@ -483,8 +491,20 @@ export function usePipeline(settings) {
       : 'auto';
     const audit = auditDocumentLanguage(source, targetLanguage, sourceLanguage);
     setLanguageAudit(audit);
+    setDuplicateAudit(auditDocumentDuplicates(source));
     return audit;
   }, [settings.sourceLang, settings.targetLang]);
+
+  const refreshDuplicateAudit = useCallback((session = sessionRef.current) => {
+    const source = session?.canonicalText || session?.rawText || '';
+    if (!session?.translatedFrom || !source.trim()) {
+      setDuplicateAudit(null);
+      return null;
+    }
+    const audit = auditDocumentDuplicates(source);
+    setDuplicateAudit(audit);
+    return audit;
+  }, []);
 
   /** Ripete soltanto l'analisi linguistica deterministica, senza chiamate AI. */
   const recheckLanguage = useCallback(() => {
@@ -505,6 +525,23 @@ export function usePipeline(settings) {
         : 'Controllo lingua aggiornato in locale: nessun passaggio fuori lingua rilevato.',
     };
   }, [refreshLanguageAudit]);
+
+  /** Ripete la ricerca deterministica delle sole ripetizioni esatte. */
+  const recheckDuplicates = useCallback(() => {
+    const session = sessionRef.current;
+    if (!session?.translatedFrom) {
+      return { ok: false, message: 'Questo documento non risulta creato da una traduzione.' };
+    }
+    const audit = refreshDuplicateAudit(session);
+    if (!audit) return { ok: false, message: 'Nessun testo tradotto da controllare.' };
+    return {
+      ok: true,
+      audit,
+      message: audit.items.length
+        ? `Controllo duplicati aggiornato in locale: ${audit.items.length} ripetizioni esatte da verificare.`
+        : 'Controllo duplicati aggiornato in locale: nessuna ripetizione sospetta rilevata.',
+    };
+  }, [refreshDuplicateAudit]);
 
   // All'avvio, carica l'elenco delle sessioni salvate.
   useEffect(() => {
@@ -686,6 +723,10 @@ export function usePipeline(settings) {
     setLanguageAudit(null);
     setLanguageRepairBusy(false);
     setLanguageRepairDetail('');
+    setLanguageRepairReport(null);
+    setDuplicateAudit(null);
+    setDuplicateRepairBusy(false);
+    setDuplicateRepairDetail('');
     figuresRef.current = [];
     releaseDesktopPdf(compiledPdfRef.current.pdf);
     compiledPdfRef.current = { source: '', figures: null, pdf: null };
@@ -1387,6 +1428,8 @@ export function usePipeline(settings) {
       setError(null);
       setCompileError(null);
       setCanResume(false);
+      setLanguageRepairReport(null);
+      setDuplicateAudit(null);
 
       // Sessione ancora in fase OCR (estrazione incompleta): riprendi le
       // pagine mancanti dalla cache, senza rifare quelle già estratte.
@@ -2264,10 +2307,10 @@ export function usePipeline(settings) {
   }, [settings, rawText, startFormat, refreshSessions, clearReview]);
 
   /**
-   * Ritraduce soltanto passaggi o pagine scelti. Tutte le risposte vengono
-   * preparate in memoria, ribasate nel Typst con sostituzioni univoche e
-   * compilate in modalità diagnostica PRIMA di toccare la sessione: l'azione
-   * è quindi atomica e non può lasciare mezzo libro aggiornato.
+   * Ritraduce soltanto passaggi o pagine scelti. Ogni risposta viene valutata
+   * e ribasata separatamente: un blocco respinto dal modello o non localizzato
+   * nel Typst resta invariato, mentre tutti gli altri arrivano comunque alla
+   * compilazione e al salvataggio finale.
    */
   const retranslatePassages = useCallback(async ({ ids = [], pages: pageSpec = '' } = {}) => {
     const s = sessionRef.current;
@@ -2329,6 +2372,7 @@ export function usePipeline(settings) {
     abortRef.current = controller;
     setLanguageRepairBusy(true);
     setLanguageRepairDetail('Preparo la selezione…');
+    setLanguageRepairReport(null);
     try {
       // Più paragrafi della stessa pagina e della stessa lingua viaggiano
       // nella medesima richiesta. Il modello continua a restituirli con id
@@ -2361,6 +2405,18 @@ export function usePipeline(settings) {
       }
 
       const replacements = [];
+      const skipped = [];
+      const skippedIds = new Set();
+      const skip = (passage, reason) => {
+        if (skippedIds.has(passage.id)) return;
+        skippedIds.add(passage.id);
+        skipped.push({
+          id: passage.id,
+          page: passage.page,
+          reason,
+          sample: passage.text.replace(/\s+/g, ' ').trim().slice(0, 180),
+        });
+      };
       let completed = 0;
       for (const group of groups) {
         if (controller.signal.aborted) throw new DOMException('Annullato', 'AbortError');
@@ -2374,43 +2430,57 @@ export function usePipeline(settings) {
           `Ritraduco ${completed + 1}-${completed + group.items.length}/${selected.length}` +
           `${group.page ? ` · pagina ${group.page}` : ''}…`,
         );
-        const result = await translateMarkdown({
-          settings: { ...settings, sourceLang: group.sourceLanguage, targetLang: targetLanguage },
-          markdown: group.items.map((passage) => passage.text).join('\n\n'),
-          externalBefore: context.before,
-          externalAfter: context.after,
-          signal: controller.signal,
-        });
-        if (result.failed) {
-          throw new Error(`Il modello non ha restituito in modo sicuro la pagina ${group.page || '?'}.`);
-        }
-        if (result.blockTranslations?.length !== group.items.length) {
-          throw new Error(
-            `La pagina ${group.page || '?'} non ha restituito tutti i passaggi separatamente. ` +
-            'Nessuna modifica applicata.',
-          );
-        }
-        for (let index = 0; index < group.items.length; index++) {
-          const passage = group.items[index];
-          const translated = result.blockTranslations[index]?.after?.trim();
-          if (!translated || translated === passage.text.trim()) {
-            throw new Error(`Il passaggio della pagina ${passage.page || '?'} è tornato invariato.`);
+        try {
+          const result = await translateMarkdown({
+            settings: { ...settings, sourceLang: group.sourceLanguage, targetLang: targetLanguage },
+            markdown: group.items.map((passage) => passage.text).join('\n\n'),
+            externalBefore: context.before,
+            externalAfter: context.after,
+            signal: controller.signal,
+          });
+          for (let index = 0; index < group.items.length; index++) {
+            const passage = group.items[index];
+            const proposal = result.blockTranslations?.[index];
+            const translated = proposal?.after?.trim();
+            if (!proposal) {
+              skip(passage, 'Il modello non ha restituito questo passaggio separatamente.');
+              continue;
+            }
+            if (proposal.failed) {
+              skip(passage, 'La risposta non ha superato i controlli di lingua o struttura.');
+              continue;
+            }
+            if (!translated) {
+              skip(passage, 'Il modello ha restituito una risposta vuota.');
+              continue;
+            }
+            if (translated === passage.text.trim()) {
+              skip(passage, 'Il testo restituito è rimasto invariato.');
+              continue;
+            }
+            const missing = missingInvariants(passage.text, translated);
+            if (missing.length) {
+              skip(
+                passage,
+                `La proposta perderebbe numeri o riferimenti: ${missing.slice(0, 4).join(', ')}.`,
+              );
+              continue;
+            }
+            replacements.push({ ...passage, translated });
           }
-          const missing = missingInvariants(passage.text, translated);
-          if (missing.length) {
-            throw new Error(
-              `La pagina ${passage.page || '?'} perderebbe numeri o riferimenti ` +
-              `(${missing.slice(0, 4).join(', ')}). Nessuna modifica applicata.`,
-            );
-          }
-          replacements.push({ ...passage, translated });
+        } catch (error) {
+          if (controller.signal.aborted || error?.name === 'AbortError') throw error;
+          const reason = String(error?.message || 'errore del modello').replace(/\s+/g, ' ').slice(0, 160);
+          for (const passage of group.items) skip(passage, `Richiesta non completata: ${reason}`);
+        } finally {
+          completed += group.items.length;
         }
-        completed += group.items.length;
       }
 
       setLanguageRepairDetail('Verifico il sorgente Typst senza applicare modifiche…');
       let nextCanonical = canonical;
       let nextEditor = typstCode || s.editorCode || '';
+      const applied = [];
       for (const replacement of [...replacements].sort((a, b) => b.start - a.start)) {
         const revisedCanonical = nextCanonical.slice(0, replacement.start) + replacement.translated +
           nextCanonical.slice(replacement.end);
@@ -2420,15 +2490,36 @@ export function usePipeline(settings) {
             nextCanonical,
             revisedCanonical,
             s.layoutPlan || {},
+          ) ??
+          rebaseStrictPassageFuzzy(nextEditor, replacement.text, replacement.translated) ??
+          rebaseMissingCanonicalPassage(
+            nextEditor,
+            nextCanonical,
+            revisedCanonical,
+            s.layoutPlan || {},
+            replacement.text,
+            replacement.translated,
           );
         if (rebased == null) {
-          throw new Error(
-            `Il passaggio della pagina ${replacement.page || '?'} non è univoco nel Typst: ` +
-            'per sicurezza non è stato modificato nulla.',
+          skip(
+            replacement,
+            'Il passaggio non è stato localizzato in modo univoco nel Typst, neppure tramite il contesto della pagina.',
           );
+          continue;
         }
         nextEditor = rebased;
         nextCanonical = revisedCanonical;
+        applied.push(replacement);
+      }
+      if (!applied.length) {
+        const report = { applied: 0, skipped: skipped.length, items: skipped };
+        setLanguageRepairReport(report);
+        return {
+          ok: true,
+          report,
+          message: `${skipped.length} passaggi lasciati invariati: nessuna proposta ha superato tutti i controlli. ` +
+            'Apri il resoconto nel pannello Traduzione per vedere i motivi.',
+        };
       }
       // Se il passaggio inglese era rimasto accanto alla sua traduzione, la
       // sostituzione produce due paragrafi italiani uguali. Li riconosciamo
@@ -2444,10 +2535,7 @@ export function usePipeline(settings) {
           s.layoutPlan || {},
         );
         if (rebased == null) {
-          throw new Error(
-            `Un paragrafo duplicato della pagina ${duplicate.page || '?'} non è eliminabile ` +
-            'in modo univoco. Nessuna modifica applicata.',
-          );
+          continue;
         }
         nextEditor = rebased;
         nextCanonical = revisedCanonical;
@@ -2455,11 +2543,151 @@ export function usePipeline(settings) {
       }
       const checked = await diagnoseTypst(nextEditor, figuresRef.current);
       if (!checked.ok) {
-        const first = checked.diagnostics?.find((diag) => diag.severity === 'error') || checked.diagnostics?.[0];
-        throw new Error(
-          `La versione ritradotta non supera il compilatore Typst${first?.line ? ` (riga ${first.line})` : ''}. ` +
-          'Nessuna modifica applicata.',
+        // Se è stata la sola deduplicazione automatica a creare un problema,
+        // conserva comunque tutte le ritraduzioni già verificate nel rebase.
+        if (removedDuplicates) {
+          const withoutDedupeCanonical = canonical;
+          let withoutDedupeEditor = typstCode || s.editorCode || '';
+          let rebuiltCanonical = withoutDedupeCanonical;
+          let rebuildOk = true;
+          for (const replacement of [...applied].sort((a, b) => b.start - a.start)) {
+            const revised = rebuiltCanonical.slice(0, replacement.start) + replacement.translated +
+              rebuiltCanonical.slice(replacement.end);
+            const rebased = rebaseStrictPassage(withoutDedupeEditor, replacement.text, replacement.translated) ??
+              rebaseCanonicalRevision(withoutDedupeEditor, rebuiltCanonical, revised, s.layoutPlan || {}) ??
+              rebaseStrictPassageFuzzy(withoutDedupeEditor, replacement.text, replacement.translated) ??
+              rebaseMissingCanonicalPassage(
+                withoutDedupeEditor,
+                rebuiltCanonical,
+                revised,
+                s.layoutPlan || {},
+                replacement.text,
+                replacement.translated,
+              );
+            if (rebased == null) {
+              rebuildOk = false;
+              break;
+            }
+            withoutDedupeEditor = rebased;
+            rebuiltCanonical = revised;
+          }
+          if (rebuildOk && (await diagnoseTypst(withoutDedupeEditor, figuresRef.current)).ok) {
+            nextCanonical = rebuiltCanonical;
+            nextEditor = withoutDedupeEditor;
+            removedDuplicates = 0;
+          } else {
+            const first = checked.diagnostics?.find((diag) => diag.severity === 'error') || checked.diagnostics?.[0];
+            throw new Error(
+              `Le proposte applicabili non superano il compilatore Typst${first?.line ? ` (riga ${first.line})` : ''}. ` +
+              'Il documento è rimasto invariato.',
+            );
+          }
+        } else {
+          const first = checked.diagnostics?.find((diag) => diag.severity === 'error') || checked.diagnostics?.[0];
+          throw new Error(
+            `Le proposte applicabili non superano il compilatore Typst${first?.line ? ` (riga ${first.line})` : ''}. ` +
+            'Il documento è rimasto invariato.',
+          );
+        }
+      }
+
+      const parts = splitPreamble(nextEditor);
+      s.rawText = nextCanonical;
+      s.canonicalText = nextCanonical;
+      s.editorCode = nextEditor;
+      s.preamble = parts.preamble;
+      s.chunks = [{
+        ...(s.chunks?.[0] || {}),
+        text: nextCanonical,
+        body: parts.body,
+        status: 'done',
+        fidelity: { coverage: 1, missing: [] },
+      }];
+      s.verified = false;
+      s.strictReview = [];
+      s.strictReviewKey = null;
+      releaseDesktopPdf(compiledPdfRef.current.pdf);
+      compiledPdfRef.current = { source: '', figures: null, pdf: null };
+      setRawText(nextCanonical);
+      setTypstCode(nextEditor);
+      setPreviewPdf(null);
+      setCompileError(null);
+      setStrictReport((report) => report ? { ...report, pdf: null, strictReview: [] } : report);
+      setStatus((current) => ({ ...current, format: 'done', compile: 'pending' }));
+      setPhase('done');
+      await persist();
+      refreshLanguageAudit(s);
+      const report = { applied: applied.length, skipped: skipped.length, items: skipped };
+      setLanguageRepairReport(report);
+      return {
+        ok: true,
+        report,
+        message:
+          `${applied.length} passaggi ritradotti e verificati con Typst. ` +
+          (skipped.length ? `${skipped.length} lasciati invariati; il processo è proseguito. ` : '') +
+          (removedDuplicates ? `${removedDuplicates} duplicati adiacenti rimossi. ` : '') +
+          'Il resto del documento è rimasto invariato; ricompila per aggiornare l’anteprima.',
+      };
+    } catch (error) {
+      if (controller.signal.aborted || error?.name === 'AbortError') {
+        return { ok: false, message: 'Ritraduzione annullata: nessuna modifica applicata.' };
+      }
+      return { ok: false, message: error.message || 'Ritraduzione selettiva non riuscita.' };
+    } finally {
+      setLanguageRepairBusy(false);
+      setLanguageRepairDetail('');
+    }
+  }, [settings, typstCode, persist, refreshLanguageAudit]);
+
+  /** Elimina in locale le ripetizioni esatte scelte e verifica il Typst. */
+  const removeDuplicatePassages = useCallback(async ({ ids = [] } = {}) => {
+    const s = sessionRef.current;
+    if (s?.workflow !== 'strict') {
+      return { ok: false, message: 'La rimozione sicura dei duplicati richiede il workflow rigoroso.' };
+    }
+    const canonical = s.canonicalText || s.rawText || '';
+    const wanted = new Set(ids || []);
+    const freshAudit = auditDocumentDuplicates(canonical);
+    const selected = freshAudit.items.filter((item) => wanted.has(item.id));
+    if (!selected.length) return { ok: false, message: 'Nessun duplicato ancora valido nella selezione.' };
+
+    setDuplicateRepairBusy(true);
+    setDuplicateRepairDetail('Localizzo le ripetizioni nel Typst…');
+    try {
+      let nextCanonical = canonical;
+      let nextEditor = typstCode || s.editorCode || '';
+      let removed = 0;
+      let skipped = 0;
+      for (const duplicate of [...selected].sort((a, b) => b.start - a.start)) {
+        const revised = nextCanonical.slice(0, duplicate.start) + nextCanonical.slice(duplicate.end);
+        const rebased = rebaseCanonicalRevision(
+          nextEditor,
+          nextCanonical,
+          revised,
+          s.layoutPlan || {},
         );
+        if (rebased == null) {
+          skipped++;
+          continue;
+        }
+        nextCanonical = revised;
+        nextEditor = rebased;
+        removed++;
+      }
+      if (!removed) {
+        return {
+          ok: false,
+          message: 'Le ripetizioni selezionate non sono state localizzate in modo univoco; nessuna modifica applicata.',
+        };
+      }
+      setDuplicateRepairDetail('Verifico il sorgente con Typst…');
+      const checked = await diagnoseTypst(nextEditor, figuresRef.current);
+      if (!checked.ok) {
+        const first = checked.diagnostics?.find((diag) => diag.severity === 'error') || checked.diagnostics?.[0];
+        return {
+          ok: false,
+          message: `La rimozione non supera Typst${first?.line ? ` (riga ${first.line})` : ''}; il documento è rimasto invariato.`,
+        };
       }
 
       const parts = splitPreamble(nextEditor);
@@ -2490,21 +2718,20 @@ export function usePipeline(settings) {
       refreshLanguageAudit(s);
       return {
         ok: true,
-        message:
-          `${replacements.length} passaggi ritradotti e verificati con Typst. ` +
-          (removedDuplicates ? `${removedDuplicates} duplicati adiacenti rimossi. ` : '') +
-          'Il resto del documento è rimasto invariato; ricompila per aggiornare l’anteprima.',
+        message: `${removed} duplicati rimossi localmente e verificati con Typst. ` +
+          (skipped ? `${skipped} lasciati invariati perché non localizzabili con sicurezza. ` : '') +
+          'Ricompila per aggiornare l’anteprima.',
       };
     } catch (error) {
-      if (controller.signal.aborted || error?.name === 'AbortError') {
-        return { ok: false, message: 'Ritraduzione annullata: nessuna modifica applicata.' };
-      }
-      return { ok: false, message: error.message || 'Ritraduzione selettiva non riuscita.' };
+      return {
+        ok: false,
+        message: error?.message || 'Controllo duplicati non riuscito; il documento è rimasto invariato.',
+      };
     } finally {
-      setLanguageRepairBusy(false);
-      setLanguageRepairDetail('');
+      setDuplicateRepairBusy(false);
+      setDuplicateRepairDetail('');
     }
-  }, [settings, typstCode, persist, refreshLanguageAudit]);
+  }, [typstCode, persist, refreshLanguageAudit]);
 
   /** Revisione interattiva di una singola voce del registro conservativo. */
   const reviewStrictCorrection = useCallback(async (index, action) => {
@@ -3039,8 +3266,14 @@ export function usePipeline(settings) {
     languageAudit,
     languageRepairBusy,
     languageRepairDetail,
+    languageRepairReport,
+    duplicateAudit,
+    duplicateRepairBusy,
+    duplicateRepairDetail,
     retranslatePassages,
     recheckLanguage,
+    recheckDuplicates,
+    removeDuplicatePassages,
     resume,
     reset,
     cancel,

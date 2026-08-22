@@ -8,7 +8,9 @@ import {
   inlineMarkdownToTypst,
   missingInvariants,
   rebaseCanonicalRevision,
+  rebaseMissingCanonicalPassage,
   rebaseStrictPassage,
+  rebaseStrictPassageFuzzy,
   repairBoundaryOverlaps,
   replaceUniqueText,
   restoreCanonicalPassage,
@@ -57,6 +59,56 @@ test('la ritraduzione locale cambia un solo passaggio e conserva il Typst circos
   assert.match(rebased, /La famiglia è un sistema/);
   assert.match(rebased, /\*Modifica manuale lontana\*/);
   assert.match(rebased, /#block\(stroke: 1pt\)/);
+});
+
+test('la revisione canonica usa il contesto quando il passaggio è duplicato e già ritoccato', () => {
+  const repeated = 'La famiglia è un sistema nel quale le relazioni attraversano tutte le generazioni. '.repeat(6);
+  const before = `Introduzione univoca al primo caso.\n\n${repeated}\n\nIntermezzo univoco tra i due casi.\n\n${repeated}\n\nConclusione univoca del secondo caso.`;
+  const secondStart = before.lastIndexOf(repeated);
+  const translated = 'Il secondo passaggio è stato ritradotto correttamente e conserva il proprio contesto.';
+  const after = before.slice(0, secondStart) + translated + before.slice(secondStart + repeated.length);
+  const generated = buildStrictDocument(before).body;
+  const targetStart = generated.lastIndexOf('La famiglia è un sistema');
+  const editor = generated.slice(0, targetStart) +
+    generated.slice(targetStart).replace('sistema', 'sistema relazionale');
+  const rebased = rebaseCanonicalRevision(editor, before, after);
+  assert.ok(rebased);
+  assert.match(rebased, /Il secondo passaggio è stato ritradotto/);
+  assert.equal((rebased.match(/La famiglia è un sistema/g) || []).length, 6);
+});
+
+test('la ritraduzione fuzzy usa estremi univoci quando il centro è già stato corretto', () => {
+  const before = 'Questo lungo passaggio originale contiene molte parole stabili all’inizio e descrive un sistema familiare complesso nel quale il centro è stato modificato manualmente ma le ultime parole restano perfettamente riconoscibili.';
+  const editor = `Contesto precedente.\n\n${before.replace('il centro è stato modificato', '*la parte centrale è stata corretta*')}\n\nContesto successivo.`;
+  const after = 'Questo lungo passaggio è stato tradotto in modo completo e verificabile.';
+  const rebased = rebaseStrictPassageFuzzy(editor, before, after);
+  assert.ok(rebased);
+  assert.match(rebased, /tradotto in modo completo/);
+  assert.match(rebased, /Contesto precedente/);
+  assert.match(rebased, /Contesto successivo/);
+});
+
+test('la ritraduzione fuzzy rifiuta estremi duplicati', () => {
+  const before = 'Questa sequenza iniziale ha abbastanza parole per risultare stabile e termina con una coda altrettanto lunga e chiaramente riconoscibile.';
+  const editor = `${before}\n\n${before}`;
+  assert.equal(rebaseStrictPassageFuzzy(editor, before, 'Proposta nuova.'), null);
+});
+
+test('reinserisce un passaggio canonico omesso soltanto fra due ancore univoche', () => {
+  const intro = 'Introduzione stabile e univoca che precede il passaggio mancante nel documento corrente.';
+  const missing = 'Questo passaggio molto lungo appartiene alla fonte canonica ma è stato omesso per errore durante una precedente trasformazione del testo.';
+  const following = 'Il paragrafo immediatamente successivo è stato corretto manualmente e quindi non coincide più alla lettera.';
+  const tail = 'Una coda abbastanza distante offre invece una seconda ancora stabile e sicuramente univoca nel documento. Questa coda prosegue con altre parole precise affinché possa essere localizzata senza dipendere dal paragrafo modificato.';
+  const before = `${intro}\n\n${missing}\n\n${following}\n\n${tail}`;
+  const translated = 'Passaggio reinserito e tradotto correttamente nel punto canonico.';
+  const after = `${intro}\n\n${translated}\n\n${following}\n\n${tail}`;
+  const editor = buildStrictDocument(`${intro}\n\n${following}\n\n${tail}`).body
+    .replace('corretto manualmente', '*già corretto*');
+  const rebased = rebaseMissingCanonicalPassage(editor, before, after, {}, missing, translated);
+  assert.ok(rebased);
+  assert.match(rebased, /Passaggio reinserito/);
+  assert.match(rebased, /\*già corretto\*/);
+  assert.match(rebased, /seconda ancora stabile/);
 });
 
 test('ripristina dalla fonte canonica soltanto il blocco Typst discordante', () => {

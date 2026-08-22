@@ -583,6 +583,20 @@ function Workspace({
     return res;
   }, [pipe]);
 
+  const handleDuplicateRecheck = useCallback(() => {
+    const res = pipe.recheckDuplicates();
+    setAutofixMsg(res?.message || null);
+    setTimeout(() => setAutofixMsg(null), 20000);
+    return res;
+  }, [pipe]);
+
+  const handleRemoveDuplicates = useCallback(async (selection) => {
+    const res = await pipe.removeDuplicatePassages(selection);
+    setAutofixMsg(res?.message || null);
+    setTimeout(() => setAutofixMsg(null), 20000);
+    return res;
+  }, [pipe]);
+
   // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
   const locateWord = useCallback((suspect) => {
     setMobileTab('code');
@@ -750,6 +764,12 @@ function Workspace({
             audit={pipe.languageAudit}
             onRetranslate={handleRetranslate}
             onRecheckLanguage={handleLanguageRecheck}
+            repairReport={pipe.languageRepairReport}
+            duplicateAudit={pipe.duplicateAudit}
+            onRecheckDuplicates={handleDuplicateRecheck}
+            onRemoveDuplicates={handleRemoveDuplicates}
+            duplicateBusy={pipe.duplicateRepairBusy}
+            duplicateDetail={pipe.duplicateRepairDetail}
             busy={pipe.translateBusy}
             detail={pipe.translateDetail}
             repairBusy={pipe.languageRepairBusy}

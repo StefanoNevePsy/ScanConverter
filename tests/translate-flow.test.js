@@ -179,6 +179,8 @@ test('un blocco irrecuperabile resta in originale ed è dichiarato', async () =>
   const out = await translateDocument({ settings: SETTINGS, markdown: 'Paragrafo che non torna.' });
   assert.equal(out.failed, 1, 'il fallimento va dichiarato, non nascosto');
   assert.equal(out.markdown, 'Paragrafo che non torna.', 'meglio l’originale che il vuoto');
+  assert.equal(out.blockTranslations[0].failed, true, 'il chiamante sa quale paragrafo scartare');
+  assert.deepEqual(out.blockTranslations[0].failedUnitIds, [0]);
 });
 
 test('il contesto viaggia nel prompt ma non finisce nel documento', async () => {
