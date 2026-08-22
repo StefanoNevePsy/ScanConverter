@@ -8,6 +8,7 @@ import {
   inlineMarkdownToTypst,
   missingInvariants,
   rebaseCanonicalRevision,
+  rebaseStrictPassage,
   repairBoundaryOverlaps,
   replaceUniqueText,
   restoreCanonicalPassage,
@@ -40,6 +41,22 @@ test('la revisione canonica preserva modifiche Typst lontane dal passaggio', () 
   const revised = rebaseCanonicalRevision(editor, before, after);
   assert.match(revised, /paragrafo corretto/);
   assert.match(revised, /\*Secondo\*/);
+});
+
+test('la ritraduzione locale cambia un solo passaggio e conserva il Typst circostante', () => {
+  const editor = [
+    '#set text(size: 11pt)',
+    '#block(stroke: 1pt)[The family is a system.]',
+    '*Modifica manuale lontana*',
+  ].join('\n\n');
+  const rebased = rebaseStrictPassage(
+    editor,
+    'The family is a system.',
+    'La famiglia è un sistema.',
+  );
+  assert.match(rebased, /La famiglia è un sistema/);
+  assert.match(rebased, /\*Modifica manuale lontana\*/);
+  assert.match(rebased, /#block\(stroke: 1pt\)/);
 });
 
 test('ripristina dalla fonte canonica soltanto il blocco Typst discordante', () => {

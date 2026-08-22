@@ -27,6 +27,7 @@
 
 import { engineChat, contextBlock } from './engines.js';
 import { phaseConfig } from './phases.js';
+import { isTranslationLanguageSafe } from './languageAudit.js';
 
 /** Lingue offerte nell'interfaccia. `auto` vale solo come lingua di partenza. */
 export const LANGUAGES = [
@@ -166,19 +167,19 @@ export function planTranslation(markdown, options = {}) {
   const units = [];
   for (const block of blocks) {
     if (block.text.length <= maxChars || block.kind !== 'prose') {
-      units.push(block);
+      units.push({ ...block, sourceId: block.id });
       continue;
     }
     const sentences = splitSentences(block.text);
     let buffer = '';
     for (const sentence of sentences) {
       if (buffer && buffer.length + sentence.length > maxChars) {
-        units.push({ ...block, id: units.length, text: buffer.trimEnd() });
+        units.push({ ...block, id: units.length, sourceId: block.id, text: buffer.trimEnd() });
         buffer = '';
       }
       buffer += sentence;
     }
-    if (buffer.trim()) units.push({ ...block, id: units.length, text: buffer.trimEnd() });
+    if (buffer.trim()) units.push({ ...block, id: units.length, sourceId: block.id, text: buffer.trimEnd() });
   }
   units.forEach((unit, i) => { unit.id = i; });
 
@@ -399,6 +400,8 @@ export async function translateDocument({
   signal,
   resumeGroups = [],
   onCheckpoint,
+  externalBefore = '',
+  externalAfter = '',
 }) {
   const configured = phaseConfig(settings, 'translate');
   const specialized = configured.engine === 'local' && isTranslateGemma(configured.model);
@@ -409,19 +412,27 @@ export async function translateDocument({
     overlap: settings.translateOverlap ?? 2,
   });
   if (!groups.length) throw new Error('Non c’è testo da tradurre.');
+  if (externalBefore.trim()) groups[0].before = externalBefore.trim();
+  if (externalAfter.trim()) groups.at(-1).after = externalAfter.trim();
 
   const sourceLang = settings.sourceLang || 'auto';
   const targetLang = settings.targetLang || 'en';
+  const guardLanguage = settings.translationLanguageGuard !== false;
   const pieces = new Map();
   let retried = 0;
   let failed = 0;
+  const failedBlockIds = [];
   const resumed = new Map((resumeGroups || []).map((item) => [item.index, item]));
 
   for (const group of groups) {
     if (signal?.aborted) throw new DOMException('Traduzione annullata.', 'AbortError');
     const signature = stableTextHash(renderMarked(group.blocks));
     const checkpoint = resumed.get(group.index);
-    if (checkpoint?.signature === signature && Array.isArray(checkpoint.pieces)) {
+    if (
+      checkpoint?.signature === signature &&
+      Array.isArray(checkpoint.pieces) &&
+      !(Number(checkpoint.failed) > 0)
+    ) {
       for (const [id, text] of checkpoint.pieces) pieces.set(Number(id), text);
       retried += Number(checkpoint.retried) || 0;
       failed += Number(checkpoint.failed) || 0;
@@ -431,6 +442,7 @@ export async function translateDocument({
     onProgress?.(group.index, groups.length, false);
     const retriedBefore = retried;
     const failedBefore = failed;
+    const failedIdsBefore = failedBlockIds.length;
 
     const translatable = group.blocks.filter((b) => b.translate);
     for (const block of group.blocks) {
@@ -443,6 +455,7 @@ export async function translateDocument({
         pieces: group.blocks.map((block) => [block.id, pieces.get(block.id)]),
         retried: 0,
         failed: 0,
+        failedIds: [],
       });
       continue;
     }
@@ -477,7 +490,10 @@ export async function translateDocument({
       const value = parsed.get(block.id);
       if (value) {
         const restored = restoreFigurePaths(block.text, value);
-        if (preservesMarkdownStructure(block.text, restored)) {
+        if (
+          preservesMarkdownStructure(block.text, restored) &&
+          (!guardLanguage || isTranslationLanguageSafe(block.text, restored, targetLang, sourceLang))
+        ) {
           pieces.set(block.id, restored);
           continue;
         }
@@ -510,12 +526,16 @@ export async function translateDocument({
         if (!preservesMarkdownStructure(block.text, restored)) {
           throw new Error('sintassi Markdown alterata');
         }
+        if (guardLanguage && !isTranslationLanguageSafe(block.text, restored, targetLang, sourceLang)) {
+          throw new Error('lingua di destinazione non rispettata');
+        }
         pieces.set(block.id, restored);
       } catch (error) {
         if (signal?.aborted || error?.name === 'AbortError') throw error;
         // Un blocco perso non deve far perdere il documento: resta in lingua
         // originale ed è segnalato nel riepilogo.
         failed++;
+        failedBlockIds.push(block.id);
         pieces.set(block.id, block.text);
       }
     }
@@ -525,15 +545,32 @@ export async function translateDocument({
       pieces: group.blocks.map((block) => [block.id, pieces.get(block.id)]),
       retried: retried - retriedBefore,
       failed: failed - failedBefore,
+      failedIds: failedBlockIds.slice(failedIdsBefore),
     });
   }
   onProgress?.(groups.length, groups.length);
 
   const ordered = [...pieces.keys()].sort((a, b) => a - b);
+  const units = new Map(groups.flatMap((group) => group.blocks.map((block) => [block.id, block])));
+  const groupedBySource = new Map();
+  for (const id of ordered) {
+    const sourceId = units.get(id)?.sourceId ?? id;
+    if (!groupedBySource.has(sourceId)) groupedBySource.set(sourceId, []);
+    groupedBySource.get(sourceId).push(pieces.get(id));
+  }
+  const blockTranslations = splitBlocks(markdown).map((block) => ({
+    id: block.id,
+    before: block.text,
+    // Le unità nascono da frasi dello stesso paragrafo: uno spazio le
+    // ricompone senza introdurre nuovi capoversi nel rebase selettivo.
+    after: (groupedBySource.get(block.id) || [block.text]).join(' ').trim(),
+  }));
   return {
     markdown: ordered.map((id) => pieces.get(id)).join('\n\n'),
     blocks: ordered.length,
+    blockTranslations,
     retried,
     failed,
+    failedBlockIds,
   };
 }

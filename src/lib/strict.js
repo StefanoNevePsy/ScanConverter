@@ -750,6 +750,38 @@ export function rebaseCanonicalRevision(editorCode, currentCanonical, nextCanoni
   return null;
 }
 
+/**
+ * Variante locale per una singola pagina/paragrafo ritradotto. Renderizza
+ * soltanto il passaggio, poi sostituisce il diff minimo univoco nel Typst già
+ * modificato dall'utente. In questo modo cento passaggi non richiedono cento
+ * rendering dell'intero libro e tutto ciò che è fuori selezione resta byte per
+ * byte identico.
+ */
+export function rebaseStrictPassage(editorCode, beforeMarkdown, afterMarkdown) {
+  const before = markdownToStrictTypst(beforeMarkdown);
+  const after = markdownToStrictTypst(afterMarkdown);
+  if (before === after) return editorCode;
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < before.length - prefix &&
+    suffix < after.length - prefix &&
+    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) suffix++;
+  const beforeEnd = before.length - suffix;
+  const afterEnd = after.length - suffix;
+  for (const context of [0, 20, 50, 100, 220]) {
+    const left = Math.max(0, prefix - context);
+    const rightContext = Math.min(context, suffix);
+    const find = before.slice(left, beforeEnd + rightContext);
+    const replacement = after.slice(left, afterEnd + rightContext);
+    const rebased = replaceUniqueText(editorCode, find, replacement);
+    if (rebased != null) return rebased;
+  }
+  return null;
+}
+
 function tokenSimilarity(a, b) {
   const left = new Set(canonicalTokens(a));
   const right = new Set(canonicalTokens(b));

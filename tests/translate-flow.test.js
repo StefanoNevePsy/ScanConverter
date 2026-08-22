@@ -19,6 +19,9 @@ const SETTINGS = {
   targetLang: 'en',
   translateOverlap: 1,
   chunkSize: 2000,
+  // Questi test verificano ricomposizione e checkpoint con un modello finto
+  // che premette [EN] ma non traduce davvero il testo.
+  translationLanguageGuard: false,
 };
 
 /**
@@ -112,6 +115,32 @@ test('riprende i gruppi salvati senza richiamare il modello', async () => {
   assert.equal(resumed.markdown, first.markdown);
 });
 
+test('un checkpoint con blocchi falliti viene ritentato alla ripresa', async () => {
+  const checkpoints = [];
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: '' } }] }),
+  });
+  const markdown = 'The family is connected by loyalty and obligation.';
+  const first = await translateDocument({
+    settings: { ...SETTINGS, sourceLang: 'en', targetLang: 'it' },
+    markdown,
+    onCheckpoint: (checkpoint) => checkpoints.push(checkpoint),
+  });
+  assert.equal(first.failed, 1);
+  assert.equal(checkpoints[0].failed, 1);
+
+  const calls = fakeModel();
+  const resumed = await translateDocument({
+    settings: { ...SETTINGS, sourceLang: 'en', targetLang: 'it' },
+    markdown,
+    resumeGroups: checkpoints,
+  });
+  assert.ok(calls.length > 0, 'il checkpoint incompleto non deve essere accettato come definitivo');
+  assert.equal(resumed.failed, 0);
+  assert.match(resumed.markdown, /^\[EN\]/);
+});
+
 test('un delimitatore perso dal modello fa ritentare il blocco', async () => {
   fakeModel({
     sabotage: (content, _marks, call) => (
@@ -179,6 +208,17 @@ test('la lingua di destinazione arriva al modello', async () => {
   });
   assert.match(calls[0], /verso «Tedesco»/);
   assert.match(calls[0], /dalla lingua «Italiano»/);
+});
+
+test('espone le traduzioni per blocco per il rebase selettivo', async () => {
+  fakeModel();
+  const out = await translateDocument({
+    settings: SETTINGS,
+    markdown: 'Primo passaggio.\n\nSecondo passaggio.',
+  });
+  assert.deepEqual(out.blockTranslations.map((item) => item.id), [0, 1]);
+  assert.match(out.blockTranslations[0].after, /^\[EN\] Primo/);
+  assert.match(out.blockTranslations[1].after, /^\[EN\] Secondo/);
 });
 
 test('l’annullamento interrompe senza restituire mezzo documento', async () => {

@@ -14,7 +14,15 @@ import {
   translateDocument as translateMarkdown,
   languageLabel,
   translationJobKey,
+  splitSentences,
 } from '../lib/translate.js';
+import {
+  auditDocumentLanguage,
+  detectPassageLanguage,
+  documentLanguagePassages,
+  inferDocumentLanguage,
+  parsePageSelection,
+} from '../lib/languageAudit.js';
 import { extractPdfText } from '../lib/pdftext.js';
 import { hasPdfData, releaseDesktopPdf } from '../lib/desktop.js';
 import { isSpreadLike, preparePages, makeThumbnail } from '../lib/pagePrep.js';
@@ -62,6 +70,7 @@ import {
   missingInvariants,
   repairBoundaryOverlaps,
   rebaseCanonicalRevision,
+  rebaseStrictPassage,
   replaceUniqueText,
   restoreCanonicalPassage,
   sourcePlainText,
@@ -168,6 +177,22 @@ function correctionContext(rawText, before, after, radius = 700) {
   return source.slice(Math.max(0, index - radius), index + Math.max(before?.length || 0, 1) + radius);
 }
 
+function selectiveTranslationContext(source, passage, sentenceCount = 2) {
+  const clean = (value) => String(value || '')
+    .replace(/<!--\s*pagina\s+\d+\s*-->/giu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const before = splitSentences(clean(source.slice(Math.max(0, passage.start - 2400), passage.start)))
+    .slice(-sentenceCount)
+    .map((sentence) => sentence.trim())
+    .join(' ');
+  const after = splitSentences(clean(source.slice(passage.end, passage.end + 2400)))
+    .slice(0, sentenceCount)
+    .map((sentence) => sentence.trim())
+    .join(' ');
+  return { before, after };
+}
+
 /**
  * Stato e orchestrazione dell'intera pipeline: OCR → Typst → PDF.
  * L'editor Typst resta la fonte di verità modificabile; `recompile` ricompila
@@ -194,6 +219,9 @@ export function usePipeline(settings) {
   const [proofreadDetail, setProofreadDetail] = useState(''); // "3/12 paragrafi…"
   const [translateBusy, setTranslateBusy] = useState(false);
   const [translateDetail, setTranslateDetail] = useState(''); // "4/30 passaggi"
+  const [languageAudit, setLanguageAudit] = useState(null);
+  const [languageRepairBusy, setLanguageRepairBusy] = useState(false);
+  const [languageRepairDetail, setLanguageRepairDetail] = useState('');
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [ocrProgress, setOcrProgress] = useState(null); // {done,total} | null (fase OCR)
@@ -396,10 +424,34 @@ export function usePipeline(settings) {
     setSessions(all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
   }, []);
 
+  const refreshLanguageAudit = useCallback((session = sessionRef.current) => {
+    const source = session?.canonicalText || session?.rawText || '';
+    if (!session?.translatedFrom || !source.trim()) {
+      setLanguageAudit(null);
+      return null;
+    }
+    const targetLanguage = session.targetLanguage || inferDocumentLanguage(
+      source,
+      settings.targetLang || 'it',
+    );
+    const sourceLanguage = session.sourceLanguage && session.sourceLanguage !== targetLanguage
+      ? session.sourceLanguage
+      : 'auto';
+    const audit = auditDocumentLanguage(source, targetLanguage, sourceLanguage);
+    setLanguageAudit(audit);
+    return audit;
+  }, [settings.sourceLang, settings.targetLang]);
+
   // All'avvio, carica l'elenco delle sessioni salvate.
   useEffect(() => {
     refreshSessions();
   }, [refreshSessions]);
+
+  // Se l'utente corregge la lingua dichiarata nel pannello, il controllo
+  // locale si riallinea senza alcuna chiamata di rete.
+  useEffect(() => {
+    refreshLanguageAudit();
+  }, [refreshLanguageAudit]);
 
   // Salva su IndexedDB lo stato corrente della sessione (metadati testuali).
   const persist = useCallback(async () => {
@@ -434,6 +486,9 @@ export function usePipeline(settings) {
       // Id del documento da cui questo è stato tradotto: serve a non
       // confondere l'originale con la sua traduzione nell'elenco.
       translatedFrom: s.translatedFrom || null,
+      sourceLanguage: s.sourceLanguage || null,
+      targetLanguage: s.targetLanguage || null,
+      translationFailures: s.translationFailures || [],
       status: allDone ? 'done' : 'paused',
     });
   }, []);
@@ -561,6 +616,9 @@ export function usePipeline(settings) {
     setFidelityWarnings([]);
     setStrictReport(null);
     setSpellReport(null);
+    setLanguageAudit(null);
+    setLanguageRepairBusy(false);
+    setLanguageRepairDetail('');
     figuresRef.current = [];
     releaseDesktopPdf(compiledPdfRef.current.pdf);
     compiledPdfRef.current = { source: '', figures: null, pdf: null };
@@ -794,6 +852,9 @@ export function usePipeline(settings) {
       // La sessione viene ricostruita da zero qui sotto: la provenienza va
       // portata avanti a mano, o una traduzione perde il legame con l'originale.
       const translatedFrom = sessionRef.current?.translatedFrom || null;
+      const sourceLanguage = sessionRef.current?.sourceLanguage || null;
+      const targetLanguage = sessionRef.current?.targetLanguage || null;
+      const translationFailures = sessionRef.current?.translationFailures || [];
       if (settings.formatWorkflow === 'strict') {
         let speller = null;
         try {
@@ -851,6 +912,9 @@ export function usePipeline(settings) {
           id,
           fileName,
           translatedFrom,
+          sourceLanguage,
+          targetLanguage,
+          translationFailures,
           rawText: extracted,
           canonicalText,
           corrections,
@@ -879,6 +943,7 @@ export function usePipeline(settings) {
         setTypstCode(combineDocument(strict.preamble, [strict.body]));
         await saveFigures(id, figuresRef.current);
         await persist();
+        refreshLanguageAudit(sessionRef.current);
         setPhase('running');
         setActiveStep('compile');
         setStatus((s) => ({ ...s, format: 'done', compile: 'active' }));
@@ -889,6 +954,9 @@ export function usePipeline(settings) {
         id,
         fileName,
         translatedFrom,
+        sourceLanguage,
+        targetLanguage,
+        translationFailures,
         rawText: extracted,
         chunks: chunkDocument(extracted, settings.chunkSize).map((t) => ({
           text: t,
@@ -902,12 +970,13 @@ export function usePipeline(settings) {
       };
       await saveFigures(id, figuresRef.current);
       await persist();
+      refreshLanguageAudit(sessionRef.current);
       setPhase('running');
       setActiveStep('format');
       setStatus((s) => ({ ...s, format: 'active' }));
       await runFormat(signal);
     },
-    [settings, runFormat, persist, finalizeCompile],
+    [settings, runFormat, persist, finalizeCompile, refreshLanguageAudit],
   );
 
   /**
@@ -1290,6 +1359,9 @@ export function usePipeline(settings) {
           id: meta.id,
           fileName: meta.fileName,
           translatedFrom: meta.translatedFrom || null,
+          sourceLanguage: meta.sourceLanguage || null,
+          targetLanguage: meta.targetLanguage || null,
+          translationFailures: meta.translationFailures || [],
           rawText: meta.rawText,
         };
         setRawText(meta.rawText);
@@ -1298,6 +1370,7 @@ export function usePipeline(settings) {
         setPhase('running');
         setActiveStep('format');
         setDetail('Riprendo dal testo tradotto già salvato…');
+        refreshLanguageAudit(sessionRef.current);
         await startFormat(meta.rawText, meta.fileName, controller.signal);
         return meta;
       }
@@ -1308,6 +1381,9 @@ export function usePipeline(settings) {
         id: meta.id,
         fileName: meta.fileName,
         translatedFrom: meta.translatedFrom || null,
+        sourceLanguage: meta.sourceLanguage || null,
+        targetLanguage: meta.targetLanguage || null,
+        translationFailures: meta.translationFailures || [],
         rawText: meta.rawText,
         chunks: (meta.chunks || []).map((c) => ({ ...c })),
         preamble: meta.preamble || '',
@@ -1361,10 +1437,11 @@ export function usePipeline(settings) {
       sessionRef.current.chunks.forEach((c) => {
         if (c.status === 'error') c.status = 'pending';
       });
+      refreshLanguageAudit(sessionRef.current);
       await runFormat(controller.signal);
       return meta;
     },
-    [runFormat, runOcrPhase, startFormat],
+    [runFormat, runOcrPhase, startFormat, refreshLanguageAudit],
   );
 
   /** Elimina una sessione salvata (per id) e aggiorna l'elenco. */
@@ -2003,6 +2080,9 @@ export function usePipeline(settings) {
         id,
         fileName,
         translatedFrom: source?.id || null,
+        sourceLanguage: settings.sourceLang || 'auto',
+        targetLanguage: settings.targetLang || 'en',
+        translationFailures: result.failedBlockIds || [],
         rawText: result.markdown,
         preamble: '',
         chunks: [],
@@ -2013,7 +2093,14 @@ export function usePipeline(settings) {
       await refreshSessions();
       // Sessione nuova, non ripresa: `startFormat` riusa l'id di
       // `sessionRef.current`, quindi va impostato prima di chiamarlo.
-      sessionRef.current = { id, fileName, translatedFrom: source?.id || null };
+      sessionRef.current = {
+        id,
+        fileName,
+        translatedFrom: source?.id || null,
+        sourceLanguage: settings.sourceLang || 'auto',
+        targetLanguage: settings.targetLang || 'en',
+        translationFailures: result.failedBlockIds || [],
+      };
       setTypstCode('');
       setPreviewPdf(null);
       setCompileError(null);
@@ -2028,7 +2115,7 @@ export function usePipeline(settings) {
       const notes = [];
       if (result.retried) notes.push(`${result.retried} passaggi ripetuti`);
       if (result.failed) {
-        notes.push(`${result.failed} rimasti in lingua originale — cercali e ritraducili a mano`);
+        notes.push(`${result.failed} rimasti in lingua originale — sono segnalati nel Controllo lingua`);
       }
       return {
         ok: true,
@@ -2050,6 +2137,218 @@ export function usePipeline(settings) {
       setTranslateDetail('');
     }
   }, [settings, rawText, startFormat, refreshSessions, clearReview]);
+
+  /**
+   * Ritraduce soltanto passaggi o pagine scelti. Tutte le risposte vengono
+   * preparate in memoria, ribasate nel Typst con sostituzioni univoche e
+   * compilate in modalità diagnostica PRIMA di toccare la sessione: l'azione
+   * è quindi atomica e non può lasciare mezzo libro aggiornato.
+   */
+  const retranslatePassages = useCallback(async ({ ids = [], pages: pageSpec = '' } = {}) => {
+    const s = sessionRef.current;
+    if (s?.workflow !== 'strict') {
+      return {
+        ok: false,
+        message: 'La ritraduzione selettiva richiede il workflow rigoroso, che mantiene una fonte canonica ribasabile.',
+      };
+    }
+    const canonical = s.canonicalText || s.rawText || '';
+    if (!canonical.trim()) return { ok: false, message: 'Nessun testo da controllare.' };
+    const targetLanguage = s.targetLanguage || inferDocumentLanguage(
+      canonical,
+      settings.targetLang || 'it',
+    );
+    const declaredSource = s.sourceLanguage && s.sourceLanguage !== targetLanguage
+      ? s.sourceLanguage
+      : 'auto';
+
+    let requestedPages;
+    try {
+      requestedPages = parsePageSelection(pageSpec);
+    } catch (error) {
+      return { ok: false, message: error.message };
+    }
+    const wantedIds = new Set(ids || []);
+    const wantedPages = new Set(requestedPages);
+    const selected = documentLanguagePassages(canonical)
+      .map((passage) => ({
+        ...passage,
+        detection: detectPassageLanguage(passage.text, targetLanguage, declaredSource),
+      }))
+      .filter((passage) => (
+        passage.translate && (
+          // Gli id arrivano esclusivamente dal controllo lingua mostrato
+          // nell'interfaccia. Per una pagina digitata a mano, invece, si
+          // includono solo i passaggi effettivamente sospetti: tradurre anche
+          // l'italiano già corretto sarebbe un rischio inutile.
+          wantedIds.has(passage.id) ||
+          (wantedPages.has(passage.page) && passage.detection.suspicious)
+        )
+      ));
+    if (!selected.length) {
+      return {
+        ok: false,
+        message: requestedPages.length
+          ? 'Nelle pagine indicate non risultano passaggi chiaramente fuori lingua.'
+          : 'Nessun passaggio traducibile nella selezione.',
+      };
+    }
+    if (selected.length > 160) {
+      return {
+        ok: false,
+        message: `La selezione contiene ${selected.length} passaggi: dividila in gruppi più piccoli (massimo 160).`,
+      };
+    }
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setLanguageRepairBusy(true);
+    setLanguageRepairDetail('Preparo la selezione…');
+    try {
+      // Più paragrafi della stessa pagina e della stessa lingua viaggiano
+      // nella medesima richiesta. Il modello continua a restituirli con id
+      // separati, quindi il risparmio di chiamate non sacrifica la possibilità
+      // di ribasare e verificare ogni passaggio singolarmente.
+      const maxChars = Math.min(5000, Math.max(800, settings.chunkSize || 5000));
+      const groups = [];
+      for (const passage of selected) {
+        const sourceLanguage = passage.detection.suspicious
+          ? passage.detection.detectedLang
+          : declaredSource;
+        const previous = groups.at(-1);
+        const nextSize = (previous?.size || 0) + passage.text.length + 2;
+        if (
+          !previous ||
+          previous.page !== passage.page ||
+          previous.sourceLanguage !== sourceLanguage ||
+          nextSize > maxChars
+        ) {
+          groups.push({
+            page: passage.page,
+            sourceLanguage,
+            items: [passage],
+            size: passage.text.length,
+          });
+        } else {
+          previous.items.push(passage);
+          previous.size = nextSize;
+        }
+      }
+
+      const replacements = [];
+      let completed = 0;
+      for (const group of groups) {
+        if (controller.signal.aborted) throw new DOMException('Annullato', 'AbortError');
+        const first = group.items[0];
+        const last = group.items.at(-1);
+        const context = selectiveTranslationContext(canonical, {
+          start: first.start,
+          end: last.end,
+        });
+        setLanguageRepairDetail(
+          `Ritraduco ${completed + 1}-${completed + group.items.length}/${selected.length}` +
+          `${group.page ? ` · pagina ${group.page}` : ''}…`,
+        );
+        const result = await translateMarkdown({
+          settings: { ...settings, sourceLang: group.sourceLanguage, targetLang: targetLanguage },
+          markdown: group.items.map((passage) => passage.text).join('\n\n'),
+          externalBefore: context.before,
+          externalAfter: context.after,
+          signal: controller.signal,
+        });
+        if (result.failed) {
+          throw new Error(`Il modello non ha restituito in modo sicuro la pagina ${group.page || '?'}.`);
+        }
+        if (result.blockTranslations?.length !== group.items.length) {
+          throw new Error(
+            `La pagina ${group.page || '?'} non ha restituito tutti i passaggi separatamente. ` +
+            'Nessuna modifica applicata.',
+          );
+        }
+        for (let index = 0; index < group.items.length; index++) {
+          const passage = group.items[index];
+          const translated = result.blockTranslations[index]?.after?.trim();
+          if (!translated || translated === passage.text.trim()) {
+            throw new Error(`Il passaggio della pagina ${passage.page || '?'} è tornato invariato.`);
+          }
+          const missing = missingInvariants(passage.text, translated);
+          if (missing.length) {
+            throw new Error(
+              `La pagina ${passage.page || '?'} perderebbe numeri o riferimenti ` +
+              `(${missing.slice(0, 4).join(', ')}). Nessuna modifica applicata.`,
+            );
+          }
+          replacements.push({ ...passage, translated });
+        }
+        completed += group.items.length;
+      }
+
+      setLanguageRepairDetail('Verifico il sorgente Typst senza applicare modifiche…');
+      let nextCanonical = canonical;
+      let nextEditor = typstCode || s.editorCode || '';
+      for (const replacement of [...replacements].sort((a, b) => b.start - a.start)) {
+        const rebased = rebaseStrictPassage(nextEditor, replacement.text, replacement.translated);
+        if (rebased == null) {
+          throw new Error(
+            `Il passaggio della pagina ${replacement.page || '?'} non è univoco nel Typst: ` +
+            'per sicurezza non è stato modificato nulla.',
+          );
+        }
+        nextEditor = rebased;
+        nextCanonical = nextCanonical.slice(0, replacement.start) + replacement.translated +
+          nextCanonical.slice(replacement.end);
+      }
+      const checked = await diagnoseTypst(nextEditor, figuresRef.current);
+      if (!checked.ok) {
+        const first = checked.diagnostics?.find((diag) => diag.severity === 'error') || checked.diagnostics?.[0];
+        throw new Error(
+          `La versione ritradotta non supera il compilatore Typst${first?.line ? ` (riga ${first.line})` : ''}. ` +
+          'Nessuna modifica applicata.',
+        );
+      }
+
+      const parts = splitPreamble(nextEditor);
+      s.rawText = nextCanonical;
+      s.canonicalText = nextCanonical;
+      s.editorCode = nextEditor;
+      s.preamble = parts.preamble;
+      s.chunks = [{
+        ...(s.chunks?.[0] || {}),
+        text: nextCanonical,
+        body: parts.body,
+        status: 'done',
+        fidelity: { coverage: 1, missing: [] },
+      }];
+      s.verified = false;
+      s.strictReview = [];
+      s.strictReviewKey = null;
+      releaseDesktopPdf(compiledPdfRef.current.pdf);
+      compiledPdfRef.current = { source: '', figures: null, pdf: null };
+      setRawText(nextCanonical);
+      setTypstCode(nextEditor);
+      setPreviewPdf(null);
+      setCompileError(null);
+      setStrictReport((report) => report ? { ...report, pdf: null, strictReview: [] } : report);
+      setStatus((current) => ({ ...current, format: 'done', compile: 'pending' }));
+      setPhase('done');
+      await persist();
+      refreshLanguageAudit(s);
+      return {
+        ok: true,
+        message:
+          `${replacements.length} passaggi ritradotti e verificati con Typst. ` +
+          'Il resto del documento è rimasto invariato; ricompila per aggiornare l’anteprima.',
+      };
+    } catch (error) {
+      if (controller.signal.aborted || error?.name === 'AbortError') {
+        return { ok: false, message: 'Ritraduzione annullata: nessuna modifica applicata.' };
+      }
+      return { ok: false, message: error.message || 'Ritraduzione selettiva non riuscita.' };
+    } finally {
+      setLanguageRepairBusy(false);
+      setLanguageRepairDetail('');
+    }
+  }, [settings, typstCode, persist, refreshLanguageAudit]);
 
   /** Revisione interattiva di una singola voce del registro conservativo. */
   const reviewStrictCorrection = useCallback(async (index, action) => {
@@ -2564,6 +2863,10 @@ export function usePipeline(settings) {
     translateBusy,
     translateDetail,
     translateSession,
+    languageAudit,
+    languageRepairBusy,
+    languageRepairDetail,
+    retranslatePassages,
     resume,
     reset,
     cancel,

@@ -569,6 +569,13 @@ function Workspace({
     setTimeout(() => setAutofixMsg(null), 20000);
   }, [pipe, onDocumentRenamed]);
 
+  const handleRetranslate = useCallback(async (selection) => {
+    const res = await pipe.retranslatePassages(selection);
+    setAutofixMsg(res?.message || null);
+    setTimeout(() => setAutofixMsg(null), 20000);
+    return res;
+  }, [pipe]);
+
   // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
   const locateWord = useCallback((suspect) => {
     setMobileTab('code');
@@ -732,8 +739,12 @@ function Workspace({
             targetLang={targetLang}
             onLanguageChange={onLanguageChange}
             onTranslate={handleTranslate}
+            audit={pipe.languageAudit}
+            onRetranslate={handleRetranslate}
             busy={pipe.translateBusy}
             detail={pipe.translateDetail}
+            repairBusy={pipe.languageRepairBusy}
+            repairDetail={pipe.languageRepairDetail}
             disabled={pipe.phase === 'running'}
           />
         </div>
