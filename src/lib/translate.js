@@ -414,6 +414,7 @@ export async function translateDocument({
   if (!groups.length) throw new Error('Non c’è testo da tradurre.');
   if (externalBefore.trim()) groups[0].before = externalBefore.trim();
   if (externalAfter.trim()) groups.at(-1).after = externalAfter.trim();
+  const units = new Map(groups.flatMap((group) => group.blocks.map((block) => [block.id, block])));
 
   const sourceLang = settings.sourceLang || 'auto';
   const targetLang = settings.targetLang || 'en';
@@ -499,6 +500,12 @@ export async function translateDocument({
         if (
           cleaned &&
           preservesMarkdownStructure(block.text, cleaned) &&
+          !isUnexpectedAdjacentTranslation({
+            source: block.text,
+            previousSource: units.get(block.id - 1)?.text,
+            candidate: cleaned,
+            previousTranslation: pieces.get(block.id - 1),
+          }) &&
           (!guardLanguage || isTranslationLanguageSafe(block.text, cleaned, targetLang, sourceLang))
         ) {
           pieces.set(block.id, cleaned);
@@ -539,6 +546,14 @@ export async function translateDocument({
         if (!cleaned || !preservesMarkdownStructure(block.text, cleaned)) {
           throw new Error('sintassi Markdown alterata');
         }
+        if (isUnexpectedAdjacentTranslation({
+          source: block.text,
+          previousSource: units.get(block.id - 1)?.text,
+          candidate: cleaned,
+          previousTranslation: pieces.get(block.id - 1),
+        })) {
+          throw new Error('duplicazione inattesa del blocco precedente');
+        }
         if (guardLanguage && !isTranslationLanguageSafe(block.text, cleaned, targetLang, sourceLang)) {
           throw new Error('lingua di destinazione non rispettata');
         }
@@ -564,7 +579,6 @@ export async function translateDocument({
   onProgress?.(groups.length, groups.length);
 
   const ordered = [...pieces.keys()].sort((a, b) => a - b);
-  const units = new Map(groups.flatMap((group) => group.blocks.map((block) => [block.id, block])));
   const groupedBySource = new Map();
   for (const id of ordered) {
     const sourceId = units.get(id)?.sourceId ?? id;
@@ -615,6 +629,65 @@ function reviewParagraphKey(value) {
     .trim();
 }
 
+function contextEchoVariants(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+  return [raw, ...splitSentences(raw).map((sentence) => sentence.trim())]
+    .filter((item) => item.length >= 24)
+    .filter((item, index, all) => all.indexOf(item) === index)
+    .sort((a, b) => b.length - a.length);
+}
+
+function stripExactContextEcho(candidate, previous, next) {
+  let text = String(candidate || '').trim();
+  const variants = [...contextEchoVariants(previous), ...contextEchoVariants(next)];
+  let changed = true;
+  while (changed && text) {
+    changed = false;
+    for (const context of variants) {
+      if (text === context) return '';
+      if (text.startsWith(context) && /^\s+/u.test(text.slice(context.length))) {
+        text = text.slice(context.length).trimStart();
+        changed = true;
+        break;
+      }
+      if (text.endsWith(context)) {
+        const prefix = text.slice(0, -context.length);
+        if (/\s+$/u.test(prefix)) {
+          text = prefix.trimEnd();
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  return text;
+}
+
+function hasDegenerateSentenceLoop(candidate) {
+  const sentences = splitSentences(candidate)
+    .map((sentence) => ({ raw: sentence, key: reviewParagraphKey(sentence) }))
+    .filter((sentence) => sentence.key.length >= 40);
+  let run = 1;
+  for (let index = 1; index < sentences.length; index++) {
+    run = sentences[index].key === sentences[index - 1].key ? run + 1 : 1;
+    if (run >= 3) return true;
+  }
+  return false;
+}
+
+/** Un output adiacente identico è sospetto solo se i due sorgenti erano diversi. */
+export function isUnexpectedAdjacentTranslation({
+  source,
+  previousSource,
+  candidate,
+  previousTranslation,
+}) {
+  const translatedKey = reviewParagraphKey(candidate);
+  if (translatedKey.length < 80 || translatedKey !== reviewParagraphKey(previousTranslation)) return false;
+  return reviewParagraphKey(source) !== reviewParagraphKey(previousSource);
+}
+
 /**
  * Ripulisce una risposta di revisione senza interpretarne il significato.
  * Un input è un solo blocco: copie del blocco corrente, del contesto o della
@@ -622,12 +695,16 @@ function reviewParagraphKey(value) {
  * proposta è ambigua e viene rifiutata.
  */
 export function sanitizeTranslationCandidate({ current, candidate, previous = '', next = '' }) {
-  const raw = String(candidate || '')
+  const raw = stripExactContextEcho(String(candidate || '')
     .trim()
     .replace(/^```(?:markdown|md)?\s*\n?/i, '')
     .replace(/\n?```$/i, '')
-    .trim();
+    .trim(), previous, next);
   if (!raw) return '';
+  // Un modello locale sotto pressione può entrare in loop e ripetere la
+  // stessa frase molte volte. Non comprimiamo alla cieca: rifiutare il blocco
+  // lo fa ritentare da solo e, se persiste, conserva l'originale segnalato.
+  if (hasDegenerateSentenceLoop(raw)) return '';
   const segments = raw.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
   const unique = [];
   for (const segment of segments) {

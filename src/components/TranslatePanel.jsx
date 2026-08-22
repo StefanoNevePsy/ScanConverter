@@ -75,11 +75,6 @@ export default function TranslatePanel({
   const working = busy || repairBusy || duplicateBusy;
   const auditCount = audit?.items?.length || 0;
   const duplicateCount = duplicateAudit?.items?.length || 0;
-  const duplicateType = {
-    paragraph: 'paragrafo intero',
-    sentence: 'frase',
-    fragment: 'parte di paragrafo',
-  };
 
   return (
     <section className="card overflow-hidden">
@@ -96,7 +91,9 @@ export default function TranslatePanel({
             ? repairDetail || detail || 'in corso…'
             : auditCount
               ? `${auditCount} da verificare`
-              : languageLabel(targetLang)}
+              : duplicateCount
+                ? `${duplicateCount} duplicati`
+                : languageLabel(targetLang)}
         </span>
       </button>
 
@@ -106,7 +103,8 @@ export default function TranslatePanel({
             <p className="text-xs leading-relaxed text-faint">
               Crea un <strong className="text-ink">secondo documento</strong> tradotto, partendo
               dal testo OCR. L’originale resta nell’elenco, invariato. Il testo viene inviato al
-              modello a frasi intere, con qualche frase di contesto prima e dopo ogni passaggio.
+              modello a frasi intere, con qualche frase di contesto non sostituibile prima e dopo
+              ogni passaggio; eventuali echi esatti del contesto vengono scartati localmente.
             </p>
           )}
 
@@ -330,106 +328,162 @@ export default function TranslatePanel({
                 </div>
               )}
 
-              <div className="mt-5 border-t border-border pt-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-                      Duplicati
-                      {duplicateCount > 0 && (
-                        <span className="rounded-full border border-warning/50 px-2 py-0.5 text-[10px] font-bold text-warning">
-                          {duplicateCount}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1 max-w-[70ch] text-xs leading-relaxed text-faint">
-                      Controllo locale e veloce di paragrafi, frasi e frammenti esatti ripetuti
-                      consecutivamente. Non usa il modello e non elimina somiglianze semantiche.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="button-secondary shrink-0"
-                    onClick={onRecheckDuplicates}
-                    disabled={working || disabled || !onRecheckDuplicates}
-                  >
-                    <IconRefresh width={15} height={15} />
-                    Controlla duplicati
-                  </button>
-                </div>
-
-                {duplicateCount > 0 ? (
-                  <>
-                    <div className="mt-3 flex items-center justify-end gap-2 border-t border-border pt-3 text-xs">
-                      <button
-                        type="button"
-                        className="button-quiet min-h-8 px-1.5 py-1"
-                        onClick={() => setSelectedDuplicates(new Set(duplicateIds))}
-                        disabled={working}
-                      >
-                        Seleziona tutti
-                      </button>
-                      <button
-                        type="button"
-                        className="button-quiet min-h-8 px-1.5 py-1"
-                        onClick={() => setSelectedDuplicates(new Set())}
-                        disabled={working}
-                      >
-                        Nessuno
-                      </button>
-                    </div>
-                    <div className="mt-3 max-h-64 overflow-y-auto border-y border-border" role="list">
-                      {duplicateAudit.items.map((item) => (
-                        <label
-                          key={item.id}
-                          className="flex cursor-pointer items-start gap-3 border-b border-border/60 px-1 py-2.5 last:border-b-0 hover:bg-surface-2"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedDuplicates.has(item.id)}
-                            onChange={() => toggleDuplicate(item.id)}
-                            disabled={working}
-                            className="mt-0.5 size-4 shrink-0 accent-[var(--color-primary)]"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="flex flex-wrap items-center gap-x-2 text-[10px] font-bold uppercase tracking-wide text-faint">
-                              <span>Pagina {item.page ?? '—'}</span>
-                              <span>{duplicateType[item.type] || 'ripetizione'}</span>
-                              <span>corrispondenza esatta</span>
-                            </span>
-                            <span className="mt-1 block overflow-hidden text-ellipsis text-xs leading-relaxed text-muted [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-                              {item.sample}
-                            </span>
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                    <button
-                      type="button"
-                      className="button-primary mt-3 w-full"
-                      onClick={() => onRemoveDuplicates({ ids: [...selectedDuplicates] })}
-                      disabled={working || disabled || selectedDuplicates.size === 0 || !onRemoveDuplicates}
-                    >
-                      {duplicateBusy ? (
-                        <span className="size-4 animate-spin rounded-full border border-current border-r-transparent" />
-                      ) : (
-                        <IconTrash width={15} height={15} />
-                      )}
-                      {duplicateBusy
-                        ? duplicateDetail || 'Verifica duplicati…'
-                        : `Rimuovi ${selectedDuplicates.size} duplicati selezionati`}
-                    </button>
-                  </>
-                ) : (
-                  <div className="mt-3 flex items-start gap-2 bg-lime-soft px-3 py-2.5 text-xs text-ink">
-                    <IconCheck width={15} height={15} className="mt-0.5 shrink-0" />
-                    Nessuna ripetizione esatta consecutiva rilevata.
-                  </div>
-                )}
-              </div>
+              <DuplicateAuditSection
+                audit={duplicateAudit}
+                count={duplicateCount}
+                selected={selectedDuplicates}
+                recommendedIds={duplicateIds}
+                onToggle={toggleDuplicate}
+                onSelect={setSelectedDuplicates}
+                onRecheck={onRecheckDuplicates}
+                onRemove={onRemoveDuplicates}
+                busy={working}
+                repairBusy={duplicateBusy}
+                detail={duplicateDetail}
+                disabled={disabled}
+              />
             </div>
+          )}
+          {!audit && duplicateAudit && (
+            <DuplicateAuditSection
+              audit={duplicateAudit}
+              count={duplicateCount}
+              selected={selectedDuplicates}
+              recommendedIds={duplicateIds}
+              onToggle={toggleDuplicate}
+              onSelect={setSelectedDuplicates}
+              onRecheck={onRecheckDuplicates}
+              onRemove={onRemoveDuplicates}
+              busy={working}
+              repairBusy={duplicateBusy}
+              detail={duplicateDetail}
+              disabled={disabled}
+              sourceStage
+            />
           )}
         </div>
       )}
     </section>
+  );
+}
+
+function DuplicateAuditSection({
+  audit,
+  count,
+  selected,
+  recommendedIds,
+  onToggle,
+  onSelect,
+  onRecheck,
+  onRemove,
+  busy,
+  repairBusy,
+  detail,
+  disabled,
+  sourceStage = false,
+}) {
+  if (!audit) return null;
+  const duplicateType = {
+    paragraph: 'paragrafo intero',
+    sentence: 'frase',
+    fragment: 'parte di paragrafo',
+  };
+  return (
+    <div className="mt-5 border-t border-border pt-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+            Duplicati
+            {count > 0 && (
+              <span className="rounded-full border border-warning/50 px-2 py-0.5 text-[10px] font-bold text-warning">
+                {count}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 max-w-[70ch] text-xs leading-relaxed text-faint">
+            {sourceStage
+              ? 'Controllo già sul testo OCR: intercetta code di pagina ripetute prima che entrino nella traduzione.'
+              : 'Controllo locale di paragrafi, frasi e frammenti esatti ripetuti consecutivamente.'}{' '}
+            Non usa il modello e non elimina somiglianze semantiche.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="button-secondary shrink-0"
+          onClick={onRecheck}
+          disabled={busy || disabled || !onRecheck}
+        >
+          <IconRefresh width={15} height={15} />
+          Controlla duplicati
+        </button>
+      </div>
+
+      {count > 0 ? (
+        <>
+          <div className="mt-3 flex items-center justify-end gap-2 border-t border-border pt-3 text-xs">
+            <button
+              type="button"
+              className="button-quiet min-h-8 px-1.5 py-1"
+              onClick={() => onSelect(new Set(recommendedIds))}
+              disabled={busy}
+            >
+              Seleziona tutti
+            </button>
+            <button
+              type="button"
+              className="button-quiet min-h-8 px-1.5 py-1"
+              onClick={() => onSelect(new Set())}
+              disabled={busy}
+            >
+              Nessuno
+            </button>
+          </div>
+          <div className="mt-3 max-h-64 overflow-y-auto border-y border-border" role="list">
+            {audit.items.map((item) => (
+              <label
+                key={item.id}
+                className="flex cursor-pointer items-start gap-3 border-b border-border/60 px-1 py-2.5 last:border-b-0 hover:bg-surface-2"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(item.id)}
+                  onChange={() => onToggle(item.id)}
+                  disabled={busy}
+                  className="mt-0.5 size-4 shrink-0 accent-[var(--color-primary)]"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-x-2 text-[10px] font-bold uppercase tracking-wide text-faint">
+                    <span>Pagina {item.page ?? '—'}</span>
+                    <span>{duplicateType[item.type] || 'ripetizione'}</span>
+                    <span>corrispondenza esatta</span>
+                  </span>
+                  <span className="mt-1 block overflow-hidden text-ellipsis text-xs leading-relaxed text-muted [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+                    {item.sample}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="button-primary mt-3 w-full"
+            onClick={() => onRemove({ ids: [...selected] })}
+            disabled={busy || disabled || selected.size === 0 || !onRemove}
+          >
+            {repairBusy ? (
+              <span className="size-4 animate-spin rounded-full border border-current border-r-transparent" />
+            ) : (
+              <IconTrash width={15} height={15} />
+            )}
+            {repairBusy ? detail || 'Verifica duplicati…' : `Rimuovi ${selected.size} duplicati selezionati`}
+          </button>
+        </>
+      ) : (
+        <div className="mt-3 flex items-start gap-2 bg-lime-soft px-3 py-2.5 text-xs text-ink">
+          <IconCheck width={15} height={15} className="mt-0.5 shrink-0" />
+          Nessuna ripetizione esatta consecutiva rilevata.
+        </div>
+      )}
+    </div>
   );
 }

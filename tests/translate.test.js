@@ -10,10 +10,12 @@ import assert from 'node:assert/strict';
 import {
   parseMarked,
   planTranslation,
+  isUnexpectedAdjacentTranslation,
   preservesMarkdownDelimiters,
   preservesMarkdownStructure,
   renderMarked,
   restoreFigurePaths,
+  sanitizeTranslationCandidate,
   splitBlocks,
   splitSentences,
 } from '../src/lib/translate.js';
@@ -127,6 +129,49 @@ test('i percorsi delle figure vengono ripristinati se il modello li altera', () 
   const restored = restoreFigurePaths(original, translated);
   assert.ok(restored.includes('![Figure 1](figure/fig-1.png)'));
   assert.ok(restored.includes('![Figure 2](figure/fig-2.png)'));
+});
+
+test('scarta le singole frasi di contesto riecheggiate ai bordi della traduzione', () => {
+  const previous = 'Questa frase appartiene soltanto al contesto precedente. Un secondo antecedente chiarisce il termine.';
+  const next = 'Questa frase appartiene soltanto al contesto seguente.';
+  const candidate = [
+    'Un secondo antecedente chiarisce il termine.',
+    'La famiglia è una rete di lealtà intergenerazionali.',
+    next,
+  ].join('\n');
+  assert.equal(
+    sanitizeTranslationCandidate({
+      current: 'The family is a network of intergenerational loyalties.',
+      candidate,
+      previous,
+      next,
+    }),
+    'La famiglia è una rete di lealtà intergenerazionali.',
+  );
+});
+
+test('rifiuta un loop degenerativo della stessa frase restituita dal modello', () => {
+  const repeated = 'La stessa frase molto lunga viene ripetuta dal modello senza alcuna ragione editoriale.';
+  assert.equal(sanitizeTranslationCandidate({
+    current: 'A longer source paragraph that should not be duplicated.',
+    candidate: `${repeated} ${repeated} ${repeated}`,
+  }), '');
+});
+
+test('rifiuta due traduzioni adiacenti identiche se i sorgenti erano diversi', () => {
+  const translated = 'La famiglia estesa organizza una rete complessa di obblighi e lealtà che attraversano più generazioni.';
+  assert.equal(isUnexpectedAdjacentTranslation({
+    source: 'The second source paragraph has different content and should receive its own translation.',
+    previousSource: 'The first source paragraph describes a multigenerational family network.',
+    candidate: translated,
+    previousTranslation: translated,
+  }), true);
+  assert.equal(isUnexpectedAdjacentTranslation({
+    source: 'Intentional repeated source paragraph with enough words to be meaningful.',
+    previousSource: 'Intentional repeated source paragraph with enough words to be meaningful.',
+    candidate: translated,
+    previousTranslation: translated,
+  }), false);
 });
 
 test('rileva delimitatori Markdown persi o riaperti dai backslash', () => {

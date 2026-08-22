@@ -576,6 +576,13 @@ function Workspace({
     return res;
   }, [pipe]);
 
+  const handleSelectionRevision = useCallback(async (selection) => {
+    const res = await pipe.reviseTextSelection(selection);
+    setAutofixMsg(res?.message || null);
+    setTimeout(() => setAutofixMsg(null), 20000);
+    return res;
+  }, [pipe]);
+
   const handleLanguageRecheck = useCallback(() => {
     const res = pipe.recheckLanguage();
     setAutofixMsg(res?.message || null);
@@ -755,7 +762,16 @@ function Workspace({
               strict={!!pipe.strictReport}
             />
           )}
-          <OcrTextPanel text={pipe.rawText} styleHint={styleHint} fixTypos={fixTypos} />
+          <OcrTextPanel
+            text={pipe.strictReport ? pipe.canonicalText : pipe.rawText}
+            styleHint={styleHint}
+            fixTypos={fixTypos}
+            onReviseSelection={pipe.strictReport ? handleSelectionRevision : null}
+            selectionBusy={pipe.selectionAiBusy}
+            selectionDetail={pipe.selectionAiDetail}
+            proofModelLabel={pipe.proofModelLabel}
+            translationModelLabel={pipe.translationModelLabel}
+          />
           <TranslatePanel
             sourceLang={sourceLang}
             targetLang={targetLang}

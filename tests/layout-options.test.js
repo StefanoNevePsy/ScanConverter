@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPreamble, ensureExplicitHyphenation } from '../src/lib/preamble.js';
-import { normalizeHeadingLevels } from '../src/lib/session.js';
+import { chunkTextRanges, normalizeHeadingLevels } from '../src/lib/session.js';
+
+test('i chunk selezionabili conservano testo e offset byte per byte', () => {
+  const source = `Primo paragrafo con accenti: perché è così.\n\n\n${'Seconda frase abbastanza lunga. '.repeat(30)}\n\nCoda.`;
+  const ranges = chunkTextRanges(source, 500);
+  assert.equal(ranges.map((range) => range.text).join(''), source);
+  for (const range of ranges) assert.equal(range.text, source.slice(range.start, range.end));
+});
 
 test('genera le nuove opzioni di impaginazione localmente', () => {
   const preamble = buildPreamble({

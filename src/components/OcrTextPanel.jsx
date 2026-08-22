@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
-import { IconText } from './Icons.jsx';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { IconSpinner, IconText, IconWand } from './Icons.jsx';
 import CopyButton from './CopyButton.jsx';
 import { SYSTEM_PROMPT, buildGuidance } from '../lib/gemini.js';
-import { chunkDocument } from '../lib/session.js';
+import { chunkTextRanges } from '../lib/session.js';
 
 /*
   Mostra il testo grezzo estratto dall'OCR (Markdown con gerarchia e
@@ -14,14 +14,58 @@ import { chunkDocument } from '../lib/session.js';
 
 const CHUNK_SIZE = 6000;
 
-export default function OcrTextPanel({ text, styleHint, fixTypos }) {
+export default function OcrTextPanel({
+  text,
+  styleHint,
+  fixTypos,
+  onReviseSelection,
+  selectionBusy,
+  selectionDetail,
+  proofModelLabel,
+  translationModelLabel,
+}) {
   const [open, setOpen] = useState(false);
   const [idx, setIdx] = useState(0);
-  const chunks = useMemo(() => chunkDocument(text || '', CHUNK_SIZE), [text]);
+  const [selection, setSelection] = useState(null);
+  const [notice, setNotice] = useState('');
+  const textRef = useRef(null);
+  const ranges = useMemo(() => chunkTextRanges(text || '', CHUNK_SIZE), [text]);
+  const chunks = useMemo(() => ranges.map((range) => range.text), [ranges]);
+  useEffect(() => {
+    setSelection(null);
+    setNotice('');
+  }, [text, idx]);
   if (!text) return null;
 
   const total = chunks.length;
   const i = Math.min(idx, total - 1);
+  const range = ranges[i];
+  const targeted = typeof onReviseSelection === 'function';
+
+  const captureSelection = (event) => {
+    if (!targeted || !range) return;
+    const start = event.currentTarget.selectionStart;
+    const end = event.currentTarget.selectionEnd;
+    setSelection(end > start ? {
+      start: range.start + start,
+      end: range.start + end,
+      count: end - start,
+    } : null);
+    setNotice('');
+  };
+
+  const clearSelection = () => {
+    setSelection(null);
+    const textarea = textRef.current;
+    if (textarea) textarea.setSelectionRange(0, 0);
+  };
+
+  const runSelectionAction = async (mode) => {
+    if (!selection || selectionBusy) return;
+    const result = await onReviseSelection({ ...selection, mode });
+    setNotice(result?.message || 'Operazione completata.');
+    if (result?.ok) clearSelection();
+  };
 
   const promptFor = (n) => {
     if (n === 0) {
@@ -68,9 +112,13 @@ export default function OcrTextPanel({ text, styleHint, fixTypos }) {
       >
         <span className="flex items-center gap-2.5">
           <IconText width={16} height={16} className="text-annote" />
-          <span className="text-sm font-medium text-ink">Testo OCR (per LLM esterni)</span>
+          <span className="text-sm font-medium text-ink">
+            {targeted ? 'Testo di lavoro' : 'Testo OCR (per LLM esterni)'}
+          </span>
           <span className="hidden text-xs text-faint sm:inline">
-            {total > 1 ? `${total} parti · ` : ''}copialo per generare il Typst con ChatGPT / Gemma
+            {targeted
+              ? `${total > 1 ? `${total} parti · ` : ''}seleziona un brano per un intervento IA puntuale`
+              : `${total > 1 ? `${total} parti · ` : ''}copialo per generare il Typst con ChatGPT / Gemma`}
           </span>
         </span>
         <span className={`text-faint transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
@@ -114,14 +162,78 @@ export default function OcrTextPanel({ text, styleHint, fixTypos }) {
               className="bg-primary text-primary-ink hover:bg-primary-strong"
             />
             <span className="text-xs text-faint">
-              {total > 1
+              {targeted
+                ? 'Il testo selezionato viene sostituito solo dopo i controlli di sicurezza e una compilazione Typst riuscita.'
+                : total > 1
                 ? 'Incolla ogni parte nella stessa chat, in ordine; poi unisci il Typst nell’editor.'
                 : 'Poi incolla il Typst generato nell’editor e premi “Genera PDF”.'}
             </span>
           </div>
-          <pre className="max-h-64 overflow-auto rounded-lg border border-border bg-surface-2 p-3 text-[12.5px] leading-relaxed text-muted whitespace-pre-wrap">
-            {chunks[i]}
-          </pre>
+
+          {targeted && selection && (
+            <div className="mb-3 flex flex-col gap-2 border-y border-border bg-surface-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-ink">
+                  Selezione attiva · <span className="tabular-nums">{selection.count}</span> caratteri
+                </div>
+                <p className="mt-0.5 truncate text-xs text-faint">
+                  {selectionBusy ? selectionDetail : 'Scegli il modello già configurato per il compito.'}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => runSelectionAction('proof')}
+                  disabled={!!selectionBusy}
+                  title={`Rivedi soltanto la selezione con ${proofModelLabel || 'il modello di rilettura selezionato'}`}
+                  className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-50"
+                >
+                  {selectionBusy === 'proof' ? <IconSpinner width={13} height={13} /> : <IconWand width={13} height={13} />}
+                  Rivedi selezione
+                </button>
+                <button
+                  type="button"
+                  onClick={() => runSelectionAction('translate')}
+                  disabled={!!selectionBusy}
+                  title={`Traduci soltanto la selezione con ${translationModelLabel || 'il modello di traduzione selezionato'}`}
+                  className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-primary/40 bg-primary-soft px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+                >
+                  {selectionBusy === 'translate' ? <IconSpinner width={13} height={13} /> : <IconText width={13} height={13} />}
+                  Traduci selezione
+                </button>
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  disabled={!!selectionBusy}
+                  className="min-h-9 px-2 py-1.5 text-xs font-medium text-muted underline decoration-border underline-offset-4 hover:text-ink disabled:opacity-50"
+                >
+                  Annulla
+                </button>
+              </div>
+            </div>
+          )}
+
+          <textarea
+            ref={textRef}
+            readOnly
+            value={chunks[i]}
+            onSelect={captureSelection}
+            aria-label={targeted ? 'Testo di lavoro selezionabile' : 'Testo OCR'}
+            className="h-64 w-full resize-none overflow-auto rounded-lg border border-border bg-surface-2 p-3 text-[12.5px] leading-relaxed text-muted selection:bg-lime selection:text-ink focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+          />
+          {targeted && !selection && !notice && (
+            <p className="mt-2 text-xs text-faint">
+              Evidenzia una frase o uno o più paragrafi nel riquadro: compariranno le azioni “Rivedi” e “Traduci”.
+            </p>
+          )}
+          {notice && (
+            <p
+              role="status"
+              className="mt-2 rounded-lg border border-primary/30 bg-primary-soft px-3 py-2 text-xs text-ink"
+            >
+              {notice}
+            </p>
+          )}
         </div>
       )}
     </section>

@@ -13,6 +13,7 @@ import { ENGINE_LABELS, phaseConfig } from '../lib/phases.js';
 import {
   translateDocument as translateMarkdown,
   languageLabel,
+  preservesMarkdownStructure,
   translationJobKey,
   splitSentences,
 } from '../lib/translate.js';
@@ -75,6 +76,7 @@ import {
   rebaseMissingCanonicalPassage,
   rebaseStrictPassage,
   rebaseStrictPassageFuzzy,
+  replaceContextualText,
   replaceUniqueText,
   restoreCanonicalPassage,
   sourcePlainText,
@@ -91,6 +93,7 @@ import {
 } from '../lib/verificationCache.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import { createProjectArchive, inspectProjectArchive } from '../lib/projectArchive.js';
+import { normalizeTextSelection, replaceTextSelection } from '../lib/selectionRevision.js';
 import {
   saveSession,
   saveFigures,
@@ -185,6 +188,24 @@ function correctionContext(rawText, before, after, radius = 700) {
   return source.slice(Math.max(0, index - radius), index + Math.max(before?.length || 0, 1) + radius);
 }
 
+function rebaseStrictRevision({
+  editorCode,
+  currentCanonical,
+  nextCanonical,
+  before,
+  after,
+  layoutPlan,
+}) {
+  return rebaseCanonicalRevision(editorCode, currentCanonical, nextCanonical, layoutPlan) ??
+    rebaseStrictPassage(editorCode, before, after) ??
+    rebaseStrictPassageFuzzy(editorCode, before, after) ??
+    (
+      canonicalTokens(before).length >= 8
+        ? restoreCanonicalPassage(editorCode, nextCanonical, before, layoutPlan)
+        : null
+    );
+}
+
 function selectiveTranslationContext(source, passage, sentenceCount = 2) {
   const clean = (value) => String(value || '')
     .replace(/<!--\s*pagina\s+\d+\s*-->/giu, ' ')
@@ -239,6 +260,8 @@ export function usePipeline(settings) {
   const [spellBusy, setSpellBusy] = useState(false);
   const [proofreadBusy, setProofreadBusy] = useState(false);
   const [proofreadDetail, setProofreadDetail] = useState(''); // "3/12 paragrafi…"
+  const [selectionAiBusy, setSelectionAiBusy] = useState(null); // 'proof' | 'translate' | null
+  const [selectionAiDetail, setSelectionAiDetail] = useState('');
   const [translateBusy, setTranslateBusy] = useState(false);
   const [translateDetail, setTranslateDetail] = useState(''); // "4/30 passaggi"
   const [languageAudit, setLanguageAudit] = useState(null);
@@ -477,9 +500,17 @@ export function usePipeline(settings) {
 
   const refreshLanguageAudit = useCallback((session = sessionRef.current) => {
     const source = session?.canonicalText || session?.rawText || '';
-    if (!session?.translatedFrom || !source.trim()) {
+    if (!source.trim()) {
       setLanguageAudit(null);
       setDuplicateAudit(null);
+      return null;
+    }
+    // Le ripetizioni possono nascere già dall'overlap OCR fra due pagine:
+    // mostrarle anche prima della traduzione permette di distinguere la loro
+    // provenienza da un'eventuale eco del contesto restituita dal modello.
+    setDuplicateAudit(auditDocumentDuplicates(source));
+    if (!session?.translatedFrom) {
+      setLanguageAudit(null);
       return null;
     }
     const targetLanguage = session.targetLanguage || inferDocumentLanguage(
@@ -491,13 +522,12 @@ export function usePipeline(settings) {
       : 'auto';
     const audit = auditDocumentLanguage(source, targetLanguage, sourceLanguage);
     setLanguageAudit(audit);
-    setDuplicateAudit(auditDocumentDuplicates(source));
     return audit;
   }, [settings.sourceLang, settings.targetLang]);
 
   const refreshDuplicateAudit = useCallback((session = sessionRef.current) => {
     const source = session?.canonicalText || session?.rawText || '';
-    if (!session?.translatedFrom || !source.trim()) {
+    if (!source.trim()) {
       setDuplicateAudit(null);
       return null;
     }
@@ -529,11 +559,9 @@ export function usePipeline(settings) {
   /** Ripete la ricerca deterministica delle sole ripetizioni esatte. */
   const recheckDuplicates = useCallback(() => {
     const session = sessionRef.current;
-    if (!session?.translatedFrom) {
-      return { ok: false, message: 'Questo documento non risulta creato da una traduzione.' };
-    }
+    if (!session) return { ok: false, message: 'Nessun documento da controllare.' };
     const audit = refreshDuplicateAudit(session);
-    if (!audit) return { ok: false, message: 'Nessun testo tradotto da controllare.' };
+    if (!audit) return { ok: false, message: 'Nessun testo da controllare.' };
     return {
       ok: true,
       audit,
@@ -2192,6 +2220,193 @@ export function usePipeline(settings) {
   }, [getCompiledPdf, typstCode, settings, verifyStrictPdf]);
 
   /**
+   * Traduce o rilegge soltanto una selezione del testo canonico. Gli offset
+   * arrivano dal pannello "Testo di lavoro", quindi la sostituzione nel
+   * Markdown non dipende dall'unicità della frase. Il rebase preserva il Typst
+   * circostante e il documento viene compilato prima di rendere persistente la
+   * modifica; in caso di errore non viene toccato alcuno stato della sessione.
+   */
+  const reviseTextSelection = useCallback(async ({ start, end, mode }) => {
+    const s = sessionRef.current;
+    if (s?.workflow !== 'strict') {
+      return {
+        ok: false,
+        message: 'Gli interventi IA sulla selezione richiedono il workflow rigoroso, che mantiene testo e Typst sincronizzati.',
+      };
+    }
+    if (!['proof', 'translate'].includes(mode)) {
+      return { ok: false, message: 'Tipo di intervento non riconosciuto.' };
+    }
+    const currentCanonical = s.canonicalText || s.rawText || '';
+    const selection = normalizeTextSelection(currentCanonical, start, end);
+    if (!selection.ok) return selection;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setSelectionAiBusy(mode);
+    setSelectionAiDetail(mode === 'translate'
+      ? `Traduzione mirata · ${phaseEngineLabel(settings, 'translate')}…`
+      : `Revisione mirata · ${phaseEngineLabel(settings, 'proof')}…`);
+    try {
+      let revisedText = '';
+      let proofChanges = [];
+      if (mode === 'proof') {
+        const proof = await proofreadBody({
+          settings,
+          code: selection.text,
+          batchSize: 8,
+          signal: controller.signal,
+          onProgress: (done, total) => setSelectionAiDetail(
+            `Revisione mirata · ${done}/${total} passaggi…`,
+          ),
+        });
+        if (!proof.checked) {
+          return {
+            ok: false,
+            message: 'La selezione contiene soltanto struttura Markdown/Typst: seleziona una frase o un paragrafo di prosa.',
+          };
+        }
+        if (!proof.changed) {
+          return {
+            ok: true,
+            message: proof.skipped
+              ? `Nessuna modifica applicata: ${proof.skipped} proposte non hanno superato i controlli di sicurezza.`
+              : 'Revisione mirata completata: il modello non ha rilevato correzioni necessarie.',
+          };
+        }
+        revisedText = proof.code;
+        proofChanges = proof.changes;
+      } else {
+        const context = selectiveTranslationContext(currentCanonical, selection);
+        const translated = await translateMarkdown({
+          settings,
+          markdown: selection.text,
+          externalBefore: context.before,
+          externalAfter: context.after,
+          signal: controller.signal,
+          onProgress: (done, total) => setSelectionAiDetail(
+            `Traduzione mirata · ${done}/${total} blocchi…`,
+          ),
+        });
+        if (translated.failed) {
+          return {
+            ok: false,
+            message: 'La risposta non ha superato i controlli di lingua o struttura; la selezione è rimasta invariata.',
+          };
+        }
+        revisedText = translated.markdown.trim();
+        if (!revisedText) {
+          return {
+            ok: false,
+            message: 'Il modello non ha restituito una traduzione utilizzabile; la selezione è rimasta invariata.',
+          };
+        }
+      }
+
+      if (!revisedText || revisedText === selection.text) {
+        return { ok: true, message: 'Il testo restituito coincide con la selezione: nessuna modifica necessaria.' };
+      }
+      if (!preservesMarkdownStructure(selection.text, revisedText)) {
+        return {
+          ok: false,
+          message: 'La risposta altererebbe la struttura del brano; la selezione è rimasta invariata.',
+        };
+      }
+      const missing = missingInvariants(selection.text, revisedText);
+      const added = missingInvariants(revisedText, selection.text);
+      if (missing.length || added.length) {
+        return {
+          ok: false,
+          message: `La proposta altererebbe numeri o riferimenti (${[...missing, ...added].slice(0, 4).join(', ')}): nessuna modifica applicata.`,
+        };
+      }
+
+      const nextCanonical = replaceTextSelection(currentCanonical, selection, revisedText);
+      let nextCode = rebaseStrictRevision({
+        editorCode: typstCode || s.editorCode || '',
+        currentCanonical,
+        nextCanonical,
+        before: selection.text,
+        after: revisedText,
+        layoutPlan: s.layoutPlan || {},
+      });
+      if (nextCode == null) {
+        return {
+          ok: false,
+          message: 'La selezione è esatta nel testo, ma il blocco Typst corrispondente non ha un contesto univoco. Nessuna modifica applicata.',
+        };
+      }
+      nextCode = ensureExplicitHyphenation(nextCode);
+      setSelectionAiDetail('Compilo il Typst prima di salvare…');
+      const checked = await diagnoseTypst(nextCode, figuresRef.current);
+      if (!checked.ok) {
+        const first = checked.diagnostics?.find((item) => item.severity === 'error') || checked.diagnostics?.[0];
+        return {
+          ok: false,
+          message: `La proposta è stata annullata perché non compila${first?.line ? ` (riga ${first.line})` : ''}.`,
+        };
+      }
+
+      const parts = splitPreamble(nextCode);
+      s.canonicalText = nextCanonical;
+      if (mode === 'translate') s.rawText = nextCanonical;
+      if (mode === 'proof') {
+        s.corrections = [
+          ...(s.corrections || []),
+          ...proofChanges.map((change) => ({
+            ...change,
+            type: 'selection_contextual',
+            referenceStart: selection.start,
+          })),
+        ];
+      }
+      s.editorCode = nextCode;
+      s.preamble = parts.preamble;
+      s.chunks = [{
+        ...(s.chunks?.[0] || {}),
+        text: mode === 'translate' ? nextCanonical : s.rawText,
+        body: parts.body,
+        status: 'done',
+        fidelity: { coverage: 1, missing: [] },
+      }];
+      s.verified = false;
+      s.pdfVerification = null;
+      s.strictReview = [];
+      s.strictReviewKey = null;
+      releaseDesktopPdf(compiledPdfRef.current.pdf);
+      compiledPdfRef.current = { source: '', figures: null, pdf: null };
+      if (mode === 'translate') setRawText(nextCanonical);
+      setTypstCode(nextCode);
+      setPreviewPdf(null);
+      setCompileError(null);
+      setStrictReport((report) => report ? {
+        ...report,
+        corrections: s.corrections || [],
+        pdf: null,
+        strictReview: [],
+      } : report);
+      setStatus((current) => ({ ...current, format: 'done', compile: 'pending' }));
+      setPhase('done');
+      await persist();
+      refreshLanguageAudit(s);
+      return {
+        ok: true,
+        message: mode === 'translate'
+          ? `Selezione tradotta con ${phaseEngineLabel(settings, 'translate')} e verificata con Typst. Ricompila per aggiornare l’anteprima.`
+          : `${proofChanges.length} correzioni puntuali applicate con ${phaseEngineLabel(settings, 'proof')} e verificate con Typst. Ricompila per aggiornare l’anteprima.`,
+      };
+    } catch (error) {
+      if (controller.signal.aborted || error?.name === 'AbortError') {
+        return { ok: false, message: 'Intervento sulla selezione annullato: nessuna modifica applicata.' };
+      }
+      return { ok: false, message: error.message || 'Intervento IA sulla selezione non riuscito.' };
+    } finally {
+      setSelectionAiBusy(null);
+      setSelectionAiDetail('');
+    }
+  }, [persist, refreshLanguageAudit, settings, typstCode]);
+
+  /**
    * Traduce il documento in un SECONDO documento, lasciando intatto il primo.
    *
    * Non è un passaggio della pipeline ma una biforcazione: si parte dal testo
@@ -2799,23 +3014,33 @@ export function usePipeline(settings) {
       }
 
       const currentCanonical = s.canonicalText || s.rawText;
-      const nextCanonical = replaceUniqueText(currentCanonical, currentText, target);
+      const occurrence = s.corrections.slice(0, index).filter(
+        (item) => item.before === correction.before && item.after === correction.after,
+      ).length;
+      const nextCanonical = replaceContextualText(currentCanonical, currentText, target, {
+        referenceSource: s.rawText,
+        referenceFind: correction.before,
+        occurrence,
+        replaceCount: Math.max(1, Number(correction.count) || 1),
+      });
       if (nextCanonical == null) {
         return {
           ok: false,
-          message: 'Il passaggio non è localizzabile in modo univoco: nessuna modifica è stata applicata.',
+          message: 'Il passaggio non è localizzabile con un contesto univoco: nessuna modifica è stata applicata.',
         };
       }
-      let nextCode = rebaseCanonicalRevision(
-        typstCode,
+      let nextCode = rebaseStrictRevision({
+        editorCode: typstCode,
         currentCanonical,
         nextCanonical,
-        s.layoutPlan || {},
-      );
+        before: currentText,
+        after: target,
+        layoutPlan: s.layoutPlan || {},
+      });
       if (nextCode == null) {
         return {
           ok: false,
-          message: 'Il frammento Typst è stato modificato altrove e non può essere sostituito con sicurezza.',
+          message: 'Il frammento Typst non ha un contesto abbastanza univoco per essere sostituito in sicurezza.',
         };
       }
       nextCode = ensureExplicitHyphenation(nextCode);
@@ -3212,6 +3437,7 @@ export function usePipeline(settings) {
     detail,
     error,
     rawText,
+    canonicalText: sessionRef.current?.canonicalText || rawText,
     typstCode,
     setTypstCode,
     layoutOptions,
@@ -3259,6 +3485,9 @@ export function usePipeline(settings) {
     proofreadDetail,
     proofreadAI,
     proofModelLabel: phaseEngineLabel(settings, 'proof'),
+    selectionAiBusy,
+    selectionAiDetail,
+    reviseTextSelection,
     translateBusy,
     translateDetail,
     translateSession,

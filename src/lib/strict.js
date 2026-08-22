@@ -718,6 +718,126 @@ export function replaceUniqueText(source, find, replacement) {
   return source.slice(0, first) + replacement + source.slice(first + find.length);
 }
 
+function exactTextPositions(source, value) {
+  if (!value) return [];
+  const positions = [];
+  let cursor = 0;
+  while (cursor <= source.length - value.length) {
+    const index = source.indexOf(value, cursor);
+    if (index < 0) break;
+    positions.push(index);
+    cursor = index + Math.max(value.length, 1);
+  }
+  return positions;
+}
+
+function contextualTokenScore(reference, candidate) {
+  const left = canonicalTokens(reference);
+  const right = canonicalTokens(candidate);
+  if (!left.length || !right.length) return 0;
+  const available = new Map();
+  for (const token of right) available.set(token, (available.get(token) || 0) + 1);
+  let common = 0;
+  for (const token of left) {
+    const count = available.get(token) || 0;
+    if (!count) continue;
+    common++;
+    available.set(token, count - 1);
+  }
+  return (2 * common) / (left.length + right.length);
+}
+
+/**
+ * Sostituisce una correzione anche quando il testo corretto ricorre più volte.
+ * La posizione viene ricavata dal testo OCR di riferimento e confrontata con
+ * il contesto lessicale di ogni candidato nel testo canonico corrente. Se due
+ * candidati restano equivalenti la funzione fallisce chiusa.
+ *
+ * `replaceCount` serve alle correzioni ortografiche registrate come un'unica
+ * voce ma applicate intenzionalmente a tutte le occorrenze della stessa parola.
+ */
+export function replaceContextualText(
+  source,
+  find,
+  replacement,
+  {
+    referenceSource = '',
+    referenceFind = '',
+    occurrence = 0,
+    replaceCount = 1,
+  } = {},
+) {
+  const current = String(source || '');
+  const positions = exactTextPositions(current, find);
+  if (!positions.length) return null;
+  if (positions.length === 1) {
+    const index = positions[0];
+    return current.slice(0, index) + replacement + current.slice(index + find.length);
+  }
+
+  if (replaceCount > 1) {
+    if (positions.length !== replaceCount) return null;
+    return current.split(find).join(replacement);
+  }
+
+  const reference = String(referenceSource || '');
+  const wanted = String(referenceFind || '');
+  const referencePositions = exactTextPositions(reference, wanted);
+  const referenceIndex = referencePositions[occurrence];
+  if (referenceIndex == null) return null;
+
+  // Per passaggi lunghi l'ordine delle occorrenze è già una mappa affidabile:
+  // la correzione non può aver creato una nuova copia identica per caso.
+  if (
+    find.length >= 40 &&
+    referencePositions.length === positions.length &&
+    occurrence < positions.length
+  ) {
+    const index = positions[occurrence];
+    return current.slice(0, index) + replacement + current.slice(index + find.length);
+  }
+
+  const radius = 420;
+  const referenceWindow = reference.slice(
+    Math.max(0, referenceIndex - radius),
+    Math.min(reference.length, referenceIndex + wanted.length + radius),
+  );
+  const ranked = positions
+    .map((index) => ({
+      index,
+      distance: Math.abs(
+        index / Math.max(current.length - find.length, 1) -
+        referenceIndex / Math.max(reference.length - wanted.length, 1),
+      ),
+      score: contextualTokenScore(
+        referenceWindow,
+        current.slice(
+          Math.max(0, index - radius),
+          Math.min(current.length, index + find.length + radius),
+        ),
+      ),
+    }))
+    .sort((a, b) => b.score - a.score);
+  const best = ranked[0];
+  const second = ranked[1];
+  if (!best || best.score < 0.58) return null;
+  if (second && best.score - second.score < 0.08) {
+    // Finestre corte possono includere quasi tutto il documento e risultare
+    // lessicalmente identiche. In quel caso la posizione relativa rispetto
+    // all'OCR è un secondo segnale affidabile, ma solo con un vincitore netto.
+    ranked.sort((a, b) => a.distance - b.distance);
+    const nearest = ranked[0];
+    const runnerUp = ranked[1];
+    const margin = Math.max(0.01, 40 / Math.max(current.length, 1));
+    if (
+      nearest.distance > 0.08 ||
+      (runnerUp && runnerUp.distance - nearest.distance < margin)
+    ) return null;
+    return current.slice(0, nearest.index) + replacement + current.slice(nearest.index + find.length);
+  }
+  return current.slice(0, best.index) + replacement + current.slice(best.index + find.length);
+}
+
 /**
  * Riporta una modifica del testo canonico nel Typst già aperto preservando le
  * eventuali modifiche manuali lontane dal frammento. Il diff locale riceve

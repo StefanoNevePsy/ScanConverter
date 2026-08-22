@@ -12,6 +12,7 @@ import {
   rebaseStrictPassage,
   rebaseStrictPassageFuzzy,
   repairBoundaryOverlaps,
+  replaceContextualText,
   replaceUniqueText,
   restoreCanonicalPassage,
   sourcePlainText,
@@ -43,6 +44,39 @@ test('la revisione canonica preserva modifiche Typst lontane dal passaggio', () 
   const revised = rebaseCanonicalRevision(editor, before, after);
   assert.match(revised, /paragrafo corretto/);
   assert.match(revised, /\*Secondo\*/);
+});
+
+test('il ripristino OCR usa il contesto quando la forma corretta ricorre più volte', () => {
+  const raw = [
+    'La terapia sistemica apre il capitolo introduttivo con un esempio generale.',
+    'Nel caso clinico la terapla familiare viene discussa insieme alle lealtà invisibili.',
+    'La terapia individuale compare infine nelle conclusioni del volume.',
+  ].join('\n\n');
+  const canonical = raw.replace('terapla', 'terapia');
+  const restored = replaceContextualText(canonical, 'terapia', 'terapla', {
+    referenceSource: raw,
+    referenceFind: 'terapla',
+  });
+  assert.ok(restored);
+  assert.match(restored, /caso clinico la terapla familiare/);
+  assert.match(restored, /La terapia sistemica/);
+  assert.match(restored, /La terapia individuale/);
+});
+
+test('il ripristino OCR resta chiuso senza una posizione di riferimento', () => {
+  const raw = 'Il testo OCR non contiene più la forma registrata.';
+  const canonical = 'La terapia compare qui e la terapia compare anche altrove.';
+  assert.equal(replaceContextualText(canonical, 'terapia', 'terapla', {
+    referenceSource: raw,
+    referenceFind: 'terapla',
+  }), null);
+});
+
+test('una correzione ortografica aggregata ripristina tutte le occorrenze previste', () => {
+  assert.equal(
+    replaceContextualText('refuso e refuso', 'refuso', 'refuzo', { replaceCount: 2 }),
+    'refuzo e refuzo',
+  );
 });
 
 test('la ritraduzione locale cambia un solo passaggio e conserva il Typst circostante', () => {

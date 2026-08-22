@@ -126,6 +126,41 @@ export function chunkDocument(markdown, maxChars = 5000) {
 }
 
 /**
+ * Divide un testo per la visualizzazione conservando gli offset assoluti.
+ * A differenza di `chunkDocument` non normalizza righe vuote o spazi: una
+ * selezione nel chunk può quindi essere riportata senza ambiguità al testo
+ * completo tramite `range.start + selectionStart`.
+ */
+export function chunkTextRanges(text, maxChars = 6000) {
+  const source = String(text || '');
+  if (!source.length) return [];
+  const limit = Math.max(500, maxChars);
+  const ranges = [];
+  let start = 0;
+  while (start < source.length) {
+    let end = Math.min(source.length, start + limit);
+    if (end < source.length) {
+      const minimum = start + Math.floor(limit * 0.45);
+      const paragraph = source.lastIndexOf('\n\n', end);
+      if (paragraph >= minimum) {
+        end = paragraph + 2;
+      } else {
+        const window = source.slice(start, end);
+        let sentenceEnd = -1;
+        for (const match of window.matchAll(/[.!?…][»”’"')\]]?\s+/gu)) {
+          sentenceEnd = match.index + match[0].length;
+        }
+        if (start + sentenceEnd >= minimum) end = start + sentenceEnd;
+      }
+    }
+    if (end <= start) end = Math.min(source.length, start + limit);
+    ranges.push({ start, end, text: source.slice(start, end) });
+    start = end;
+  }
+  return ranges;
+}
+
+/**
  * Separa il preambolo Typst (righe prima del primo titolo `=`) dal corpo.
  * @param {string} typst
  * @returns {{preamble:string, body:string}}
