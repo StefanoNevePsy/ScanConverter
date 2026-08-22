@@ -576,8 +576,8 @@ function Workspace({
     return res;
   }, [pipe]);
 
-  const handleTranslationReview = useCallback(async () => {
-    const res = await pipe.recheckTranslation();
+  const handleLanguageRecheck = useCallback(() => {
+    const res = pipe.recheckLanguage();
     setAutofixMsg(res?.message || null);
     setTimeout(() => setAutofixMsg(null), 20000);
     return res;
@@ -749,13 +749,11 @@ function Workspace({
             onTranslate={handleTranslate}
             audit={pipe.languageAudit}
             onRetranslate={handleRetranslate}
-            onReviewTranslation={handleTranslationReview}
+            onRecheckLanguage={handleLanguageRecheck}
             busy={pipe.translateBusy}
             detail={pipe.translateDetail}
             repairBusy={pipe.languageRepairBusy}
             repairDetail={pipe.languageRepairDetail}
-            reviewBusy={pipe.translationReviewBusy}
-            reviewDetail={pipe.translationReviewDetail}
             modelLabel={pipe.translationModelLabel}
             disabled={pipe.phase === 'running'}
           />

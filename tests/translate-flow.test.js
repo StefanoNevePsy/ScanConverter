@@ -12,7 +12,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  reviewTranslationPassages,
   sanitizeTranslationCandidate,
   translateDocument,
 } from '../src/lib/translate.js';
@@ -274,29 +273,4 @@ test('la revisione elimina originale, contesto e copie duplicate dalla proposta'
     next: 'Contesto seguente da non ripetere.',
   });
   assert.equal(cleaned, 'La famiglia è legata dalla lealtà.');
-});
-
-test('il ricontrollo usa il modello della fase traduzione e restituisce patch localizzate', async () => {
-  let requestedModel = '';
-  globalThis.fetch = async (_url, init) => {
-    const body = JSON.parse(init.body);
-    requestedModel = body.model;
-    return {
-      ok: true,
-      json: async () => ({ choices: [{ message: { content: '<<<0>>>\nLa famiglia è un sistema.' } }] }),
-    };
-  };
-  const changes = await reviewTranslationPassages({
-    settings: {
-      ...SETTINGS,
-      phases: { translate: { engine: 'local', models: { local: 'traduttore-corrente:7b' } } },
-      sourceLang: 'en',
-      targetLang: 'it',
-    },
-    sourceLang: 'en',
-    targetLang: 'it',
-    passages: [{ id: 'p1', text: 'The family is a system.', suspicious: true }],
-  });
-  assert.equal(requestedModel, 'traduttore-corrente:7b');
-  assert.deepEqual(changes, [{ id: 'p1', before: 'The family is a system.', after: 'La famiglia è un sistema.' }]);
 });

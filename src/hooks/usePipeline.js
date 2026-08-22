@@ -15,7 +15,6 @@ import {
   languageLabel,
   translationJobKey,
   splitSentences,
-  reviewTranslationPassages,
 } from '../lib/translate.js';
 import {
   auditDocumentLanguage,
@@ -242,8 +241,6 @@ export function usePipeline(settings) {
   const [languageAudit, setLanguageAudit] = useState(null);
   const [languageRepairBusy, setLanguageRepairBusy] = useState(false);
   const [languageRepairDetail, setLanguageRepairDetail] = useState('');
-  const [translationReviewBusy, setTranslationReviewBusy] = useState(false);
-  const [translationReviewDetail, setTranslationReviewDetail] = useState('');
   const [detail, setDetail] = useState(''); // sotto-progresso della fase attiva
   const [chunkProgress, setChunkProgress] = useState(null); // {done,total} | null
   const [ocrProgress, setOcrProgress] = useState(null); // {done,total} | null (fase OCR)
@@ -488,6 +485,26 @@ export function usePipeline(settings) {
     setLanguageAudit(audit);
     return audit;
   }, [settings.sourceLang, settings.targetLang]);
+
+  /** Ripete soltanto l'analisi linguistica deterministica, senza chiamate AI. */
+  const recheckLanguage = useCallback(() => {
+    const session = sessionRef.current;
+    if (!session?.translatedFrom) {
+      return { ok: false, message: 'Questo documento non risulta creato da una traduzione.' };
+    }
+    const audit = refreshLanguageAudit(session);
+    if (!audit) {
+      return { ok: false, message: 'Nessun testo tradotto da controllare.' };
+    }
+    const count = audit.items.length;
+    return {
+      ok: true,
+      audit,
+      message: count
+        ? `Controllo lingua aggiornato in locale: ${count} passaggi da verificare.`
+        : 'Controllo lingua aggiornato in locale: nessun passaggio fuori lingua rilevato.',
+    };
+  }, [refreshLanguageAudit]);
 
   // All'avvio, carica l'elenco delle sessioni salvate.
   useEffect(() => {
@@ -2489,187 +2506,6 @@ export function usePipeline(settings) {
     }
   }, [settings, typstCode, persist, refreshLanguageAudit]);
 
-  /**
-   * Secondo controllo completo e facoltativo del documento tradotto. Scorre
-   * tutti i passaggi con il modello ATTUALMENTE selezionato per `translate`,
-   * ma applica soltanto patch localizzate che conservano struttura, numeri e
-   * riferimenti. L'intera operazione resta in memoria finché Typst non passa.
-   */
-  const recheckTranslation = useCallback(async () => {
-    const s = sessionRef.current;
-    if (!s?.translatedFrom) {
-      return { ok: false, message: 'Questo documento non risulta creato da una traduzione.' };
-    }
-    if (s.workflow !== 'strict') {
-      return {
-        ok: false,
-        message: 'Il ricontrollo completo richiede il workflow «Fedeltà massima», necessario per ribasare ogni modifica senza ricreare il documento.',
-      };
-    }
-    const canonical = s.canonicalText || s.rawText || '';
-    const editor = typstCode || s.editorCode || '';
-    if (!canonical.trim() || !editor.trim()) return { ok: false, message: 'Nessun testo tradotto da ricontrollare.' };
-    const targetLanguage = s.targetLanguage || inferDocumentLanguage(canonical, settings.targetLang || 'it');
-    const sourceLanguage = s.sourceLanguage && s.sourceLanguage !== targetLanguage
-      ? s.sourceLanguage
-      : 'auto';
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setTranslationReviewBusy(true);
-    setTranslationReviewDetail('Preparo i passaggi…');
-    try {
-      let nextCanonical = canonical;
-      let nextEditor = editor;
-      let removedDuplicates = 0;
-      const applyRange = (start, end, replacement, page = null, beforeText = '') => {
-        const revised = nextCanonical.slice(0, start) + replacement + nextCanonical.slice(end);
-        // La quasi totalità dei ricontrolli modifica un solo paragrafo. In quel
-        // caso aggiorniamo direttamente il corpo Typst; la rigenerazione
-        // completa resta il fallback sicuro per testi ambigui o duplicati.
-        const localized = beforeText
-          ? rebaseStrictPassage(nextEditor, beforeText, replacement)
-          : null;
-        const rebased = localized ?? rebaseCanonicalRevision(
-          nextEditor,
-          nextCanonical,
-          revised,
-          s.layoutPlan || {},
-        );
-        if (rebased == null) {
-          throw new Error(
-            `La modifica${page ? ` della pagina ${page}` : ''} non è localizzabile ` +
-            'in modo univoco nel Typst. Nessuna modifica applicata.',
-          );
-        }
-        nextEditor = rebased;
-        nextCanonical = revised;
-      };
-
-      // Prima togliamo solo le copie adiacenti certe: oltre a riparare il caso
-      // già presente, riallinea i blocchi con il documento originale.
-      for (const duplicate of findAdjacentDuplicatePassages(nextCanonical).sort((a, b) => b.start - a.start)) {
-        applyRange(duplicate.start, duplicate.end, '', duplicate.page, duplicate.text);
-        removedDuplicates++;
-      }
-
-      const reviewable = (passage) => (
-        passage.translate && passage.kind !== 'table' && !passage.referenceSection
-      );
-      const passages = documentLanguagePassages(nextCanonical).filter(reviewable);
-      const sourceSession = await getSession(s.translatedFrom).catch(() => null);
-      const sourcePassages = sourceSession?.rawText
-        ? documentLanguagePassages(sourceSession.rawText).filter(reviewable)
-        : [];
-      const aligned = sourcePassages.length === passages.length;
-      const reviewItems = passages.map((passage, index) => {
-        const detection = detectPassageLanguage(passage.text, targetLanguage, sourceLanguage);
-        const previous = passages[index - 1];
-        const next = passages[index + 1];
-        return {
-          ...passage,
-          suspicious: detection.suspicious,
-          original: aligned ? sourcePassages[index]?.text || '' : '',
-          previous: previous?.page === passage.page ? previous.text : '',
-          next: next?.page === passage.page ? next.text : '',
-        };
-      });
-      const proposals = await reviewTranslationPassages({
-        settings,
-        passages: reviewItems,
-        sourceLang: sourceLanguage,
-        targetLang: targetLanguage,
-        signal: controller.signal,
-        onProgress: (done, total) => setTranslationReviewDetail(`${done}/${total} passaggi`),
-      });
-
-      const byId = new Map(reviewItems.map((item) => [item.id, item]));
-      let applied = 0;
-      for (const proposal of proposals
-        .map((proposal) => ({ ...proposal, passage: byId.get(proposal.id) }))
-        .filter((proposal) => proposal.passage)
-        .sort((a, b) => b.passage.start - a.passage.start)) {
-        const reference = proposal.passage.original || proposal.before;
-        const missing = missingInvariants(reference, proposal.after);
-        if (missing.length) continue;
-        applyRange(
-          proposal.passage.start,
-          proposal.passage.end,
-          proposal.after,
-          proposal.passage.page,
-          proposal.before,
-        );
-        applied++;
-      }
-
-      // Una frase fonte trasformata nella traduzione già presente accanto
-      // diventa ora un duplicato certo; rimuovi la seconda copia.
-      for (const duplicate of findAdjacentDuplicatePassages(nextCanonical).sort((a, b) => b.start - a.start)) {
-        applyRange(duplicate.start, duplicate.end, '', duplicate.page, duplicate.text);
-        removedDuplicates++;
-      }
-      if (!applied && !removedDuplicates) {
-        refreshLanguageAudit(s);
-        return {
-          ok: true,
-          message: `Ricontrollo completato con ${phaseEngineLabel(settings, 'translate')}: nessuna modifica sicura necessaria.`,
-        };
-      }
-
-      setTranslationReviewDetail('Verifico il documento con Typst…');
-      const checked = await diagnoseTypst(nextEditor, figuresRef.current);
-      if (!checked.ok) {
-        const first = checked.diagnostics?.find((diag) => diag.severity === 'error') || checked.diagnostics?.[0];
-        throw new Error(
-          `Il ricontrollo non supera Typst${first?.line ? ` (riga ${first.line})` : ''}. Nessuna modifica applicata.`,
-        );
-      }
-
-      const parts = splitPreamble(nextEditor);
-      s.rawText = nextCanonical;
-      s.canonicalText = nextCanonical;
-      s.editorCode = nextEditor;
-      s.preamble = parts.preamble;
-      s.chunks = [{
-        ...(s.chunks?.[0] || {}),
-        text: nextCanonical,
-        body: parts.body,
-        status: 'done',
-        fidelity: { coverage: 1, missing: [] },
-      }];
-      s.verified = false;
-      s.pdfVerification = null;
-      s.strictReview = [];
-      s.strictReviewKey = null;
-      releaseDesktopPdf(compiledPdfRef.current.pdf);
-      compiledPdfRef.current = { source: '', figures: null, pdf: null };
-      setRawText(nextCanonical);
-      setTypstCode(nextEditor);
-      setPreviewPdf(null);
-      setCompileError(null);
-      setStrictReport((report) => report ? { ...report, pdf: null, strictReview: [] } : report);
-      setStatus((current) => ({ ...current, format: 'done', compile: 'pending' }));
-      setPhase('done');
-      await persist();
-      refreshLanguageAudit(s);
-      return {
-        ok: true,
-        message:
-          `Ricontrollo completato con ${phaseEngineLabel(settings, 'translate')}: ` +
-          `${applied} passaggi corretti` +
-          (removedDuplicates ? ` · ${removedDuplicates} duplicati rimossi` : '') +
-          '. Ricompila per aggiornare l’anteprima.',
-      };
-    } catch (error) {
-      if (controller.signal.aborted || error?.name === 'AbortError') {
-        return { ok: false, message: 'Ricontrollo della traduzione annullato: nessuna modifica applicata.' };
-      }
-      return { ok: false, message: error.message || 'Ricontrollo della traduzione non riuscito.' };
-    } finally {
-      setTranslationReviewBusy(false);
-      setTranslationReviewDetail('');
-    }
-  }, [settings, typstCode, persist, refreshLanguageAudit]);
-
   /** Revisione interattiva di una singola voce del registro conservativo. */
   const reviewStrictCorrection = useCallback(async (index, action) => {
     const s = sessionRef.current;
@@ -3204,9 +3040,7 @@ export function usePipeline(settings) {
     languageRepairBusy,
     languageRepairDetail,
     retranslatePassages,
-    translationReviewBusy,
-    translationReviewDetail,
-    recheckTranslation,
+    recheckLanguage,
     resume,
     reset,
     cancel,

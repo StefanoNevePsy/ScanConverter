@@ -19,13 +19,11 @@ export default function TranslatePanel({
   onTranslate,
   audit,
   onRetranslate,
-  onReviewTranslation,
+  onRecheckLanguage,
   busy,
   detail,
   repairBusy,
   repairDetail,
-  reviewBusy,
-  reviewDetail,
   modelLabel,
   disabled,
 }) {
@@ -50,7 +48,7 @@ export default function TranslatePanel({
       return next;
     });
   };
-  const working = busy || repairBusy || reviewBusy;
+  const working = busy || repairBusy;
   const auditCount = audit?.items?.length || 0;
 
   return (
@@ -65,7 +63,7 @@ export default function TranslatePanel({
         <span className="flex-1">Traduzione</span>
         <span className="text-xs font-normal text-faint">
           {working
-            ? reviewDetail || repairDetail || detail || 'in corso…'
+            ? repairDetail || detail || 'in corso…'
             : auditCount
               ? `${auditCount} da verificare`
               : languageLabel(targetLang)}
@@ -129,36 +127,7 @@ export default function TranslatePanel({
 
           {audit && (
             <div className="mt-1 border-t border-border pt-3">
-              <div className="mb-4 flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-ink">Ricontrollo completo</div>
-                  <p className="mt-1 max-w-[70ch] text-xs leading-relaxed text-faint">
-                    Ripassa tutti i paragrafi con il modello di traduzione corrente. Corregge
-                    frammenti rimasti nella lingua fonte e duplicati; applica tutto solo dopo
-                    una verifica Typst completa.
-                  </p>
-                  {modelLabel && (
-                    <p className="mt-1 truncate text-[10px] font-semibold text-muted" title={modelLabel}>
-                      {modelLabel}
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-50"
-                  onClick={onReviewTranslation}
-                  disabled={working || disabled || !onReviewTranslation}
-                >
-                  {reviewBusy ? (
-                    <span className="size-4 animate-spin rounded-full border border-current border-r-transparent" />
-                  ) : (
-                    <IconRefresh width={15} height={15} />
-                  )}
-                  {reviewBusy ? reviewDetail || 'Ricontrollo…' : 'Ricontrolla traduzione'}
-                </button>
-              </div>
-
-              <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 text-sm font-semibold text-ink">
                     Controllo lingua
@@ -169,31 +138,42 @@ export default function TranslatePanel({
                     )}
                   </div>
                   <p className="mt-1 max-w-[70ch] text-xs leading-relaxed text-faint">
-                    Analisi locale: individua paragrafi probabilmente rimasti in un’altra lingua.
+                    Analisi locale, senza chiamare alcun modello: aggiorna l’elenco dei passaggi
+                    probabilmente rimasti in una lingua diversa da quella di destinazione.
                     Bibliografie e indici sono mostrati, ma non preselezionati.
                   </p>
                 </div>
-                {auditCount > 0 && (
-                  <div className="flex items-center gap-2 text-xs">
-                    <button
-                      type="button"
-                      className="button-quiet min-h-8 px-1.5 py-1"
-                      onClick={() => setSelected(new Set(recommendedIds))}
-                      disabled={working}
-                    >
-                      Consigliati
-                    </button>
-                    <button
-                      type="button"
-                      className="button-quiet min-h-8 px-1.5 py-1"
-                      onClick={() => setSelected(new Set())}
-                      disabled={working}
-                    >
-                      Nessuno
-                    </button>
-                  </div>
-                )}
+                <button
+                  type="button"
+                  className="button-primary shrink-0"
+                  onClick={onRecheckLanguage}
+                  disabled={working || disabled || !onRecheckLanguage}
+                >
+                  <IconRefresh width={15} height={15} />
+                  Ricontrolla lingua
+                </button>
               </div>
+
+              {auditCount > 0 && (
+                <div className="mt-3 flex items-center justify-end gap-2 border-t border-border pt-3 text-xs">
+                  <button
+                    type="button"
+                    className="button-quiet min-h-8 px-1.5 py-1"
+                    onClick={() => setSelected(new Set(recommendedIds))}
+                    disabled={working}
+                  >
+                    Consigliati
+                  </button>
+                  <button
+                    type="button"
+                    className="button-quiet min-h-8 px-1.5 py-1"
+                    onClick={() => setSelected(new Set())}
+                    disabled={working}
+                  >
+                    Nessuno
+                  </button>
+                </div>
+              )}
 
               {auditCount ? (
                 <div className="mt-3 max-h-72 overflow-y-auto border-y border-border" role="list">
@@ -235,19 +215,26 @@ export default function TranslatePanel({
               )}
 
               {auditCount > 0 && (
-                <button
-                  type="button"
-                  className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-50"
-                  onClick={() => onRetranslate({ ids: [...selected] })}
-                  disabled={working || disabled || selected.size === 0}
-                >
-                  {repairBusy ? (
-                    <span className="size-4 animate-spin rounded-full border border-current border-r-transparent" />
-                  ) : (
-                    <IconRefresh width={15} height={15} />
+                <div className="mt-3">
+                  {modelLabel && (
+                    <p className="mb-1 truncate text-[10px] font-semibold text-muted" title={modelLabel}>
+                      Ritraduzione con {modelLabel}
+                    </p>
                   )}
-                  {repairBusy ? repairDetail || 'Ritraduzione…' : `Ritraduci ${selected.size} passaggi selezionati`}
-                </button>
+                  <button
+                    type="button"
+                    className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-50"
+                    onClick={() => onRetranslate({ ids: [...selected] })}
+                    disabled={working || disabled || selected.size === 0}
+                  >
+                    {repairBusy ? (
+                      <span className="size-4 animate-spin rounded-full border border-current border-r-transparent" />
+                    ) : (
+                      <IconRefresh width={15} height={15} />
+                    )}
+                    {repairBusy ? repairDetail || 'Ritraduzione…' : `Ritraduci ${selected.size} passaggi selezionati`}
+                  </button>
+                </div>
               )}
 
               <div className="mt-4 border-t border-border pt-3">
@@ -281,11 +268,6 @@ export default function TranslatePanel({
               {repairBusy && (
                 <p className="mt-2 text-xs text-muted" aria-live="polite">
                   {repairDetail || 'Ritraduzione in corso…'} Nessuna modifica sarà salvata prima della verifica Typst.
-                </p>
-              )}
-              {reviewBusy && (
-                <p className="mt-2 text-xs text-muted" aria-live="polite">
-                  {reviewDetail || 'Ricontrollo in corso…'} Nessuna modifica viene salvata prima della verifica Typst.
                 </p>
               )}
             </div>
