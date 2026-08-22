@@ -9,6 +9,7 @@ import {
   inferDocumentLanguage,
   isTranslationLanguageSafe,
   parsePageSelection,
+  reconcileDuplicateAuditWithWorkingText,
 } from '../src/lib/languageAudit.js';
 
 test('segnala prosa inglese in un documento italiano', () => {
@@ -107,4 +108,15 @@ test('ignora ripetizioni brevi, non consecutive e riferimenti bibliografici', ()
     'Bowlby J. Attachment and loss. London, 1969. Bowlby J. Attachment and loss. London, 1969.',
   ].join('\n\n');
   assert.deepEqual(auditDocumentDuplicates(source).items, []);
+});
+
+test('nasconde un duplicato canonico già rimosso manualmente dal Typst', () => {
+  const paragraph = 'La famiglia è un sistema relazionale nel quale obblighi e lealtà attraversano più generazioni.';
+  const canonical = `<!-- pagina 12 -->\n\n${paragraph}\n\n${paragraph}`;
+  const audit = auditDocumentDuplicates(canonical);
+  assert.equal(audit.items.length, 1);
+  const workingTypst = `#set page(width: 210mm)\n\n// pagina 12\n\n${paragraph}`;
+  const reconciled = reconcileDuplicateAuditWithWorkingText(audit, workingTypst);
+  assert.equal(reconciled.items.length, 0);
+  assert.equal(reconciled.hiddenFromWorkingText, 1);
 });

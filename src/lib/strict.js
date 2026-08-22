@@ -1073,13 +1073,11 @@ export function restoreCanonicalPassage(editorCode, canonical, source, layoutPla
 /** Invarianti fragili che devono ricomparire esattamente. */
 export function extractInvariants(text) {
   const s = String(text || '');
-  const patterns = [
-    /\b\d+(?:[.,]\d+)?\s*%/g,
-    /\b\d+(?:[.,]\d+)?\b/g,
-    /\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/gi,
-    /https?:\/\/[^\s)\]]+/gi,
-  ];
-  return patterns.flatMap((re) => s.match(re) || []);
+  // Un'unica scansione evita di contare due volte «12,5%» (prima come
+  // percentuale e poi come numero) e i numeri già inclusi in URL o DOI.
+  return s.match(
+    /https?:\/\/[^\s)\]]+|\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b|\b\d+(?:[.,]\d+)*(?:\s*%)?/gi,
+  ) || [];
 }
 
 export function missingInvariants(source, output) {

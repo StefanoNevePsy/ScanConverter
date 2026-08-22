@@ -168,7 +168,9 @@ export default function TranslatePanel({
                   <p className="mt-1 max-w-[70ch] text-xs leading-relaxed text-faint">
                     Analisi locale, senza chiamare alcun modello: aggiorna l’elenco dei passaggi
                     probabilmente rimasti in una lingua diversa da quella di destinazione.
-                    Bibliografie e indici sono mostrati, ma non preselezionati.
+                    Bibliografie e indici sono mostrati, ma non preselezionati. Durante la
+                    ritraduzione, riferimenti, numeri e markup vengono protetti e ripristinati
+                    localmente.
                   </p>
                 </div>
                 <button
@@ -403,7 +405,7 @@ function DuplicateAuditSection({
           <p className="mt-1 max-w-[70ch] text-xs leading-relaxed text-faint">
             {sourceStage
               ? 'Controllo già sul testo OCR: intercetta code di pagina ripetute prima che entrino nella traduzione.'
-              : 'Controllo locale di paragrafi, frasi e frammenti esatti ripetuti consecutivamente.'}{' '}
+              : 'Controllo locale di paragrafi, frasi e frammenti esatti ripetuti consecutivamente; gli avvisi si riallineano anche alle rimozioni manuali nel Typst.'}{' '}
             Non usa il modello e non elimina somiglianze semantiche.
           </p>
         </div>

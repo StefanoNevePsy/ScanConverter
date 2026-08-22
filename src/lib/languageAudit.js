@@ -366,6 +366,56 @@ export function auditDocumentDuplicates(markdown) {
   };
 }
 
+function countExactNormalizedPassages(normalizedDocument, normalizedPassage) {
+  if (!normalizedPassage) return 0;
+  const haystack = ` ${normalizedDocument} `;
+  const needle = ` ${normalizedPassage} `;
+  let count = 0;
+  let cursor = 0;
+  while (cursor < haystack.length) {
+    const index = haystack.indexOf(needle, cursor);
+    if (index === -1) break;
+    count++;
+    cursor = index + needle.length;
+  }
+  return count;
+}
+
+/**
+ * Allinea gli avvisi nati dal testo canonico con il Typst effettivamente
+ * aperto nell'editor. Ogni voce rappresenta una copia oltre la prima: se nel
+ * sorgente di lavoro ne rimane una sola, l'avviso è ormai obsoleto e sparisce
+ * senza modificare retroattivamente il testo base.
+ */
+export function reconcileDuplicateAuditWithWorkingText(audit, workingText) {
+  if (!audit || !String(workingText || '').trim() || !audit.items?.length) return audit;
+  const normalizedDocument = duplicateKey(workingText);
+  const capacityByKey = new Map();
+  const usedByKey = new Map();
+  const items = audit.items.filter((item) => {
+    const key = duplicateKey(item.text);
+    if (!capacityByKey.has(key)) {
+      const occurrences = countExactNormalizedPassages(normalizedDocument, key);
+      capacityByKey.set(key, Math.max(0, occurrences - 1));
+    }
+    const used = usedByKey.get(key) || 0;
+    const keep = used < capacityByKey.get(key);
+    if (keep) usedByKey.set(key, used + 1);
+    return keep;
+  });
+  return {
+    ...audit,
+    items,
+    reconciledWithWorkingText: true,
+    hiddenFromWorkingText: audit.items.length - items.length,
+    counts: {
+      paragraphs: items.filter((item) => item.type === 'paragraph').length,
+      sentences: items.filter((item) => item.type === 'sentence').length,
+      fragments: items.filter((item) => item.type === 'fragment').length,
+    },
+  };
+}
+
 /** Accetta `251, 285-286, 306`; rifiuta input ambiguo o intervalli enormi. */
 export function parsePageSelection(value) {
   const source = String(value || '').trim();

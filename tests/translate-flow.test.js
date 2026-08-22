@@ -147,7 +147,7 @@ test('un checkpoint con blocchi falliti viene ritentato alla ripresa', async () 
 test('un delimitatore perso dal modello fa ritentare il blocco', async () => {
   fakeModel({
     sabotage: (content, _marks, call) => (
-      call === 1 ? content.replace('_termine_', '_termine') : content
+      call === 1 ? content.replace(/⟦SC[A-Z]+CS⟧/u, '') : content
     ),
   });
   const out = await translateDocument({
@@ -157,6 +157,35 @@ test('un delimitatore perso dal modello fa ritentare il blocco', async () => {
   assert.equal(out.retried, 1);
   assert.equal(out.failed, 0);
   assert.match(out.markdown, /_termine_/);
+});
+
+test('un retry rimasto nella lingua sorgente riceve un prompt correttivo diverso', async () => {
+  let call = 0;
+  const prompts = [];
+  const source = 'The family is a system in which parents and children remain connected by loyalty and obligation.';
+  globalThis.fetch = async (_url, init) => {
+    call++;
+    const user = JSON.parse(init.body).messages.at(-1).content;
+    prompts.push(user);
+    const content = call === 1
+      ? `<<<0>>>\n${source}`
+      : '<<<0>>>\nLa famiglia è un sistema nel quale genitori e figli restano legati dalla lealtà e dagli obblighi.';
+    return { ok: true, json: async () => ({ choices: [{ message: { content } }] }) };
+  };
+  const out = await translateDocument({
+    settings: {
+      ...SETTINGS,
+      sourceLang: 'en',
+      targetLang: 'it',
+      translationLanguageGuard: true,
+    },
+    markdown: source,
+  });
+  assert.equal(out.retried, 1);
+  assert.equal(out.failed, 0);
+  assert.match(out.markdown, /^La famiglia/);
+  assert.match(prompts[1], /la risposta precedente ha copiato o conservato la lingua sorgente/i);
+  assert.notEqual(prompts[0], prompts[1]);
 });
 
 test('se il ritentativo risponde senza etichetta la risposta vale lo stesso', async () => {

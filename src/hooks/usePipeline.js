@@ -25,6 +25,7 @@ import {
   findAdjacentDuplicatePassages,
   inferDocumentLanguage,
   parsePageSelection,
+  reconcileDuplicateAuditWithWorkingText,
 } from '../lib/languageAudit.js';
 import { extractPdfText } from '../lib/pdftext.js';
 import { hasPdfData, releaseDesktopPdf } from '../lib/desktop.js';
@@ -508,7 +509,10 @@ export function usePipeline(settings) {
     // Le ripetizioni possono nascere già dall'overlap OCR fra due pagine:
     // mostrarle anche prima della traduzione permette di distinguere la loro
     // provenienza da un'eventuale eco del contesto restituita dal modello.
-    setDuplicateAudit(auditDocumentDuplicates(source));
+    setDuplicateAudit(reconcileDuplicateAuditWithWorkingText(
+      auditDocumentDuplicates(source),
+      session?.editorCode || '',
+    ));
     if (!session?.translatedFrom) {
       setLanguageAudit(null);
       return null;
@@ -531,10 +535,13 @@ export function usePipeline(settings) {
       setDuplicateAudit(null);
       return null;
     }
-    const audit = auditDocumentDuplicates(source);
+    const audit = reconcileDuplicateAuditWithWorkingText(
+      auditDocumentDuplicates(source),
+      typstCode || session?.editorCode || '',
+    );
     setDuplicateAudit(audit);
     return audit;
-  }, []);
+  }, [typstCode]);
 
   /** Ripete soltanto l'analisi linguistica deterministica, senza chiamate AI. */
   const recheckLanguage = useCallback(() => {
@@ -581,6 +588,18 @@ export function usePipeline(settings) {
   useEffect(() => {
     refreshLanguageAudit();
   }, [refreshLanguageAudit]);
+
+  // Una rimozione manuale nell'editor non deve lasciare un avviso ormai
+  // obsoleto soltanto perché il testo canonico conserva ancora la seconda
+  // copia. Il riallineamento è locale, differito e attivo solo quando esistono
+  // avvisi: su libri grandi non introduce lavoro continuo durante la scrittura.
+  useEffect(() => {
+    if (!typstCode.trim() || !duplicateAudit?.items?.length) return undefined;
+    const timer = setTimeout(() => {
+      setDuplicateAudit((current) => reconcileDuplicateAuditWithWorkingText(current, typstCode));
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [typstCode]); // L'audit corrente è volutamente uno snapshot da filtrare, non una dipendenza.
 
   // Salva su IndexedDB lo stato corrente della sessione (metadati testuali).
   const persist = useCallback(async () => {
@@ -2836,7 +2855,10 @@ export function usePipeline(settings) {
     }
     const canonical = s.canonicalText || s.rawText || '';
     const wanted = new Set(ids || []);
-    const freshAudit = auditDocumentDuplicates(canonical);
+    const freshAudit = reconcileDuplicateAuditWithWorkingText(
+      auditDocumentDuplicates(canonical),
+      typstCode || s.editorCode || '',
+    );
     const selected = freshAudit.items.filter((item) => wanted.has(item.id));
     if (!selected.length) return { ok: false, message: 'Nessun duplicato ancora valido nella selezione.' };
 

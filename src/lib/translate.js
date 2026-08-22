@@ -290,16 +290,33 @@ export function translationJobKey({ markdown, settings, model }) {
   }));
 }
 
-function buildUser({ group, sourceLang, targetLang, settings, specialized = false }) {
+function buildUser({
+  group,
+  sourceLang,
+  targetLang,
+  settings,
+  specialized = false,
+  retryIssue = null,
+}) {
   const from = sourceLang && sourceLang !== 'auto'
     ? `dalla lingua «${languageLabel(sourceLang)}» `
     : '';
   const context = contextBlock(settings);
+  const retryInstruction = retryIssue?.code === 'language'
+    ? 'SECONDO TENTATIVO: la risposta precedente ha copiato o conservato la lingua sorgente. ' +
+      `Traduci ogni frase in ${languageLabel(targetLang)}; non parafrasare e non restituire il testo originale.\n\n`
+    : retryIssue?.code === 'scaffold' || retryIssue?.code === 'structure'
+      ? 'SECONDO TENTATIVO: conserva una e una sola volta ogni segnaposto racchiuso fra ⟦ e ⟧, ' +
+        'esattamente com’è scritto e nella stessa posizione logica. Traduci soltanto le parole attorno.\n\n'
+      : retryIssue
+        ? 'SECONDO TENTATIVO: restituisci soltanto il blocco richiesto, completo, senza copiare il contesto.\n\n'
+        : '';
   return (
     (specialized
       ? `Sei un traduttore professionale ${from}verso «${languageLabel(targetLang)}». ` +
         'Traduci il brano completo con precisione editoriale, usando il contesto per mantenere coerente il lessico tecnico.\n\n'
       : `Traduci ${from}verso «${languageLabel(targetLang)}».\n\n`) +
+    retryInstruction +
     (context ? `${context}\n\n` : '') +
     (group.before
       ? 'CONTESTO PRECEDENTE (NON tradurlo, non ripeterlo in risposta: serve ' +
@@ -380,6 +397,60 @@ export function preservesMarkdownDelimiters(original, translated) {
     // può cambiare il significato o riaprire sintassi eseguibile.
     return received === expected;
   });
+}
+
+// Tutto ciò che non deve essere tradotto viene tolto temporaneamente dalla
+// portata del modello. L'alternanza è ordinata dal costrutto più ampio al più
+// piccolo, così i numeri dentro un URL o un DOI non generano segnaposto
+// annidati. I segnaposto contengono soltanto lettere e parentesi insolite: non
+// possono essere confusi con numeri, markup o parole del documento.
+const TRANSLATION_SCAFFOLD_RE = /<!--[\s\S]*?-->|<\/?[a-z][\w-]*\b[^>]*>|\]\((?:\\.|[^)\n])*\)|\[\^[^\]\n]+\]|https?:\/\/[^\s)\]]+|\b10\.\d{4,9}\/[\-._;()/:A-Z0-9]+\b|\d+(?:[.,]\d+)*(?:\s*%)?|(?:\\+)?[*_`$|]+/giu;
+
+function alphabeticIndex(index) {
+  let value = Number(index) + 1;
+  let result = '';
+  while (value > 0) {
+    value--;
+    result = String.fromCharCode(65 + (value % 26)) + result;
+    value = Math.floor(value / 26);
+  }
+  return result;
+}
+
+/**
+ * Protegge riferimenti e scheletro Markdown prima della traduzione.
+ * `restore` fallisce se il modello perde o duplica anche un solo segnaposto:
+ * non prova mai a indovinarne la posizione.
+ */
+export function protectTranslationScaffolding(value) {
+  const entries = [];
+  const text = String(value || '').replace(TRANSLATION_SCAFFOLD_RE, (original) => {
+    const token = `⟦SC${alphabeticIndex(entries.length)}CS⟧`;
+    entries.push({ token, original });
+    return token;
+  });
+  return {
+    text,
+    entries,
+    restore(candidate) {
+      let restored = String(candidate || '');
+      for (const entry of entries) {
+        const occurrences = restored.split(entry.token).length - 1;
+        if (occurrences !== 1) {
+          return {
+            ok: false,
+            text: '',
+            code: 'scaffold',
+            reason: occurrences === 0
+              ? 'Il modello ha rimosso un riferimento o un delimitatore protetto.'
+              : 'Il modello ha duplicato un riferimento o un delimitatore protetto.',
+          };
+        }
+        restored = restored.replace(entry.token, entry.original);
+      }
+      return { ok: true, text: restored, code: '', reason: '' };
+    },
+  };
 }
 
 const markdownTags = (value) => [...String(value || '').matchAll(/<\/?([a-z][\w-]*)\b[^>]*>/giu)]
@@ -497,6 +568,36 @@ export async function translateDocument({
     const failedIdsBefore = failedBlockIds.length;
 
     const translatable = group.blocks.filter((b) => b.translate);
+    const protectedBlocks = new Map(translatable.map((block) => [
+      block.id,
+      protectTranslationScaffolding(block.text),
+    ]));
+    const promptBlock = (block) => ({ ...block, text: protectedBlocks.get(block.id).text });
+    const firstIssues = new Map();
+    const assessProtectedCandidate = (block, value, contextGroup = group) => {
+      if (!String(value || '').trim()) {
+        return {
+          ok: false,
+          text: '',
+          code: 'empty',
+          reason: 'Il modello non ha restituito il blocco richiesto.',
+        };
+      }
+      const scaffold = protectedBlocks.get(block.id).restore(value);
+      if (!scaffold.ok) return scaffold;
+      const restored = restoreFigurePaths(block.text, scaffold.text);
+      return assessTranslationCandidate({
+        original: block.text,
+        candidate: restored,
+        previous: contextGroup.before,
+        next: contextGroup.after,
+        previousSource: units.get(block.id - 1)?.text,
+        previousTranslation: pieces.get(block.id - 1),
+        targetLang,
+        sourceLang,
+        guardLanguage,
+      });
+    };
     for (const block of group.blocks) {
       if (!block.translate) pieces.set(block.id, block.text);
     }
@@ -524,7 +625,11 @@ export async function translateDocument({
         // meglio se l'istruzione professionale vive nello stesso messaggio.
         system: specialized ? undefined : SYSTEM,
         user: buildUser({
-          group: { ...group, blocks: translatable }, sourceLang, targetLang, settings, specialized,
+          group: { ...group, blocks: translatable.map(promptBlock) },
+          sourceLang,
+          targetLang,
+          settings,
+          specialized,
         }),
         // Zero: una traduzione non guadagna nulla dalla varianza, e la
         // ripetibilità permette di riprendere un documento interrotto.
@@ -541,36 +646,40 @@ export async function translateDocument({
     for (const block of translatable) {
       const value = parsed.get(block.id);
       if (value) {
-        const restored = restoreFigurePaths(block.text, value);
-        const assessment = assessTranslationCandidate({
-          original: block.text,
-          candidate: restored,
-          previous: group.before,
-          next: group.after,
-          previousSource: units.get(block.id - 1)?.text,
-          previousTranslation: pieces.get(block.id - 1),
-          targetLang,
-          sourceLang,
-          guardLanguage,
-        });
+        const assessment = assessProtectedCandidate(block, value);
         if (assessment.ok) {
           pieces.set(block.id, assessment.text);
           continue;
         }
+        firstIssues.set(block.id, assessment);
+      } else {
+        firstIssues.set(block.id, {
+          code: 'missing',
+          reason: 'Il modello non ha restituito il blocco richiesto.',
+        });
       }
       // Blocco saltato: si ritenta da solo, dove non può perdersi fra gli altri.
       retried++;
       try {
+        const firstIssue = firstIssues.get(block.id);
+        // Se il primo tentativo ha copiato la lingua sorgente, togliere il
+        // contesto rende il secondo prompt sostanzialmente diverso anche con
+        // temperatura zero e impedisce che il modello replichi la stessa
+        // continuazione. Negli altri casi il contesto resta utile al lessico.
+        const retryGroup = firstIssue?.code === 'language'
+          ? { ...group, before: '', after: '', blocks: [promptBlock(block)] }
+          : { ...group, blocks: [promptBlock(block)] };
         const single = await engineChat({
           settings,
           phase: 'translate',
           system: specialized ? undefined : SYSTEM,
           user: buildUser({
-            group: { ...group, blocks: [block] },
+            group: retryGroup,
             sourceLang,
             targetLang,
             settings,
             specialized,
+            retryIssue: firstIssue,
           }),
           temperature: 0,
           maxTokens: 3072,
@@ -582,18 +691,7 @@ export async function translateDocument({
         // in una richiesta con un blocco solo non c'è ambiguità su cosa sia.
         const body = one || single.replace(MARK_RE, '').trim();
         if (!body) throw new Error('risposta vuota');
-        const restored = restoreFigurePaths(block.text, body);
-        const assessment = assessTranslationCandidate({
-          original: block.text,
-          candidate: restored,
-          previous: group.before,
-          next: group.after,
-          previousSource: units.get(block.id - 1)?.text,
-          previousTranslation: pieces.get(block.id - 1),
-          targetLang,
-          sourceLang,
-          guardLanguage,
-        });
+        const assessment = assessProtectedCandidate(block, body, retryGroup);
         if (!assessment.ok) throw new Error(assessment.reason);
         pieces.set(block.id, assessment.text);
       } catch (error) {

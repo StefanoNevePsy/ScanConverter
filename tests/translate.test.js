@@ -15,6 +15,7 @@ import {
   isUnexpectedAdjacentTranslation,
   preservesMarkdownDelimiters,
   preservesMarkdownStructure,
+  protectTranslationScaffolding,
   renderMarked,
   restoreBoundaryMarkdownMarkers,
   restoreFigurePaths,
@@ -209,6 +210,25 @@ test('rileva tag e destinazioni alterati durante la traduzione', () => {
     markdownStructureIssue('<footnote>Nota.</footnote>', '<footnote>Nota tradotta.'),
     /tag strutturale/,
   );
+});
+
+test('protegge e ripristina deterministicamente riferimenti e markup', () => {
+  const original = String.raw`Nel 1984 il _termine_ valeva 12,5%.* <sup>48</sup> [fonte](https://example.test/a_1)`;
+  const protectedText = protectTranslationScaffolding(original);
+  assert.doesNotMatch(protectedText.text, /1984|12,5%|<sup>|https:\/\//u);
+  assert.doesNotMatch(protectedText.text, /[*_$`|]/u);
+  const candidate = protectedText.text.replace('Nel', 'In').replace('il', 'the');
+  const restored = protectedText.restore(candidate);
+  assert.equal(restored.ok, true);
+  assert.match(restored.text, /1984/);
+  assert.match(restored.text, /_termine_/);
+  assert.match(restored.text, /12,5%\.\*/);
+  assert.match(restored.text, /<sup>48<\/sup>/);
+  assert.match(restored.text, /\]\(https:\/\/example\.test\/a_1\)/);
+
+  const missing = protectedText.restore(protectedText.text.replace(protectedText.entries[0].token, ''));
+  assert.equal(missing.ok, false);
+  assert.equal(missing.code, 'scaffold');
 });
 
 test('ripristina un richiamo di nota isolato perso sul bordo della traduzione', () => {
