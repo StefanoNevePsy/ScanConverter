@@ -21,6 +21,10 @@ export default function TypstEditor({
   proofreadBusy,
   proofreadDetail,
   proofModelLabel,
+  onReviseSelection,
+  selectionBusy,
+  selectionDetail,
+  translationModelLabel,
   searchRequest,
   onSearchMatch,
   compiling,
@@ -31,6 +35,7 @@ export default function TypstEditor({
   const gutterRef = useRef(null);
   const searchRef = useRef(null);
   const pendingJumpRef = useRef(false);
+  const pendingJumpOccurrenceRef = useRef(0);
   const activeMatchRef = useRef(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -38,6 +43,8 @@ export default function TypstEditor({
   const [replaceStr, setReplaceStr] = useState('');
   const [current, setCurrent] = useState(0);
   const [wholeWord, setWholeWord] = useState(false);
+  const [editorSelection, setEditorSelection] = useState(null);
+  const [selectionNotice, setSelectionNotice] = useState('');
 
   const lineCount = useMemo(
     () => Math.max(value.split('\n').length, 1),
@@ -53,6 +60,10 @@ export default function TypstEditor({
     if (current >= matches.length) setCurrent(0);
   }, [matches, current]);
 
+  useEffect(() => {
+    setEditorSelection(null);
+  }, [value]);
+
   // Ricerca pilotata dall'esterno (es. clic su una parola sospetta nel
   // controllo ortografico): apre la barra, imposta la query e salta al primo
   // risultato appena i match sono calcolati.
@@ -62,6 +73,7 @@ export default function TypstEditor({
     setWholeWord(searchRequest.wholeWord === true);
     setSearchOpen(true);
     pendingJumpRef.current = true;
+    pendingJumpOccurrenceRef.current = Math.max(0, Number(searchRequest.occurrence) || 0);
   }, [searchRequest]);
 
   const syncScroll = () => {
@@ -103,7 +115,7 @@ export default function TypstEditor({
   useEffect(() => {
     if (pendingJumpRef.current && matches.length) {
       pendingJumpRef.current = false;
-      goto(0);
+      goto(pendingJumpOccurrenceRef.current);
     } else if (pendingJumpRef.current && query && !matches.length) {
       pendingJumpRef.current = false;
       onSearchMatch?.(null);
@@ -115,6 +127,7 @@ export default function TypstEditor({
     if (!matches.length) return;
     const pos = matches[current];
     pendingJumpRef.current = true;
+    pendingJumpOccurrenceRef.current = current;
     onChange(value.slice(0, pos) + replaceStr + value.slice(pos + query.length));
   };
 
@@ -122,6 +135,7 @@ export default function TypstEditor({
     if (!query || !matches.length) return;
     const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
     pendingJumpRef.current = true;
+    pendingJumpOccurrenceRef.current = 0;
     onChange(value.replace(re, () => replaceStr));
   };
 
@@ -141,7 +155,32 @@ export default function TypstEditor({
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
       e.preventDefault();
       openSearch();
+    } else if (e.key === 'Escape' && editorSelection) {
+      setEditorSelection(null);
+      setSelectionNotice('');
     }
+  };
+
+  const captureEditorSelection = (event) => {
+    if (!onReviseSelection) return;
+    const start = event.currentTarget.selectionStart;
+    const end = event.currentTarget.selectionEnd;
+    const selected = value.slice(start, end);
+    setEditorSelection(end > start && selected.trim()
+      ? { start, end, count: end - start, sample: selected.replace(/\s+/gu, ' ').trim() }
+      : null);
+    setSelectionNotice('');
+  };
+
+  const runEditorSelectionAction = async (mode) => {
+    if (!editorSelection || selectionBusy || !onReviseSelection) return;
+    const result = await onReviseSelection({
+      start: editorSelection.start,
+      end: editorSelection.end,
+      mode,
+      source: 'typst',
+    });
+    setSelectionNotice(result?.message || 'Operazione completata.');
   };
 
   const onSearchKeyDown = (e) => {
@@ -155,12 +194,15 @@ export default function TypstEditor({
   };
 
   return (
-    <section className="card flex min-h-0 flex-1 flex-col overflow-hidden">
+    <section id="typst-editor-panel" className="card flex min-h-0 flex-1 flex-col overflow-hidden">
       <header className="flex flex-col items-stretch justify-between gap-2 border-b border-border px-4 py-2.5 sm:flex-row sm:items-center sm:gap-3">
         <div className="flex items-center gap-2">
           <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
           <h2 className="text-sm font-medium text-ink">Codice Typst</h2>
           <span className="hidden text-xs text-faint sm:inline">modificabile</span>
+          {onReviseSelection && (
+            <span className="hidden text-xs text-faint xl:inline">seleziona il testo per correggerlo o tradurlo con l’IA</span>
+          )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           {onSpellcheck && (
@@ -298,6 +340,69 @@ export default function TypstEditor({
         </div>
       )}
 
+      {onReviseSelection && editorSelection && (
+        <div className="flex flex-col gap-2 border-b border-border bg-primary-soft px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-semibold text-ink">
+              <span className="size-2 shrink-0 rounded-full bg-primary" aria-hidden="true" />
+              Selezione Typst · <span className="tabular-nums">{editorSelection.count}</span> caratteri
+            </div>
+            <p className="mt-0.5 truncate text-xs text-muted">
+              {selectionBusy
+                ? selectionDetail || 'Intervento IA in corso…'
+                : editorSelection.sample}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => runEditorSelectionAction('proof')}
+              disabled={!!selectionBusy || disabled}
+              title={`Correggi soltanto la selezione con ${proofModelLabel || 'il modello di rilettura selezionato'}`}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-50"
+            >
+              {selectionBusy === 'proof' ? <IconSpinner width={13} height={13} /> : <IconWand width={13} height={13} />}
+              Correggi selezione
+            </button>
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => runEditorSelectionAction('translate')}
+              disabled={!!selectionBusy || disabled}
+              title={`Traduci soltanto la selezione con ${translationModelLabel || 'il modello di traduzione selezionato'}`}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-primary/40 bg-surface px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-surface-2 disabled:opacity-50"
+            >
+              {selectionBusy === 'translate' ? <IconSpinner width={13} height={13} /> : <IconText width={13} height={13} />}
+              Traduci selezione
+            </button>
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                setEditorSelection(null);
+                setSelectionNotice('');
+                taRef.current?.focus();
+              }}
+              disabled={!!selectionBusy}
+              aria-label="Chiudi azioni sulla selezione"
+              className="grid min-h-9 min-w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+            >
+              <IconX width={14} height={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {selectionNotice && !selectionBusy && (
+        <p
+          role="status"
+          className="border-b border-border bg-surface-2 px-3 py-2 text-xs text-ink"
+        >
+          {selectionNotice}
+        </p>
+      )}
+
       <div className="relative flex min-h-0 flex-1">
         <div
           ref={gutterRef}
@@ -314,6 +419,7 @@ export default function TypstEditor({
           ref={taRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onSelect={captureEditorSelection}
           onScroll={syncScroll}
           onKeyDown={onEditorKeyDown}
           spellCheck={false}

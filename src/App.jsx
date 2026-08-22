@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadSettings, saveSettings } from './lib/storage.js';
 import { requiredKeys } from './lib/phases.js';
 import { formatBytes } from './lib/files.js';
+import { findBestEditorLocation } from './lib/editorScroll.js';
 import { usePipeline } from './hooks/usePipeline.js';
 import { initNativeShell, onBackButton, setNativeTheme } from './lib/native.js';
 import { getSharedFile, onSharedFile } from './lib/incoming.js';
@@ -610,6 +611,38 @@ function Workspace({
     setSearchReq({ query: suspect.word, wholeWord: true, id: Date.now() });
   }, []);
 
+  // Un solo comando coordina le due viste: seleziona il frammento realmente
+  // presente nel Typst e passa la stessa occorrenza al layer testuale del PDF.
+  const locatePassage = useCallback((item) => {
+    const text = typeof item === 'string' ? item : item?.text || item?.sample || '';
+    const canonicalStart = Number.isInteger(item?.start)
+      ? item.start
+      : Number.isInteger(item?.referenceStart)
+        ? item.referenceStart
+        : 0;
+    const ratio = canonicalStart / Math.max(1, pipe.canonicalText?.length || 1);
+    const location = findBestEditorLocation(pipe.typstCode, text, ratio);
+    if (!location) {
+      setAutofixMsg('Il passaggio non è stato trovato nel Typst corrente: potrebbe essere già stato modificato o rimosso.');
+      setTimeout(() => setAutofixMsg(null), 12000);
+      return false;
+    }
+    setMobileTab('code');
+    setSearchReq({
+      query: location.query,
+      occurrence: location.occurrence,
+      wholeWord: false,
+      id: Date.now(),
+    });
+    requestAnimationFrame(() => {
+      document.getElementById('typst-editor-panel')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+    return true;
+  }, [pipe.canonicalText, pipe.typstCode]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       {/* Barra sorgente + stato pipeline + azioni */}
@@ -724,13 +757,14 @@ function Workspace({
         />
       )}
 
-      <FidelityPanel warnings={pipe.fidelityWarnings} />
+      <FidelityPanel warnings={pipe.fidelityWarnings} onLocate={locatePassage} />
       <StrictReportPanel
         report={pipe.strictReport}
         correctionBusy={pipe.strictCorrectionBusy}
         onReviewCorrection={pipe.reviewStrictCorrection}
         issueBusy={pipe.strictIssueBusy}
         onReviewIssue={pipe.reviewStrictIssue}
+        onLocate={locatePassage}
       />
 
       {pipe.spellReport && (
@@ -766,7 +800,7 @@ function Workspace({
             text={pipe.strictReport ? pipe.canonicalText : pipe.rawText}
             styleHint={styleHint}
             fixTypos={fixTypos}
-            onReviseSelection={pipe.strictReport ? handleSelectionRevision : null}
+            onReviseSelection={pipe.strictWorkflow ? handleSelectionRevision : null}
             selectionBusy={pipe.selectionAiBusy}
             selectionDetail={pipe.selectionAiDetail}
             proofModelLabel={pipe.proofModelLabel}
@@ -791,6 +825,7 @@ function Workspace({
             repairBusy={pipe.languageRepairBusy}
             repairDetail={pipe.languageRepairDetail}
             modelLabel={pipe.translationModelLabel}
+            onLocate={locatePassage}
             disabled={pipe.phase === 'running'}
           />
         </div>
@@ -829,6 +864,10 @@ function Workspace({
             proofreadBusy={pipe.proofreadBusy}
             proofreadDetail={pipe.proofreadDetail}
             proofModelLabel={pipe.proofModelLabel}
+            onReviseSelection={pipe.strictWorkflow ? handleSelectionRevision : null}
+            selectionBusy={pipe.selectionAiBusy}
+            selectionDetail={pipe.selectionAiDetail}
+            translationModelLabel={pipe.translationModelLabel}
             searchRequest={searchReq}
             onSearchMatch={handleSearchMatch}
             compiling={pipe.compiling}

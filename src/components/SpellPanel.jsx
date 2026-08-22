@@ -91,8 +91,8 @@ export default function SpellPanel({
                 </button>
                 <button
                   onClick={() => onLocate(s)}
-                  title="Cerca nell'editor"
-                  aria-label={`Cerca «${s.word}» nell'editor`}
+                  title="Seleziona nel Typst ed evidenzia nel PDF"
+                  aria-label={`Apri «${s.word}» nel documento`}
                   className="border-l border-border/50 px-1.5 py-1 text-muted transition-colors hover:text-ink"
                 >
                   <IconSearch width={11} height={11} />

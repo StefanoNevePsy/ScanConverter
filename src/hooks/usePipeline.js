@@ -94,7 +94,11 @@ import {
 } from '../lib/verificationCache.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import { createProjectArchive, inspectProjectArchive } from '../lib/projectArchive.js';
-import { normalizeTextSelection, replaceTextSelection } from '../lib/selectionRevision.js';
+import {
+  mapEditorSelectionToCanonical,
+  normalizeTextSelection,
+  replaceTextSelection,
+} from '../lib/selectionRevision.js';
 import {
   saveSession,
   saveFigures,
@@ -2239,13 +2243,13 @@ export function usePipeline(settings) {
   }, [getCompiledPdf, typstCode, settings, verifyStrictPdf]);
 
   /**
-   * Traduce o rilegge soltanto una selezione del testo canonico. Gli offset
-   * arrivano dal pannello "Testo di lavoro", quindi la sostituzione nel
-   * Markdown non dipende dall'unicità della frase. Il rebase preserva il Typst
-   * circostante e il documento viene compilato prima di rendere persistente la
-   * modifica; in caso di errore non viene toccato alcuno stato della sessione.
+   * Traduce o rilegge soltanto una selezione. Gli offset possono arrivare dal
+   * "Testo di lavoro" oppure dall'editor Typst; in quest'ultimo caso vengono
+   * prima ricondotti deterministicamente alla fonte canonica. Il rebase
+   * preserva il Typst circostante e il documento viene compilato prima di
+   * rendere persistente la modifica; in caso di errore non cambia alcuno stato.
    */
-  const reviseTextSelection = useCallback(async ({ start, end, mode }) => {
+  const reviseTextSelection = useCallback(async ({ start, end, mode, source = 'canonical' }) => {
     const s = sessionRef.current;
     if (s?.workflow !== 'strict') {
       return {
@@ -2257,7 +2261,14 @@ export function usePipeline(settings) {
       return { ok: false, message: 'Tipo di intervento non riconosciuto.' };
     }
     const currentCanonical = s.canonicalText || s.rawText || '';
-    const selection = normalizeTextSelection(currentCanonical, start, end);
+    const selection = source === 'typst'
+      ? mapEditorSelectionToCanonical({
+        canonical: currentCanonical,
+        editorCode: typstCode || s.editorCode || '',
+        start,
+        end,
+      })
+      : normalizeTextSelection(currentCanonical, start, end);
     if (!selection.ok) return selection;
 
     const controller = new AbortController();
@@ -3434,6 +3445,7 @@ export function usePipeline(settings) {
     error,
     rawText,
     canonicalText: sessionRef.current?.canonicalText || rawText,
+    strictWorkflow: sessionRef.current?.workflow === 'strict',
     typstCode,
     setTypstCode,
     layoutOptions,

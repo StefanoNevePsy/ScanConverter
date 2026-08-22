@@ -17,6 +17,74 @@ export function findEditorMatches(value, query, wholeWord = false, limit = 5000)
   return out;
 }
 
+function clippedExcerpt(value, maxChars = 150) {
+  const text = String(value || '').trim();
+  if (text.length <= maxChars) return text;
+  const prefix = text.slice(0, maxChars + 1);
+  const boundary = Math.max(prefix.lastIndexOf('. '), prefix.lastIndexOf(' '));
+  return prefix.slice(0, boundary >= 36 ? boundary + (prefix[boundary] === '.' ? 1 : 0) : maxChars).trim();
+}
+
+function isPdfSafeLocationText(item) {
+  return /^[\p{L}\p{M}\p{N}'’\-\s]+$/u.test(item) && !item.includes('\n');
+}
+
+function locationCandidates(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+  const withoutMetadata = raw
+    .replace(/<!--[\s\S]*?-->/gu, ' ')
+    .replace(/!\[([^\]]*)\]\([^)]+\)/gu, '$1')
+    .replace(/^#{1,6}\s+/gmu, '')
+    .replace(/^\s*(?:[-+*]|\d+[.)])\s+/gmu, '')
+    .replace(/<\/?[a-z][^>]*>/giu, ' ')
+    .replace(/[*_`]/gu, ' ');
+  const structuralSegments = raw.split(
+    /<!--[\s\S]*?-->|<\/?[a-z][^>]*>|!\[[^\]]*\]\([^)]+\)|[*_`]+/giu,
+  );
+  const clauses = [raw, withoutMetadata, ...structuralSegments]
+    .flatMap((item) => item.split(/[,:;.!?…()\[\]{}]+/gu));
+  const variants = [raw, withoutMetadata, ...structuralSegments, ...clauses]
+    .flatMap((item) => [item.trim(), item.replace(/\s+/gu, ' ').trim()])
+    .filter((item) => /[\p{L}\p{N}]/u.test(item));
+  const candidates = [];
+  for (const variant of variants) {
+    const excerpt = clippedExcerpt(variant);
+    if (excerpt) candidates.push(excerpt);
+    const firstSentence = variant.match(/^.{12,}?[.!?…](?:\s|$)/u)?.[0]?.trim();
+    if (firstSentence) candidates.push(clippedExcerpt(firstSentence));
+  }
+  return [...new Set(candidates)].sort((left, right) => (
+    Number(isPdfSafeLocationText(right)) - Number(isPdfSafeLocationText(left)) || right.length - left.length
+  ));
+}
+
+/** Trova nel Typst il miglior frammento visibile di un avviso o suggerimento. */
+export function findBestEditorLocation(editorCode, sourceText, approximateRatio = 0) {
+  const source = String(editorCode || '');
+  const ratio = Math.max(0, Math.min(1, Number(approximateRatio) || 0));
+  for (const query of locationCandidates(sourceText)) {
+    const matches = findEditorMatches(source, query, isPdfSafeLocationText(query));
+    if (!matches.length) continue;
+    let occurrence = 0;
+    let distance = Infinity;
+    for (let index = 0; index < matches.length; index++) {
+      const current = Math.abs(matches[index] / Math.max(1, source.length) - ratio);
+      if (current < distance) {
+        distance = current;
+        occurrence = index;
+      }
+    }
+    return {
+      query,
+      occurrence,
+      start: matches[occurrence],
+      end: matches[occurrence] + query.length,
+    };
+  }
+  return null;
+}
+
 /** Porta un offset testuale al centro anche quando una singola riga sorgente
  * occupa molte righe VISIVE nel textarea per effetto del wrapping. */
 export function scrollTextareaOffsetIntoView(editor, value, offset) {

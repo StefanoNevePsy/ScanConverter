@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { IconAlert, IconCheck, IconSpinner, IconWand } from './Icons.jsx';
+import { IconAlert, IconCheck, IconSearch, IconSpinner, IconWand } from './Icons.jsx';
 
 export default function StrictReportPanel({
   report,
@@ -7,6 +7,7 @@ export default function StrictReportPanel({
   correctionBusy,
   onReviewIssue,
   issueBusy,
+  onLocate,
 }) {
   const [open, setOpen] = useState(false);
   const [notices, setNotices] = useState({});
@@ -131,6 +132,17 @@ export default function StrictReportPanel({
                             </span>
                           )}
                           <div className="mt-2 flex flex-wrap gap-1.5">
+                            {onLocate && (
+                              <button
+                                type="button"
+                                onClick={() => onLocate({ text: issue.rendered || issue.source })}
+                                title="Seleziona il passaggio nel Typst ed evidenzialo nel PDF"
+                                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-ink hover:bg-surface-2"
+                              >
+                                <IconSearch width={13} height={13} />
+                                Apri nel documento
+                              </button>
+                            )}
                             <button
                               type="button"
                               disabled={busy}
@@ -230,7 +242,23 @@ export default function StrictReportPanel({
                     <li key={i} className="rounded-lg border border-border/70 bg-surface/70 p-2.5 text-muted">
                       <div className="mb-2 flex items-center justify-between gap-2 text-[11px]">
                         <span className="font-semibold uppercase tracking-wide text-faint">Modifica {i + 1}</span>
-                        {decisionLabel && <span className="rounded-full bg-success/10 px-2 py-0.5 text-success">{decisionLabel}</span>}
+                        <span className="flex items-center gap-1.5">
+                          {onLocate && (c.after || c.before) && (
+                            <button
+                              type="button"
+                              onClick={() => onLocate({
+                                text: c.after || c.before,
+                                referenceStart: c.referenceStart,
+                              })}
+                              title="Seleziona la correzione nel Typst ed evidenziala nel PDF"
+                              aria-label={`Apri la modifica ${i + 1} nel documento`}
+                              className="grid size-7 place-items-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                            >
+                              <IconSearch width={13} height={13} />
+                            </button>
+                          )}
+                          {decisionLabel && <span className="rounded-full bg-success/10 px-2 py-0.5 text-success">{decisionLabel}</span>}
+                        </span>
                       </div>
                       <div className="grid gap-2 sm:grid-cols-2">
                         <div className="rounded-md bg-danger/5 p-2">

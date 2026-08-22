@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { IconAlert, IconCheck, IconGlobe, IconRefresh, IconTrash } from './Icons.jsx';
+import { IconAlert, IconCheck, IconGlobe, IconRefresh, IconSearch, IconTrash } from './Icons.jsx';
 import { LANGUAGES, languageLabel } from '../lib/translate.js';
 
 /*
@@ -31,6 +31,7 @@ export default function TranslatePanel({
   repairBusy,
   repairDetail,
   modelLabel,
+  onLocate,
   disabled,
 }) {
   const [open, setOpen] = useState(false);
@@ -208,15 +209,16 @@ export default function TranslatePanel({
               {auditCount ? (
                 <div className="mt-3 max-h-72 overflow-y-auto border-y border-border" role="list">
                   {audit.items.map((item) => (
-                    <label
+                    <div
                       key={item.id}
-                      className="flex cursor-pointer items-start gap-3 border-b border-border/60 px-1 py-2.5 last:border-b-0 hover:bg-surface-2"
+                      className="flex items-start gap-3 border-b border-border/60 px-1 py-2.5 last:border-b-0 hover:bg-surface-2"
                     >
                       <input
                         type="checkbox"
                         checked={selected.has(item.id)}
                         onChange={() => toggle(item.id)}
                         disabled={working}
+                        aria-label={`Seleziona il passaggio di pagina ${item.page ?? 'non indicata'} per la ritraduzione`}
                         className="mt-0.5 size-4 shrink-0 accent-[var(--color-primary)]"
                       />
                       <span className="min-w-0 flex-1">
@@ -234,7 +236,18 @@ export default function TranslatePanel({
                           {item.sample}
                         </span>
                       </span>
-                    </label>
+                      {onLocate && (
+                        <button
+                          type="button"
+                          onClick={() => onLocate(item)}
+                          title="Seleziona il passaggio nel Typst ed evidenzialo nel PDF"
+                          aria-label={`Apri il passaggio di pagina ${item.page ?? 'non indicata'} nel documento`}
+                          className="grid size-8 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-surface-3 hover:text-ink"
+                        >
+                          <IconSearch width={13} height={13} />
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
               ) : (
@@ -316,12 +329,25 @@ export default function TranslatePanel({
                       </summary>
                       <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto pr-1">
                         {repairReport.items.map((item) => (
-                          <li key={item.id} className="border-t border-border/70 pt-2 first:border-t-0 first:pt-0">
-                            <span className="font-semibold text-warning">Pagina {item.page ?? '—'}:</span>{' '}
-                            {item.reason}
-                            <span className="mt-0.5 block overflow-hidden text-ellipsis text-faint [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:1]">
-                              {item.sample}
+                          <li key={item.id} className="flex items-start gap-2 border-t border-border/70 pt-2 first:border-t-0 first:pt-0">
+                            <span className="min-w-0 flex-1">
+                              <span className="font-semibold text-warning">Pagina {item.page ?? '—'}:</span>{' '}
+                              {item.reason}
+                              <span className="mt-0.5 block overflow-hidden text-ellipsis text-faint [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:1]">
+                                {item.sample}
+                              </span>
                             </span>
+                            {onLocate && (
+                              <button
+                                type="button"
+                                onClick={() => onLocate(item)}
+                                title="Apri il passaggio lasciato invariato nel documento"
+                                aria-label={`Apri il passaggio non applicato di pagina ${item.page ?? 'non indicata'}`}
+                                className="grid size-7 shrink-0 place-items-center rounded-md text-muted hover:bg-surface-3 hover:text-ink"
+                              >
+                                <IconSearch width={12} height={12} />
+                              </button>
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -343,6 +369,7 @@ export default function TranslatePanel({
                 repairBusy={duplicateBusy}
                 detail={duplicateDetail}
                 disabled={disabled}
+                onLocate={onLocate}
               />
             </div>
           )}
@@ -361,6 +388,7 @@ export default function TranslatePanel({
               detail={duplicateDetail}
               disabled={disabled}
               sourceStage
+              onLocate={onLocate}
             />
           )}
         </div>
@@ -383,6 +411,7 @@ function DuplicateAuditSection({
   detail,
   disabled,
   sourceStage = false,
+  onLocate,
 }) {
   if (!audit) return null;
   const duplicateType = {
@@ -442,15 +471,16 @@ function DuplicateAuditSection({
           </div>
           <div className="mt-3 max-h-64 overflow-y-auto border-y border-border" role="list">
             {audit.items.map((item) => (
-              <label
+              <div
                 key={item.id}
-                className="flex cursor-pointer items-start gap-3 border-b border-border/60 px-1 py-2.5 last:border-b-0 hover:bg-surface-2"
+                className="flex items-start gap-3 border-b border-border/60 px-1 py-2.5 last:border-b-0 hover:bg-surface-2"
               >
                 <input
                   type="checkbox"
                   checked={selected.has(item.id)}
                   onChange={() => onToggle(item.id)}
                   disabled={busy}
+                  aria-label={`Seleziona il duplicato di pagina ${item.page ?? 'non indicata'} per la rimozione`}
                   className="mt-0.5 size-4 shrink-0 accent-[var(--color-primary)]"
                 />
                 <span className="min-w-0 flex-1">
@@ -463,7 +493,18 @@ function DuplicateAuditSection({
                     {item.sample}
                   </span>
                 </span>
-              </label>
+                {onLocate && (
+                  <button
+                    type="button"
+                    onClick={() => onLocate(item)}
+                    title="Seleziona il duplicato nel Typst ed evidenzialo nel PDF"
+                    aria-label={`Apri il duplicato di pagina ${item.page ?? 'non indicata'} nel documento`}
+                    className="grid size-8 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-surface-3 hover:text-ink"
+                  >
+                    <IconSearch width={13} height={13} />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
           <button

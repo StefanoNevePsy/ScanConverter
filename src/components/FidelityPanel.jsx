@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { IconAlert } from './Icons.jsx';
+import { IconAlert, IconSearch } from './Icons.jsx';
 
 /*
   Esito della verifica di fedeltà testuale: per ogni chunk sotto soglia mostra
@@ -8,7 +8,7 @@ import { IconAlert } from './Icons.jsx';
   avvenuta. Compare solo quando c'è qualcosa da segnalare.
 */
 
-export default function FidelityPanel({ warnings }) {
+export default function FidelityPanel({ warnings, onLocate }) {
   const [open, setOpen] = useState(false);
   if (!warnings?.length) return null;
 
@@ -45,10 +45,23 @@ export default function FidelityPanel({ warnings }) {
               </div>
               <ul className="space-y-1">
                 {w.missing.map((m, i) => (
-                  <li key={i} className="text-[13px] leading-snug text-ink">
-                    <span className="text-faint">«</span>
-                    {m.length > 220 ? m.slice(0, 220) + '…' : m}
-                    <span className="text-faint">»</span>
+                  <li key={i} className="flex items-start gap-2 text-[13px] leading-snug text-ink">
+                    <span className="min-w-0 flex-1">
+                      <span className="text-faint">«</span>
+                      {m.length > 220 ? m.slice(0, 220) + '…' : m}
+                      <span className="text-faint">»</span>
+                    </span>
+                    {onLocate && (
+                      <button
+                        type="button"
+                        onClick={() => onLocate({ text: m })}
+                        title="Seleziona il passaggio nel Typst ed evidenzialo nel PDF"
+                        aria-label="Apri questo passaggio nel documento"
+                        className="grid size-7 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                      >
+                        <IconSearch width={13} height={13} />
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
