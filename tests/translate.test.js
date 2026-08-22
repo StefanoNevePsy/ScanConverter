@@ -8,12 +8,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  assessTranslationCandidate,
+  markdownStructureIssue,
   parseMarked,
   planTranslation,
   isUnexpectedAdjacentTranslation,
   preservesMarkdownDelimiters,
   preservesMarkdownStructure,
   renderMarked,
+  restoreBoundaryMarkdownMarkers,
   restoreFigurePaths,
   sanitizeTranslationCandidate,
   splitBlocks,
@@ -181,6 +184,12 @@ test('rileva delimitatori Markdown persi o riaperti dai backslash', () => {
     false,
   );
   assert.equal(preservesMarkdownDelimiters('_termine_', '_termine tradotto_'), true);
+  assert.equal(
+    preservesMarkdownDelimiters('Latin term.', 'Termine *latino*.'),
+    true,
+    'un corsivo aggiunto ma bilanciato non mette a rischio la compilazione',
+  );
+  assert.equal(preservesMarkdownDelimiters('Latin term.', 'Termine *latino.'), false);
 });
 
 test('rileva tag e destinazioni alterati durante la traduzione', () => {
@@ -196,6 +205,39 @@ test('rileva tag e destinazioni alterati durante la traduzione', () => {
     preservesMarkdownStructure('<footnote>Nota.</footnote>', '<footnote>Nota tradotta.</footnote>'),
     true,
   );
+  assert.match(
+    markdownStructureIssue('<footnote>Nota.</footnote>', '<footnote>Nota tradotta.'),
+    /tag strutturale/,
+  );
+});
+
+test('ripristina un richiamo di nota isolato perso sul bordo della traduzione', () => {
+  const original = 'Everyone should receive his due.*';
+  const translated = 'A ciascuno dovrebbe spettare ciò che gli è dovuto.';
+  const restored = restoreBoundaryMarkdownMarkers(original, translated);
+  assert.equal(restored, 'A ciascuno dovrebbe spettare ciò che gli è dovuto.*');
+  assert.equal(preservesMarkdownStructure(original, restored), true);
+});
+
+test('la valutazione distingue lingua e struttura senza il messaggio generico', () => {
+  const source = 'The family is a system in which the parents and the children are connected by loyalty and obligation.';
+  const wrongLanguage = assessTranslationCandidate({
+    original: source,
+    candidate: 'The family is a system in which the parents and the children are connected by loyalty and obligation.',
+    sourceLang: 'en',
+    targetLang: 'it',
+  });
+  assert.equal(wrongLanguage.ok, false);
+  assert.equal(wrongLanguage.code, 'language');
+
+  const brokenMarkup = assessTranslationCandidate({
+    original: 'The _family_ remains connected.',
+    candidate: 'La _famiglia rimane connessa.',
+    sourceLang: 'en',
+    targetLang: 'it',
+  });
+  assert.equal(brokenMarkup.ok, false);
+  assert.equal(brokenMarkup.code, 'structure');
 });
 
 test('senza testo il piano è vuoto', () => {

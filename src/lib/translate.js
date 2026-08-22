@@ -366,21 +366,71 @@ export function preservesMarkdownDelimiters(original, translated) {
   const before = signature(original);
   const after = signature(translated);
   const keys = new Set([...before.keys(), ...after.keys()]);
-  return [...keys].every((key) => before.get(key) === after.get(key));
+  return [...keys].every((key) => {
+    const expected = before.get(key) || 0;
+    const received = after.get(key) || 0;
+    const [marker, state] = key.split(':');
+    // Gemini tende a rendere in corsivo locuzioni latine e titoli. Una coppia
+    // aggiuntiva e bilanciata di enfasi non rompe il Markdown né Typst; perdere
+    // un marcatore originale o aggiungerne uno spaiato, invece, resta vietato.
+    if (state === 'active' && (marker === '*' || marker === '_')) {
+      return received >= expected && (received - expected) % 2 === 0;
+    }
+    // Escape, formule e codice sono invarianti: qui anche una coppia in più
+    // può cambiare il significato o riaprire sintassi eseguibile.
+    return received === expected;
+  });
+}
+
+const markdownTags = (value) => [...String(value || '').matchAll(/<\/?([a-z][\w-]*)\b[^>]*>/giu)]
+  .map((match) => `${match[0].startsWith('</') ? '/' : ''}${match[1].toLowerCase()}`);
+
+const markdownDestinations = (value) => [
+  ...String(value || '').matchAll(/!?\[[^\]\n]*\]\(([^)\n]+)\)/gu),
+].map((match) => match[1]);
+
+/** Spiega quale parte dello scheletro Markdown è stata alterata. */
+export function markdownStructureIssue(original, translated) {
+  if (!preservesMarkdownDelimiters(original, translated)) {
+    return 'Il modello ha alterato asterischi, underscore, formule o delimitatori inline.';
+  }
+  if (JSON.stringify(markdownTags(original)) !== JSON.stringify(markdownTags(translated))) {
+    return 'Il modello ha perso, aggiunto o sbilanciato un tag strutturale.';
+  }
+  if (
+    JSON.stringify(markdownDestinations(original)) !==
+    JSON.stringify(markdownDestinations(translated))
+  ) {
+    return 'Il modello ha alterato la destinazione di un collegamento o di una figura.';
+  }
+  return '';
 }
 
 /** Tag, link e marker devono mantenere lo stesso scheletro fra le due lingue. */
 export function preservesMarkdownStructure(original, translated) {
-  if (!preservesMarkdownDelimiters(original, translated)) return false;
-  const tags = (value) => [...String(value || '').matchAll(/<\/?([a-z][\w-]*)\b[^>]*>/giu)]
-    .map((match) => `${match[0].startsWith('</') ? '/' : ''}${match[1].toLowerCase()}`);
-  const destinations = (value) => [
-    ...String(value || '').matchAll(/!?\[[^\]\n]*\]\(([^)\n]+)\)/gu),
-  ].map((match) => match[1]);
-  return (
-    JSON.stringify(tags(original)) === JSON.stringify(tags(translated)) &&
-    JSON.stringify(destinations(original)) === JSON.stringify(destinations(translated))
-  );
+  return !markdownStructureIssue(original, translated);
+}
+
+/**
+ * Ripristina marcatori Markdown isolati sul bordo del passaggio.
+ *
+ * Gli OCR usano spesso `*` o `\*` in fondo alla frase come richiamo di nota.
+ * Gemini può tradurre perfettamente la prosa ma omettere quel solo glifo. Il
+ * bordo è l'unico punto in cui possiamo reinserirlo senza indovinare una
+ * posizione dentro la frase; i marcatori interni restano invece bloccanti.
+ */
+export function restoreBoundaryMarkdownMarkers(original, translated) {
+  const source = String(original || '');
+  let result = String(translated || '');
+  const leading = source.match(/^\s*((?:\\?[*_`$])+)/u)?.[1] || '';
+  const trailing = source.match(/((?:\\?[*_`$])+)\s*$/u)?.[1] || '';
+  if (leading && !result.trimStart().startsWith(leading)) {
+    result = leading + result.trimStart();
+  }
+  if (trailing && !result.trimEnd().endsWith(trailing)) {
+    result = result.trimEnd() + trailing;
+  }
+  return result;
 }
 
 /**
@@ -423,6 +473,7 @@ export async function translateDocument({
   let retried = 0;
   let failed = 0;
   const failedBlockIds = [];
+  const failedBlockReasons = new Map();
   const resumed = new Map((resumeGroups || []).map((item) => [item.index, item]));
 
   for (const group of groups) {
@@ -491,24 +542,19 @@ export async function translateDocument({
       const value = parsed.get(block.id);
       if (value) {
         const restored = restoreFigurePaths(block.text, value);
-        const cleaned = sanitizeTranslationCandidate({
-          current: block.text,
+        const assessment = assessTranslationCandidate({
+          original: block.text,
           candidate: restored,
           previous: group.before,
           next: group.after,
+          previousSource: units.get(block.id - 1)?.text,
+          previousTranslation: pieces.get(block.id - 1),
+          targetLang,
+          sourceLang,
+          guardLanguage,
         });
-        if (
-          cleaned &&
-          preservesMarkdownStructure(block.text, cleaned) &&
-          !isUnexpectedAdjacentTranslation({
-            source: block.text,
-            previousSource: units.get(block.id - 1)?.text,
-            candidate: cleaned,
-            previousTranslation: pieces.get(block.id - 1),
-          }) &&
-          (!guardLanguage || isTranslationLanguageSafe(block.text, cleaned, targetLang, sourceLang))
-        ) {
-          pieces.set(block.id, cleaned);
+        if (assessment.ok) {
+          pieces.set(block.id, assessment.text);
           continue;
         }
       }
@@ -537,33 +583,32 @@ export async function translateDocument({
         const body = one || single.replace(MARK_RE, '').trim();
         if (!body) throw new Error('risposta vuota');
         const restored = restoreFigurePaths(block.text, body);
-        const cleaned = sanitizeTranslationCandidate({
-          current: block.text,
+        const assessment = assessTranslationCandidate({
+          original: block.text,
           candidate: restored,
           previous: group.before,
           next: group.after,
-        });
-        if (!cleaned || !preservesMarkdownStructure(block.text, cleaned)) {
-          throw new Error('sintassi Markdown alterata');
-        }
-        if (isUnexpectedAdjacentTranslation({
-          source: block.text,
           previousSource: units.get(block.id - 1)?.text,
-          candidate: cleaned,
           previousTranslation: pieces.get(block.id - 1),
-        })) {
-          throw new Error('duplicazione inattesa del blocco precedente');
-        }
-        if (guardLanguage && !isTranslationLanguageSafe(block.text, cleaned, targetLang, sourceLang)) {
-          throw new Error('lingua di destinazione non rispettata');
-        }
-        pieces.set(block.id, cleaned);
+          targetLang,
+          sourceLang,
+          guardLanguage,
+        });
+        if (!assessment.ok) throw new Error(assessment.reason);
+        pieces.set(block.id, assessment.text);
       } catch (error) {
         if (signal?.aborted || error?.name === 'AbortError') throw error;
         // Un blocco perso non deve far perdere il documento: resta in lingua
         // originale ed è segnalato nel riepilogo.
         failed++;
         failedBlockIds.push(block.id);
+        failedBlockReasons.set(
+          block.id,
+          String(error?.message || 'Il modello non ha restituito una traduzione utilizzabile.')
+            .replace(/\s+/gu, ' ')
+            .trim()
+            .slice(0, 220),
+        );
         pieces.set(block.id, block.text);
       }
     }
@@ -594,6 +639,9 @@ export async function translateDocument({
   }
   const blockTranslations = splitBlocks(markdown).map((block) => {
     const failedUnitIds = (unitsBySource.get(block.id) || []).filter((id) => failedSet.has(id));
+    const failureReasons = [...new Set(
+      failedUnitIds.map((id) => failedBlockReasons.get(id)).filter(Boolean),
+    )];
     return {
       id: block.id,
       before: block.text,
@@ -604,6 +652,7 @@ export async function translateDocument({
       // una frase non sicura, senza buttare via gli altri paragrafi del lotto.
       failed: failedUnitIds.length > 0,
       failedUnitIds,
+      failureReason: failureReasons.join(' · '),
     };
   });
   return {
@@ -613,6 +662,7 @@ export async function translateDocument({
     retried,
     failed,
     failedBlockIds,
+    failedBlockReasons: Object.fromEntries(failedBlockReasons),
   };
 }
 
@@ -727,4 +777,66 @@ export function sanitizeTranslationCandidate({ current, candidate, previous = ''
     filtered = filtered.filter((item) => item.key !== currentKey);
   }
   return filtered.length === 1 ? filtered[0].text : '';
+}
+
+/**
+ * Valuta una singola proposta e restituisce anche il motivo preciso dello
+ * scarto. Il chiamante può così distinguere un vero rischio strutturale da
+ * una risposta vuota o rimasta nella lingua sorgente.
+ */
+export function assessTranslationCandidate({
+  original,
+  candidate,
+  previous = '',
+  next = '',
+  previousSource = '',
+  previousTranslation = '',
+  targetLang = 'it',
+  sourceLang = 'auto',
+  guardLanguage = true,
+}) {
+  if (!String(candidate || '').trim()) {
+    return { ok: false, text: '', code: 'empty', reason: 'Il modello ha restituito una risposta vuota.' };
+  }
+  const withBoundaryMarkers = restoreBoundaryMarkdownMarkers(original, candidate);
+  const cleaned = sanitizeTranslationCandidate({
+    current: original,
+    candidate: withBoundaryMarkers,
+    previous,
+    next,
+  });
+  if (!cleaned) {
+    return {
+      ok: false,
+      text: '',
+      code: 'ambiguous',
+      reason: 'La risposta conteneva copie, contesto o ripetizioni e non era isolabile in modo sicuro.',
+    };
+  }
+  const structureIssue = markdownStructureIssue(original, cleaned);
+  if (structureIssue) {
+    return { ok: false, text: '', code: 'structure', reason: structureIssue };
+  }
+  if (isUnexpectedAdjacentTranslation({
+    source: original,
+    previousSource,
+    candidate: cleaned,
+    previousTranslation,
+  })) {
+    return {
+      ok: false,
+      text: '',
+      code: 'duplicate',
+      reason: 'La risposta duplicava in modo inatteso la traduzione del passaggio precedente.',
+    };
+  }
+  if (guardLanguage && !isTranslationLanguageSafe(original, cleaned, targetLang, sourceLang)) {
+    return {
+      ok: false,
+      text: '',
+      code: 'language',
+      reason: 'La risposta risulta ancora prevalentemente nella lingua sorgente.',
+    };
+  }
+  return { ok: true, text: cleaned, code: '', reason: '' };
 }

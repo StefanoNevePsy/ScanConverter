@@ -2589,36 +2589,6 @@ export function usePipeline(settings) {
     setLanguageRepairDetail('Preparo la selezione…');
     setLanguageRepairReport(null);
     try {
-      // Più paragrafi della stessa pagina e della stessa lingua viaggiano
-      // nella medesima richiesta. Il modello continua a restituirli con id
-      // separati, quindi il risparmio di chiamate non sacrifica la possibilità
-      // di ribasare e verificare ogni passaggio singolarmente.
-      const maxChars = Math.min(5000, Math.max(800, settings.chunkSize || 5000));
-      const groups = [];
-      for (const passage of selected) {
-        const sourceLanguage = passage.detection.suspicious
-          ? passage.detection.detectedLang
-          : declaredSource;
-        const previous = groups.at(-1);
-        const nextSize = (previous?.size || 0) + passage.text.length + 2;
-        if (
-          !previous ||
-          previous.page !== passage.page ||
-          previous.sourceLanguage !== sourceLanguage ||
-          nextSize > maxChars
-        ) {
-          groups.push({
-            page: passage.page,
-            sourceLanguage,
-            items: [passage],
-            size: passage.text.length,
-          });
-        } else {
-          previous.items.push(passage);
-          previous.size = nextSize;
-        }
-      }
-
       const replacements = [];
       const skipped = [];
       const skippedIds = new Set();
@@ -2633,62 +2603,66 @@ export function usePipeline(settings) {
         });
       };
       let completed = 0;
-      for (const group of groups) {
+      // Ogni passaggio ha una richiesta propria. Il batching faceva dipendere
+      // l'associazione dalla disciplina del modello nel ripetere tutte le
+      // etichette: una sola omissione poteva rendere sospetti molti paragrafi
+      // perfettamente traducibili. In una rilettura selettiva l'affidabilità
+      // vale più del piccolo risparmio di chiamate, e il processo resta
+      // comunque sequenziale per non saturare né API né hardware locale.
+      for (const passage of selected) {
         if (controller.signal.aborted) throw new DOMException('Annullato', 'AbortError');
-        const first = group.items[0];
-        const last = group.items.at(-1);
-        const context = selectiveTranslationContext(canonical, {
-          start: first.start,
-          end: last.end,
-        });
+        const sourceLanguage = passage.detection.suspicious
+          ? passage.detection.detectedLang
+          : declaredSource;
+        const context = selectiveTranslationContext(canonical, passage);
         setLanguageRepairDetail(
-          `Ritraduco ${completed + 1}-${completed + group.items.length}/${selected.length}` +
-          `${group.page ? ` · pagina ${group.page}` : ''}…`,
+          `Ritraduco ${completed + 1}/${selected.length}` +
+          `${passage.page ? ` · pagina ${passage.page}` : ''}…`,
         );
         try {
           const result = await translateMarkdown({
-            settings: { ...settings, sourceLang: group.sourceLanguage, targetLang: targetLanguage },
-            markdown: group.items.map((passage) => passage.text).join('\n\n'),
+            settings: { ...settings, sourceLang: sourceLanguage, targetLang: targetLanguage },
+            markdown: passage.text,
             externalBefore: context.before,
             externalAfter: context.after,
             signal: controller.signal,
           });
-          for (let index = 0; index < group.items.length; index++) {
-            const passage = group.items[index];
-            const proposal = result.blockTranslations?.[index];
-            const translated = proposal?.after?.trim();
-            if (!proposal) {
-              skip(passage, 'Il modello non ha restituito questo passaggio separatamente.');
-              continue;
-            }
-            if (proposal.failed) {
-              skip(passage, 'La risposta non ha superato i controlli di lingua o struttura.');
-              continue;
-            }
-            if (!translated) {
-              skip(passage, 'Il modello ha restituito una risposta vuota.');
-              continue;
-            }
-            if (translated === passage.text.trim()) {
-              skip(passage, 'Il testo restituito è rimasto invariato.');
-              continue;
-            }
-            const missing = missingInvariants(passage.text, translated);
-            if (missing.length) {
-              skip(
-                passage,
-                `La proposta perderebbe numeri o riferimenti: ${missing.slice(0, 4).join(', ')}.`,
-              );
-              continue;
-            }
-            replacements.push({ ...passage, translated });
+          const proposal = result.blockTranslations?.[0];
+          const translated = proposal?.after?.trim();
+          if (!proposal) {
+            skip(passage, 'Il modello non ha restituito il passaggio richiesto.');
+            continue;
           }
+          if (proposal.failed) {
+            skip(
+              passage,
+              proposal.failureReason || 'La risposta non ha superato i controlli di sicurezza.',
+            );
+            continue;
+          }
+          if (!translated) {
+            skip(passage, 'Il modello ha restituito una risposta vuota.');
+            continue;
+          }
+          if (translated === passage.text.trim()) {
+            skip(passage, 'Il testo restituito è rimasto invariato.');
+            continue;
+          }
+          const missing = missingInvariants(passage.text, translated);
+          if (missing.length) {
+            skip(
+              passage,
+              `La proposta perderebbe numeri o riferimenti: ${missing.slice(0, 4).join(', ')}.`,
+            );
+            continue;
+          }
+          replacements.push({ ...passage, translated });
         } catch (error) {
           if (controller.signal.aborted || error?.name === 'AbortError') throw error;
           const reason = String(error?.message || 'errore del modello').replace(/\s+/g, ' ').slice(0, 160);
-          for (const passage of group.items) skip(passage, `Richiesta non completata: ${reason}`);
+          skip(passage, `Richiesta non completata: ${reason}`);
         } finally {
-          completed += group.items.length;
+          completed++;
         }
       }
 
