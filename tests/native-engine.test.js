@@ -4,7 +4,12 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { figureRelativePath, pdfCacheKey, shortDiagnostics } = require('../electron/typst-runner.cjs');
+const {
+  figureRelativePath,
+  pdfCacheKey,
+  shortDiagnostics,
+  stripTerminalControl,
+} = require('../electron/typst-runner.cjs');
 
 test('il motore nativo accetta soltanto figure confinate alla cartella dedicata', () => {
   assert.equal(figureRelativePath('/figures/fig-1.png'), path.join('figures', 'fig-1.png'));
@@ -30,4 +35,9 @@ test('la cache PDF dipende da sorgente, figure e versione Typst', () => {
   assert.notEqual(a, pdfCacheKey('= Libro modificato', 'figure-a', 'v1'));
   assert.notEqual(a, pdfCacheKey('= Libro', 'figure-b', 'v1'));
   assert.notEqual(a, pdfCacheKey('= Libro', 'figure-a', 'v2'));
+});
+
+test('riconosce lo stato del watcher anche con i controlli terminale', () => {
+  const output = '\x1b[2J\x1b[Hwatching main.typ\r\n[12:34:56] compiled successfully in 84 ms\x1b[0m';
+  assert.match(stripTerminalControl(output), /compiled successfully in 84 ms/);
 });

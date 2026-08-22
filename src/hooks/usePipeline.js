@@ -81,6 +81,10 @@ import {
   requestStrictPassageRepair,
 } from '../lib/layoutPlan.js';
 import { createPdfSearchTarget } from '../lib/pdfPreview.js';
+import {
+  createPdfVerificationKey,
+  reusablePdfVerification,
+} from '../lib/verificationCache.js';
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import { createProjectArchive, inspectProjectArchive } from '../lib/projectArchive.js';
 import {
@@ -191,6 +195,20 @@ function selectiveTranslationContext(source, passage, sentenceCount = 2) {
     .map((sentence) => sentence.trim())
     .join(' ');
   return { before, after };
+}
+
+function strictReportFromPdf(session, pdf) {
+  return {
+    workflow: 'strict',
+    corrections: session.corrections || [],
+    ocrComparisons: session.ocrComparisons || [],
+    strictIssueResolutions: session.strictIssueResolutions || {},
+    layoutPlan: session.layoutPlan || null,
+    strictReview: session.strictReview || [],
+    strictReviewKey: session.strictReviewKey || null,
+    issueResolutions: session.strictIssueResolutions || {},
+    pdf,
+  };
 }
 
 /**
@@ -310,24 +328,52 @@ export function usePipeline(settings) {
   const verifyStrictPdf = useCallback(async (source, existingBytes = null) => {
     const s = sessionRef.current;
     if (s?.workflow !== 'strict') return existingBytes;
+    const verificationKey = await createPdfVerificationKey({
+      source,
+      canonicalText: s.canonicalText || s.rawText,
+      figures: figuresRef.current,
+      issueResolutions: s.strictIssueResolutions || {},
+    });
     // Download e riapertura dell'anteprima riusano lo stesso artefatto: non
     // riestrarre centinaia di pagine se questo identico PDF è già verificato.
-    if (existingBytes && s.verifiedPdfSource === source && s.verifiedPdfArtifact === existingBytes) {
+    // Anche la chiave deve coincidere: una risoluzione manuale può cambiare
+    // l'esito pur lasciando immutati sorgente e PDF.
+    if (
+      existingBytes &&
+      s.verifiedPdfSource === source &&
+      s.verifiedPdfArtifact === existingBytes &&
+      reusablePdfVerification(s.pdfVerification, verificationKey)
+    ) {
       return existingBytes;
+    }
+    if (reusablePdfVerification(s.pdfVerification, verificationKey)) {
+      const pdfBytes = existingBytes || await compileToPdf(source, figuresRef.current);
+      s.verified = s.pdfVerification.contentOk === true;
+      s.verifiedPdfSource = source;
+      s.verifiedPdfArtifact = pdfBytes;
+      setStrictReport(strictReportFromPdf(s, s.pdfVerification.pdf));
+      return pdfBytes;
     }
     s.verified = false;
     const pdfBytes = existingBytes || await compileToPdf(source, figuresRef.current);
     // Il PDF riformattato può avere più pagine dell'input: non applicare qui
     // il limite di ingestione configurato per i PDF sorgente.
-    const pdfText = await extractPdfText(pdfBytes);
+    const pdfText = await extractPdfText(pdfBytes, {
+      onProgress: (page, total) => {
+        if (page === 1 || page === total || page % 8 === 0) {
+          setDetail(`Verifica testuale del PDF · pagina ${page}/${total}…`);
+        }
+      },
+    });
     if (!pdfText) {
-      setStrictReport({
-        workflow: 'strict',
-        corrections: s.corrections || [],
-        ocrComparisons: s.ocrComparisons || [],
-        layoutPlan: s.layoutPlan || null,
-        pdf: { contentOk: false, unverifiable: true, missing: [], added: [], missingInvariants: [] },
-      });
+      const pdf = { contentOk: false, unverifiable: true, missing: [], added: [], missingInvariants: [] };
+      s.pdfVerification = {
+        key: verificationKey,
+        contentOk: false,
+        checkedAt: Date.now(),
+        pdf,
+      };
+      setStrictReport(strictReportFromPdf(s, pdf));
       s.verifiedPdfSource = source;
       s.verifiedPdfArtifact = pdfBytes;
       return pdfBytes;
@@ -372,27 +418,24 @@ export function usePipeline(settings) {
         }
       }
     }
-    setStrictReport({
-      workflow: 'strict',
-      corrections: s.corrections || [],
-      ocrComparisons: s.ocrComparisons || [],
-      strictIssueResolutions: s.strictIssueResolutions || {},
-      layoutPlan: s.layoutPlan || null,
-      strictReview: s.strictReview || [],
-      strictReviewKey: s.strictReviewKey || null,
-      issueResolutions,
-      pdf: {
-        ...sequence,
-        exactOrder: sequence.ok,
-        contentOk,
-        missing: inventory.missing,
-        added: inventory.added,
-        missingInvariants: invariants,
-        issues,
-        aiReview,
-        reviewError,
-      },
-    });
+    const pdf = {
+      ...sequence,
+      exactOrder: sequence.ok,
+      contentOk,
+      missing: inventory.missing,
+      added: inventory.added,
+      missingInvariants: invariants,
+      issues,
+      aiReview,
+      reviewError,
+    };
+    s.pdfVerification = {
+      key: verificationKey,
+      contentOk,
+      checkedAt: Date.now(),
+      pdf,
+    };
+    setStrictReport(strictReportFromPdf(s, pdf));
     s.verified = contentOk;
     s.verifiedPdfSource = source;
     s.verifiedPdfArtifact = pdfBytes;
@@ -482,6 +525,9 @@ export function usePipeline(settings) {
       ocrComparisons: s.ocrComparisons || [],
       strictIssueResolutions: s.strictIssueResolutions || {},
       verified: !!s.verified,
+      pdfVerification: s.pdfVerification || null,
+      strictReview: s.strictReview || [],
+      strictReviewKey: s.strictReviewKey || null,
       layoutPlan: s.layoutPlan || null,
       // Id del documento da cui questo è stato tradotto: serve a non
       // confondere l'originale con la sua traduzione nell'elenco.
@@ -1377,6 +1423,12 @@ export function usePipeline(settings) {
 
       // Fase formato: riprendi dai chunk non completati.
       figuresRef.current = await getFigures(meta.id);
+      const storedFormatComplete = Boolean(
+        (Array.isArray(meta.chunks) &&
+          meta.chunks.length > 0 &&
+          meta.chunks.every((chunk) => chunk.status === 'done')) ||
+        (meta.status === 'done' && meta.editorCode?.trim()),
+      );
       sessionRef.current = {
         id: meta.id,
         fileName: meta.fileName,
@@ -1399,6 +1451,7 @@ export function usePipeline(settings) {
         strictReviewKey: meta.strictReviewKey || null,
         strictIssueResolutions: meta.strictIssueResolutions || {},
         verified: meta.verified === true,
+        pdfVerification: meta.pdfVerification || null,
       };
       setRawText(meta.rawText || '');
       setLayoutOptions(normalizeLayoutOptions(meta.layoutOptions || {}));
@@ -1406,7 +1459,7 @@ export function usePipeline(settings) {
         meta.editorCode || combineDocument(meta.preamble || '', (meta.chunks || []).map((c) => c.body || '')),
       );
       sessionRef.current.editorCode = restoredCode;
-      if (meta.editorCode) {
+      if (meta.editorCode && storedFormatComplete) {
         // Evita che runFormat ricostruisca subito il vecchio contenuto dai
         // chunk e annulli lo snapshot appena ripristinato dall'editor.
         const restored = splitPreamble(restoredCode);
@@ -1431,17 +1484,67 @@ export function usePipeline(settings) {
             }
           : null,
       );
-      setStatus({ ocr: 'done', format: 'active', compile: 'pending' });
+      const formatComplete = Boolean(
+        restoredCode.trim() &&
+        storedFormatComplete,
+      );
+      setStatus({
+        ocr: 'done',
+        format: formatComplete ? 'done' : 'active',
+        compile: formatComplete ? 'active' : 'pending',
+      });
       setPhase('running');
-      setActiveStep('format');
+      setActiveStep(formatComplete ? 'compile' : 'format');
       sessionRef.current.chunks.forEach((c) => {
         if (c.status === 'error') c.status = 'pending';
       });
       refreshLanguageAudit(sessionRef.current);
+      if (formatComplete) {
+        // Il sorgente è già definitivo: non attraversare nuovamente
+        // processChunks/finalizeCompile. Sul desktop getCompiledPdf recupera
+        // il PDF dalla cache persistente; la verifica testuale viene anch'essa
+        // riusata se l'impronta di sorgente, fonte e figure coincide.
+        setDetail(meta.pdfVerification
+          ? 'Apro il PDF e la verifica già salvati…'
+          : 'Apro il PDF salvato; prima verifica su questo dispositivo…');
+        try {
+          let pdfBytes = await getCompiledPdf(restoredCode);
+          if (sessionRef.current.workflow === 'strict') {
+            pdfBytes = await verifyStrictPdf(restoredCode, pdfBytes);
+          }
+          if (controller.signal.aborted) return meta;
+          setPreviewPdf(pdfBytes);
+          setStatus({ ocr: 'done', format: 'done', compile: 'done' });
+          setActiveStep(null);
+          setDetail('');
+          setPhase('done');
+          await persist();
+        } catch (e) {
+          if (controller.signal.aborted || e?.name === 'AbortError') return meta;
+          setStatus({ ocr: 'done', format: 'done', compile: 'error' });
+          setCompileError(await describeCompileError(
+            restoredCode,
+            e.message || 'Errore di compilazione Typst.',
+          ));
+          setActiveStep(null);
+          setDetail('');
+          setPhase('done');
+        }
+        return meta;
+      }
       await runFormat(controller.signal);
       return meta;
     },
-    [runFormat, runOcrPhase, startFormat, refreshLanguageAudit],
+    [
+      describeCompileError,
+      getCompiledPdf,
+      persist,
+      refreshLanguageAudit,
+      runFormat,
+      runOcrPhase,
+      startFormat,
+      verifyStrictPdf,
+    ],
   );
 
   /** Elimina una sessione salvata (per id) e aggiorna l'elenco. */
@@ -2488,19 +2591,34 @@ export function usePipeline(settings) {
     const saveResolution = async (value) => {
       const next = { ...(s.strictIssueResolutions || {}), [issue.key]: value };
       s.strictIssueResolutions = next;
+      const covered = strictReport.pdf?.issues?.reduce(
+        (total, item) => total + item.missing.length,
+        0,
+      ) || 0;
+      const allArtifacts =
+        covered >= (strictReport.pdf?.missing?.length || 0) &&
+        strictReport.pdf?.issues?.every((item) => next[item.key]?.status === 'artifact');
+      const pdf = strictReport.pdf ? {
+        ...strictReport.pdf,
+        contentOk: strictReport.pdf.missingInvariants?.length === 0 && allArtifacts,
+      } : strictReport.pdf;
+      s.verified = pdf?.contentOk === true;
+      if (pdf) {
+        const key = await createPdfVerificationKey({
+          source: s.editorCode || typstCode,
+          canonicalText: s.canonicalText || s.rawText,
+          figures: figuresRef.current,
+          issueResolutions: next,
+        });
+        s.pdfVerification = { key, contentOk: s.verified, checkedAt: Date.now(), pdf };
+      }
       setStrictReport((report) => {
         if (!report) return report;
-        const covered = report.pdf?.issues?.reduce((total, item) => total + item.missing.length, 0) || 0;
-        const allArtifacts =
-          covered >= (report.pdf?.missing?.length || 0) &&
-          report.pdf?.issues?.every((item) => next[item.key]?.status === 'artifact');
         return {
           ...report,
+          strictIssueResolutions: next,
           issueResolutions: next,
-          pdf: report.pdf ? {
-            ...report.pdf,
-            contentOk: report.pdf.missingInvariants?.length === 0 && allArtifacts,
-          } : report.pdf,
+          pdf,
         };
       });
       await persist();

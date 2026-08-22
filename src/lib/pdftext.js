@@ -83,7 +83,7 @@ function buildLevelMap(sizes, body) {
  * @returns {Promise<string|null>} Markdown, o null se non c'è testo utile
  */
 export async function extractPdfText(data, opts = {}) {
-  const { maxPages = 2000, onProgress } = opts;
+  const { maxPages = 2000, onProgress, yieldEvery = 8 } = opts;
   // Sul desktop il PDF compilato resta su file ed è letto a intervalli. Per i
   // PDF caricati dall'utente conserva la copia che evita il detach del buffer.
   const loadingTask = isDesktopPdfArtifact(data)
@@ -107,6 +107,12 @@ export async function extractPdfText(data, opts = {}) {
       }
       pages.push(lines);
       page.cleanup();
+      // Su libri di centinaia di pagine lascia periodicamente respirare il
+      // renderer Electron/WebView. Il lavoro totale non cambia, ma menu,
+      // avanzamento e annullamento non restano congelati fino all'ultima pagina.
+      if (yieldEvery > 0 && i < total && i % yieldEvery === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
     }
 
     // Nessun layer testo utile (pura scansione): ~< 20 caratteri per pagina.

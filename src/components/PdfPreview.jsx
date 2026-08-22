@@ -215,7 +215,13 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
         canvas.style.height = `${Math.round(cssViewport.height)}px`;
         setPageRatio(base.width / base.height);
 
-        const context = canvas.getContext('2d', { alpha: false });
+        const context = canvas.getContext('2d', {
+          alpha: false,
+          // Consente a Chromium di scegliere una superficie accelerata e di
+          // presentare il frame senza sincronizzarlo con il thread principale.
+          desynchronized: true,
+          willReadFrequently: false,
+        });
         if (!context) throw new Error('Canvas non disponibile per l’anteprima PDF.');
         context.fillStyle = '#ffffff';
         context.fillRect(0, 0, canvas.width, canvas.height);

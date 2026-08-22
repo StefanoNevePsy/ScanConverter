@@ -1,3 +1,5 @@
+import { figureCollectionSignature } from './verificationCache.js';
+
 const EMPTY_FIGURES = [];
 const figureSets = new WeakMap();
 const uploadedFigureSets = new Set();
@@ -12,25 +14,7 @@ function figureSetFor(figures) {
   const collection = Array.isArray(figures) ? figures : EMPTY_FIGURES;
   let value = figureSets.get(collection);
   if (!value) {
-    // Impronta stabile anche dopo il riavvio. Si campionano uniformemente i
-    // byte, evitando di scandire centinaia di MB nel thread dell'interfaccia.
-    let hash = 0x811c9dc5;
-    const add = (number) => {
-      hash ^= Number(number) & 0xff;
-      hash = Math.imul(hash, 0x01000193) >>> 0;
-    };
-    for (const figure of collection) {
-      const path = String(figure?.path || '');
-      for (let i = 0; i < path.length; i++) add(path.charCodeAt(i));
-      const bytes = figure?.bytes instanceof Uint8Array
-        ? figure.bytes
-        : new Uint8Array(figure?.bytes || []);
-      for (const shift of [0, 8, 16, 24]) add(bytes.length >>> shift);
-      const step = Math.max(1, Math.floor(bytes.length / 4096));
-      for (let i = 0; i < bytes.length; i += step) add(bytes[i]);
-      if (bytes.length) add(bytes[bytes.length - 1]);
-    }
-    const digest = `${collection.length.toString(36)}-${hash.toString(16).padStart(8, '0')}`;
+    const digest = figureCollectionSignature(collection);
     value = { id: `fig-${digest}`, digest };
     figureSets.set(collection, value);
   }

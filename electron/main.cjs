@@ -126,6 +126,7 @@ async function startTypstEngine() {
       packageCachePath: path.join(app.getPath('userData'), 'typst-packages'),
       pdfCacheRoot: typstPdfCacheRoot,
       cacheVersion: 'typst-0.15.1-v1',
+      incrementalWatch: true,
     }), 'utf8').toString('base64');
     const engineModule = typstEngineModulePath();
     let child;

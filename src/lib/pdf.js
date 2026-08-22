@@ -47,7 +47,16 @@ export function loadPdfDocument(data) {
   if (isDesktopPdfArtifact(data)) {
     // Il protocollo Electron supporta le richieste Range: pdf.js legge dal
     // file nativo soltanto i blocchi necessari, senza clonare l'intero libro.
-    return pdfjsLib.getDocument({ url: data.url, wasmUrl: WASM_URL });
+    // Disabilitare stream e prefetch è intenzionale per l'anteprima: con le
+    // impostazioni predefinite pdf.js continua a leggere in background anche
+    // le centinaia di pagine non ancora aperte.
+    return pdfjsLib.getDocument({
+      url: data.url,
+      wasmUrl: WASM_URL,
+      disableAutoFetch: true,
+      disableStream: true,
+      rangeChunkSize: 128 * 1024,
+    });
   }
   return pdfjsLib.getDocument({ data: copyBytes(data), wasmUrl: WASM_URL });
 }
