@@ -9,7 +9,7 @@ import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assem
 import { refinePageTables } from '../lib/segments.js';
 import { localOcrBlocks } from '../lib/local.js';
 import { toTypstLocal } from '../lib/engines.js';
-import { phaseConfig } from '../lib/phases.js';
+import { ENGINE_LABELS, phaseConfig } from '../lib/phases.js';
 import {
   translateDocument as translateMarkdown,
   languageLabel,
@@ -118,6 +118,12 @@ function abortableSleep(ms, signal) {
 // "UNAVAILABLE"). Gli errori definitivi (400, chiave errata…) NON si riprovano.
 const RETRYABLE_RE =
   /(^|\D)(429|500|503)(\D|$)|rate.?limit|RESOURCE_EXHAUSTED|quota|overloaded|unavailable|temporarily|try again/i;
+
+function phaseEngineLabel(settings, phase) {
+  const { engine, model } = phaseConfig(settings, phase);
+  const label = ENGINE_LABELS[engine] || engine;
+  return model ? `${label} · ${model}` : label;
+}
 
 /**
  * Esegue `fn` con auto-retry ed exponential backoff sugli errori transitori
@@ -814,7 +820,8 @@ export function usePipeline(settings) {
         let canonicalText = boundaryRepair.text;
         let corrections = [...intraWordCorrections, ...boundaryRepair.changes];
         if (settings.fixTypos) {
-          setDetail('Correzione conservativa con registro delle modifiche…');
+          const proofEngine = phaseEngineLabel(settings, 'proof');
+          setDetail(`Rilettura e ortografia · ${proofEngine}…`);
           const proof = await proofreadBody({
             settings,
             // Non ripartire dal testo originale: altrimenti la rilettura
@@ -822,16 +829,21 @@ export function usePipeline(settings) {
             code: canonicalText,
             speller,
             signal,
-            onProgress: (done, total) => setDetail(`Correzione ${done}/${total} paragrafi…`),
+            onProgress: (done, total) => setDetail(
+              `Rilettura · ${proofEngine} · ${done}/${total} paragrafi…`,
+            ),
           });
           canonicalText = proof.code;
           corrections = [...corrections, ...proof.changes];
         }
-        setDetail('Il modello progetta il layout senza riscrivere il testo…');
+        const typstEngine = phaseEngineLabel(settings, 'typst');
+        setDetail(`Progettazione layout Typst · ${typstEngine}…`);
         const layoutPlan = await withRetry(
           () => requestStrictLayoutPlan({ settings, markdown: canonicalText, signal }),
           signal,
-          (secs) => setDetail(`Pianificazione layout · nuovo tentativo tra ${secs}s…`),
+          (secs) => setDetail(
+            `Layout Typst · ${typstEngine} · nuovo tentativo tra ${secs}s…`,
+          ),
         );
         const strict = buildStrictDocument(canonicalText, layoutPlan);
         const previousComparisons = sessionRef.current?.ocr?.comparisons || [];
@@ -1269,6 +1281,27 @@ export function usePipeline(settings) {
         return meta;
       }
 
+      // La traduzione viene salvata PRIMA della rilettura e del layout. Se
+      // l'app è stata chiusa durante una di queste fasi, riparte direttamente
+      // dal testo tradotto completo senza ripetere le centinaia di chiamate.
+      if (meta.translationReady && meta.rawText?.trim()) {
+        figuresRef.current = await getFigures(meta.id);
+        sessionRef.current = {
+          id: meta.id,
+          fileName: meta.fileName,
+          translatedFrom: meta.translatedFrom || null,
+          rawText: meta.rawText,
+        };
+        setRawText(meta.rawText);
+        setTypstCode('');
+        setStatus({ ocr: 'done', format: 'active', compile: 'pending' });
+        setPhase('running');
+        setActiveStep('format');
+        setDetail('Riprendo dal testo tradotto già salvato…');
+        await startFormat(meta.rawText, meta.fileName, controller.signal);
+        return meta;
+      }
+
       // Fase formato: riprendi dai chunk non completati.
       figuresRef.current = await getFigures(meta.id);
       sessionRef.current = {
@@ -1331,7 +1364,7 @@ export function usePipeline(settings) {
       await runFormat(controller.signal);
       return meta;
     },
-    [runFormat, runOcrPhase],
+    [runFormat, runOcrPhase, startFormat],
   );
 
   /** Elimina una sessione salvata (per id) e aggiorna l'elenco. */
@@ -1961,6 +1994,23 @@ export function usePipeline(settings) {
       const fileName = `${(source?.fileName || 'documento').replace(/\.[^.]+$/, '')} — ${label}`;
 
       figuresRef.current = figures;
+      // Questo è il confine di durabilità della traduzione: prima di avviare
+      // rilettura, progettazione Typst o compilazione salviamo il documento
+      // italiano completo e le sue figure. Chiusure e crash successivi non
+      // possono più costringere a ritradurlo.
+      await saveFigures(id, figures);
+      await saveSession({
+        id,
+        fileName,
+        translatedFrom: source?.id || null,
+        rawText: result.markdown,
+        preamble: '',
+        chunks: [],
+        workflow: settings.formatWorkflow === 'strict' ? 'strict' : 'legacy',
+        translationReady: true,
+        status: 'translated',
+      });
+      await refreshSessions();
       // Sessione nuova, non ripresa: `startFormat` riusa l'id di
       // `sessionRef.current`, quindi va impostato prima di chiamarlo.
       sessionRef.current = { id, fileName, translatedFrom: source?.id || null };

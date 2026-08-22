@@ -7,6 +7,7 @@
 */
 
 import { engineChat } from './engines.js';
+import { phaseConfig } from './phases.js';
 import { describeStrictBlocks } from './strict.js';
 
 const ALLOWED = {
@@ -73,14 +74,31 @@ function validatePlan(value, descriptors) {
   };
 }
 
-export async function requestStrictLayoutPlan({ settings, markdown, signal }) {
-  const descriptors = describeStrictBlocks(markdown);
+/**
+ * Crea un campione distribuito senza consegnare a un modello locale un libro
+ * quasi intero. I server cloud hanno finestre di contesto più ampie; Qwen su
+ * Ollama deve invece lasciare spazio sia alle istruzioni sia al JSON di uscita.
+ */
+export function sampleLayoutDescriptors(descriptors, local = false) {
   // Per libri lunghi basta un campione distribuito per decidere il progetto
   // grafico; gli ID non inclusi mantengono automaticamente lo stile normale.
-  const max = 120;
+  const max = local ? 32 : 120;
+  const textLimit = local ? 140 : 320;
   const sample = descriptors.length <= max
     ? descriptors
     : Array.from({ length: max }, (_, i) => descriptors[Math.floor(i * descriptors.length / max)]);
+  return sample.map((descriptor) => ({
+    ...descriptor,
+    ...(typeof descriptor.text === 'string'
+      ? { text: descriptor.text.slice(0, textLimit) }
+      : {}),
+  }));
+}
+
+export async function requestStrictLayoutPlan({ settings, markdown, signal }) {
+  const descriptors = describeStrictBlocks(markdown);
+  const local = phaseConfig(settings, 'typst').engine === 'local';
+  const sample = sampleLayoutDescriptors(descriptors, local);
   const system =
     'Sei un direttore editoriale. Progetta un layout molto leggibile e ' +
     'annotabile per un documento OCR. Non devi trascrivere, correggere, ' +
@@ -120,8 +138,12 @@ export async function requestStrictLayoutPlan({ settings, markdown, signal }) {
     system,
     user,
     temperature: 0,
-    maxTokens: 2048,
+    maxTokens: local ? 1024 : 2048,
     json: true,
+    // Qwen reasoning può consumare da solo gran parte dei 4096 token con cui
+    // Ollama viene normalmente avviato. Qui serve classificazione, non chain
+    // of thought: disabilitarlo rende il tempo prevedibile.
+    reasoningEffort: local ? 'none' : undefined,
     signal,
   });
   return validatePlan(parseJson(text), descriptors);
