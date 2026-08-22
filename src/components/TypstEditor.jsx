@@ -20,6 +20,7 @@ export default function TypstEditor({
   onProofread,
   proofreadBusy,
   proofreadDetail,
+  proofModelLabel,
   searchRequest,
   onSearchMatch,
   compiling,
@@ -155,13 +156,13 @@ export default function TypstEditor({
 
   return (
     <section className="card flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
+      <header className="flex flex-col items-stretch justify-between gap-2 border-b border-border px-4 py-2.5 sm:flex-row sm:items-center sm:gap-3">
         <div className="flex items-center gap-2">
           <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
           <h2 className="text-sm font-medium text-ink">Codice Typst</h2>
           <span className="hidden text-xs text-faint sm:inline">modificabile</span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
           {onSpellcheck && (
             <button
               onClick={onSpellcheck}
@@ -177,14 +178,14 @@ export default function TypstEditor({
             <button
               onClick={onProofread}
               disabled={!value.trim() || proofreadBusy}
-              title="Rilettura AI: corregge refusi OCR nel contesto, parole spezzate o fuse, accenti e virgolette"
-              aria-label="Rilettura AI"
+              title={`Ricontrolla refusi, parole spezzate, accenti e virgolette con ${proofModelLabel || 'il modello di rilettura selezionato'}`}
+              aria-label={`Ricontrolla il testo con ${proofModelLabel || 'il modello selezionato'}`}
               className="inline-flex items-center gap-1 rounded-lg bg-surface-2 px-2 py-1.5 text-ink transition-colors hover:bg-surface-3 disabled:opacity-50"
             >
               {proofreadBusy ? <IconSpinner width={14} height={14} /> : <IconText width={14} height={14} />}
-              {proofreadBusy && proofreadDetail && (
-                <span className="text-xs tabular-nums">{proofreadDetail}</span>
-              )}
+              <span className="text-xs font-semibold">
+                {proofreadBusy ? proofreadDetail || 'Ricontrollo…' : 'Ricontrolla testo'}
+              </span>
             </button>
           )}
           <button

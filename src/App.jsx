@@ -576,6 +576,13 @@ function Workspace({
     return res;
   }, [pipe]);
 
+  const handleTranslationReview = useCallback(async () => {
+    const res = await pipe.recheckTranslation();
+    setAutofixMsg(res?.message || null);
+    setTimeout(() => setAutofixMsg(null), 20000);
+    return res;
+  }, [pipe]);
+
   // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
   const locateWord = useCallback((suspect) => {
     setMobileTab('code');
@@ -715,6 +722,7 @@ function Workspace({
           onClose={pipe.closeSpellReport}
           onIgnore={pipe.ignoreSpellWords}
           onFixSpacing={handleFixSpacing}
+          modelLabel={pipe.proofModelLabel}
         />
       )}
 
@@ -741,10 +749,14 @@ function Workspace({
             onTranslate={handleTranslate}
             audit={pipe.languageAudit}
             onRetranslate={handleRetranslate}
+            onReviewTranslation={handleTranslationReview}
             busy={pipe.translateBusy}
             detail={pipe.translateDetail}
             repairBusy={pipe.languageRepairBusy}
             repairDetail={pipe.languageRepairDetail}
+            reviewBusy={pipe.translationReviewBusy}
+            reviewDetail={pipe.translationReviewDetail}
+            modelLabel={pipe.translationModelLabel}
             disabled={pipe.phase === 'running'}
           />
         </div>
@@ -782,6 +794,7 @@ function Workspace({
             onProofread={handleProofread}
             proofreadBusy={pipe.proofreadBusy}
             proofreadDetail={pipe.proofreadDetail}
+            proofModelLabel={pipe.proofModelLabel}
             searchRequest={searchReq}
             onSearchMatch={handleSearchMatch}
             compiling={pipe.compiling}

@@ -30,6 +30,16 @@ function plainText(value) {
     .replace(/\\[a-zA-Z]+|[#*_`|]/g, ' ');
 }
 
+function duplicateKey(value) {
+  return plainText(value)
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function classify(text) {
   const first = text.trimStart();
   if (/^#{1,6}\s/.test(first)) return 'heading';
@@ -184,6 +194,28 @@ export function auditDocumentLanguage(markdown, targetLang = 'it', sourceLang = 
     pages: [...new Set(items.map((item) => item.page).filter(Number.isFinite))],
     recommended: items.filter((item) => item.recommended).length,
   };
+}
+
+/**
+ * Trova soltanto duplicati adiacenti praticamente certi. La chiave ignora
+ * markup, maiuscole, accenti e punteggiatura, ma richiede prosa abbastanza
+ * lunga, stessa pagina e stessa sequenza di parole: niente deduplicazione
+ * "semantica" che potrebbe eliminare una ripetizione intenzionale.
+ */
+export function findAdjacentDuplicatePassages(markdown) {
+  const passages = documentLanguagePassages(markdown).filter((passage) => (
+    passage.translate && passage.kind === 'prose' && !passage.referenceSection
+  ));
+  const duplicates = [];
+  for (let index = 1; index < passages.length; index++) {
+    const previous = passages[index - 1];
+    const passage = passages[index];
+    if (previous.page !== passage.page) continue;
+    const key = duplicateKey(passage.text);
+    if (key.length < 50 || key.split(' ').length < 9 || key !== duplicateKey(previous.text)) continue;
+    duplicates.push({ ...passage, duplicateOf: previous.id });
+  }
+  return duplicates;
 }
 
 /** Accetta `251, 285-286, 306`; rifiuta input ambiguo o intervalli enormi. */

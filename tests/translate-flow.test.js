@@ -11,7 +11,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { translateDocument } from '../src/lib/translate.js';
+import {
+  reviewTranslationPassages,
+  sanitizeTranslationCandidate,
+  translateDocument,
+} from '../src/lib/translate.js';
 
 const SETTINGS = {
   localEndpoint: 'http://localhost:11434/v1/chat/completions',
@@ -210,6 +214,22 @@ test('la lingua di destinazione arriva al modello', async () => {
   assert.match(calls[0], /dalla lingua «Italiano»/);
 });
 
+test('una risposta con originale e traduzione duplicata produce un solo paragrafo', async () => {
+  fakeModel({
+    sabotage: (content) => content.replace(
+      /<<<0>>>\n\[EN\] ([\s\S]+)/,
+      (_match, original) => `<<<0>>>\n${original}\n\n[EN] ${original}\n\n[EN] ${original}`,
+    ),
+  });
+  const out = await translateDocument({
+    settings: SETTINGS,
+    markdown: 'Un paragrafo sufficientemente lungo da essere tradotto senza perdere il proprio contenuto.',
+  });
+  assert.equal(out.failed, 0);
+  assert.equal(out.markdown.split(/\n{2,}/).length, 1);
+  assert.match(out.markdown, /^\[EN\]/);
+});
+
 test('espone le traduzioni per blocco per il rebase selettivo', async () => {
   fakeModel();
   const out = await translateDocument({
@@ -241,4 +261,42 @@ test('senza testo si spiega perché, invece di produrre un documento vuoto', asy
     () => translateDocument({ settings: SETTINGS, markdown: '   ' }),
     /Non c’è testo da tradurre/,
   );
+});
+
+test('la revisione elimina originale, contesto e copie duplicate dalla proposta', () => {
+  const cleaned = sanitizeTranslationCandidate({
+    current: 'The family is connected by loyalty.',
+    candidate:
+      'The family is connected by loyalty.\n\n' +
+      'La famiglia è legata dalla lealtà.\n\n' +
+      'La famiglia è legata dalla lealtà.\n\n' +
+      'Contesto seguente da non ripetere.',
+    next: 'Contesto seguente da non ripetere.',
+  });
+  assert.equal(cleaned, 'La famiglia è legata dalla lealtà.');
+});
+
+test('il ricontrollo usa il modello della fase traduzione e restituisce patch localizzate', async () => {
+  let requestedModel = '';
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    requestedModel = body.model;
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '<<<0>>>\nLa famiglia è un sistema.' } }] }),
+    };
+  };
+  const changes = await reviewTranslationPassages({
+    settings: {
+      ...SETTINGS,
+      phases: { translate: { engine: 'local', models: { local: 'traduttore-corrente:7b' } } },
+      sourceLang: 'en',
+      targetLang: 'it',
+    },
+    sourceLang: 'en',
+    targetLang: 'it',
+    passages: [{ id: 'p1', text: 'The family is a system.', suspicious: true }],
+  });
+  assert.equal(requestedModel, 'traduttore-corrente:7b');
+  assert.deepEqual(changes, [{ id: 'p1', before: 'The family is a system.', after: 'La famiglia è un sistema.' }]);
 });

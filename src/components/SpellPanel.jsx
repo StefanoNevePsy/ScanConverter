@@ -19,6 +19,7 @@ export default function SpellPanel({
   onClose,
   onIgnore,
   onFixSpacing,
+  modelLabel,
 }) {
   const suspects = report?.suspects || [];
   const [skip, setSkip] = useState(() => new Set());
@@ -139,14 +140,20 @@ export default function SpellPanel({
           )}
         </div>
         {suspects.length > 0 && (
-          <button
-            onClick={() => onFixAll(selected)}
-            disabled={busy || !selected.length}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-60"
-          >
-            {busy ? <IconSpinner width={14} height={14} /> : <IconWand width={14} height={14} />}
-            {busy ? 'Correggo…' : `Correggi ${selected.length} con AI`}
-          </button>
+          <div className="flex min-w-0 flex-col items-end gap-1">
+            <button
+              onClick={() => onFixAll(selected)}
+              disabled={busy || !selected.length}
+              title={`Usa ${modelLabel || 'il modello di rilettura selezionato'}`}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-60"
+            >
+              {busy ? <IconSpinner width={14} height={14} /> : <IconWand width={14} height={14} />}
+              {busy ? 'Correggo…' : `Correggi ${selected.length} con AI`}
+            </button>
+            {modelLabel && (
+              <span className="max-w-64 truncate text-[10px] text-faint">{modelLabel}</span>
+            )}
+          </div>
         )}
       </footer>
     </section>

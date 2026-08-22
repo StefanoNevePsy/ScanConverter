@@ -4,6 +4,7 @@ import {
   auditDocumentLanguage,
   detectPassageLanguage,
   documentLanguagePassages,
+  findAdjacentDuplicatePassages,
   inferDocumentLanguage,
   isTranslationLanguageSafe,
   parsePageSelection,
@@ -61,4 +62,18 @@ test('le bibliografie sospette sono mostrate ma non preselezionate', () => {
 test('interpreta pagine singole e intervalli senza duplicati', () => {
   assert.deepEqual(parsePageSelection('251, 285-286; 306 285'), [251, 285, 286, 306]);
   assert.throws(() => parsePageSelection('10-x'), /non valido/);
+});
+
+test('trova solo paragrafi adiacenti realmente duplicati', () => {
+  const repeated = 'La famiglia è un sistema relazionale nel quale obblighi e lealtà attraversano più generazioni.';
+  const source = `<!-- pagina 12 -->\n\n${repeated}\n\n${repeated.toUpperCase()}\n\nPassaggio diverso e autonomo.`;
+  const duplicates = findAdjacentDuplicatePassages(source);
+  assert.equal(duplicates.length, 1);
+  assert.match(duplicates[0].text, /FAMIGLIA/);
+});
+
+test('non elimina ripetizioni brevi o separate da una pagina', () => {
+  const short = 'Nota ripetuta intenzionalmente.';
+  const source = `<!-- pagina 1 -->\n\n${short}\n\n${short}\n\n<!-- pagina 2 -->\n\n${short}`;
+  assert.deepEqual(findAdjacentDuplicatePassages(source), []);
 });

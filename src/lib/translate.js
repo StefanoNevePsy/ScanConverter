@@ -490,11 +490,18 @@ export async function translateDocument({
       const value = parsed.get(block.id);
       if (value) {
         const restored = restoreFigurePaths(block.text, value);
+        const cleaned = sanitizeTranslationCandidate({
+          current: block.text,
+          candidate: restored,
+          previous: group.before,
+          next: group.after,
+        });
         if (
-          preservesMarkdownStructure(block.text, restored) &&
-          (!guardLanguage || isTranslationLanguageSafe(block.text, restored, targetLang, sourceLang))
+          cleaned &&
+          preservesMarkdownStructure(block.text, cleaned) &&
+          (!guardLanguage || isTranslationLanguageSafe(block.text, cleaned, targetLang, sourceLang))
         ) {
-          pieces.set(block.id, restored);
+          pieces.set(block.id, cleaned);
           continue;
         }
       }
@@ -523,13 +530,19 @@ export async function translateDocument({
         const body = one || single.replace(MARK_RE, '').trim();
         if (!body) throw new Error('risposta vuota');
         const restored = restoreFigurePaths(block.text, body);
-        if (!preservesMarkdownStructure(block.text, restored)) {
+        const cleaned = sanitizeTranslationCandidate({
+          current: block.text,
+          candidate: restored,
+          previous: group.before,
+          next: group.after,
+        });
+        if (!cleaned || !preservesMarkdownStructure(block.text, cleaned)) {
           throw new Error('sintassi Markdown alterata');
         }
-        if (guardLanguage && !isTranslationLanguageSafe(block.text, restored, targetLang, sourceLang)) {
+        if (guardLanguage && !isTranslationLanguageSafe(block.text, cleaned, targetLang, sourceLang)) {
           throw new Error('lingua di destinazione non rispettata');
         }
-        pieces.set(block.id, restored);
+        pieces.set(block.id, cleaned);
       } catch (error) {
         if (signal?.aborted || error?.name === 'AbortError') throw error;
         // Un blocco perso non deve far perdere il documento: resta in lingua
@@ -573,4 +586,166 @@ export async function translateDocument({
     failed,
     failedBlockIds,
   };
+}
+
+function reviewParagraphKey(value) {
+  return String(value || '')
+    .replace(/<!--[^>]*-->/g, ' ')
+    .replace(/!?\[([^\]]*)\]\([^)]+\)/g, ' $1 ')
+    .replace(/<[^>]+>|[#*_`|]/g, ' ')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Ripulisce una risposta di revisione senza interpretarne il significato.
+ * Un input è un solo blocco: copie del blocco corrente, del contesto o della
+ * traduzione stessa vengono eliminate; se restano più blocchi distinti la
+ * proposta è ambigua e viene rifiutata.
+ */
+export function sanitizeTranslationCandidate({ current, candidate, previous = '', next = '' }) {
+  const raw = String(candidate || '')
+    .trim()
+    .replace(/^```(?:markdown|md)?\s*\n?/i, '')
+    .replace(/\n?```$/i, '')
+    .trim();
+  if (!raw) return '';
+  const segments = raw.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
+  const unique = [];
+  for (const segment of segments) {
+    const key = reviewParagraphKey(segment);
+    if (!key || unique.some((item) => item.key === key)) continue;
+    unique.push({ text: segment, key });
+  }
+  if (!unique.length) return '';
+
+  const currentKey = reviewParagraphKey(current);
+  const contextKeys = new Set([reviewParagraphKey(previous), reviewParagraphKey(next)].filter(Boolean));
+  let filtered = unique;
+  if (filtered.length > 1) {
+    filtered = filtered.filter((item) => !contextKeys.has(item.key));
+  }
+  // Errore tipico: il modello restituisce prima l'originale e poi la versione
+  // corretta. Se esiste un'alternativa, la copia esatta dell'input non è parte
+  // della correzione.
+  if (filtered.length > 1 && filtered.some((item) => item.key === currentKey)) {
+    filtered = filtered.filter((item) => item.key !== currentKey);
+  }
+  return filtered.length === 1 ? filtered[0].text : '';
+}
+
+function buildTranslationReviewUser({ items, sourceLang, targetLang, settings }) {
+  const context = contextBlock(settings);
+  const from = sourceLang && sourceLang !== 'auto' ? languageLabel(sourceLang) : 'lingua originale';
+  const payload = items.map((item, index) => (
+    `ITEM ${index}\n` +
+    (item.original ? `TESTO FONTE (${from}):\n${item.original}\n` : '') +
+    `TRADUZIONE ATTUALE (${languageLabel(targetLang)}):\n${item.text}\n` +
+    (item.previous ? `CONTESTO PRECEDENTE — NON RIPETERE:\n${item.previous}\n` : '') +
+    (item.next ? `CONTESTO SEGUENTE — NON RIPETERE:\n${item.next}\n` : '')
+  )).join('\n');
+  return (
+    `Ricontrolla questi passaggi già tradotti in ${languageLabel(targetLang)}. ` +
+    'Correggi soltanto frammenti rimasti nella lingua fonte, refusi evidenti, ' +
+    'accordi grammaticali errati o testo duplicato dentro lo stesso passaggio. ' +
+    'Non migliorare lo stile e non parafrasare una traduzione già corretta. ' +
+    'Il contesto serve solo a capire: non deve comparire nella risposta. Se il ' +
+    'passaggio seguente è già la traduzione del testo rimasto in lingua fonte, ' +
+    'usa ESATTAMENTE quel testo, così il duplicato potrà essere riconosciuto.\n' +
+    (context ? `\n${context}\n` : '') +
+    '\nRispondi SOLO per gli item che richiedono una modifica, nel formato:\n' +
+    '<<<numero>>>\nblocco corretto\n\nNon aggiungere spiegazioni, non unire o dividere i blocchi.\n\n' +
+    payload
+  );
+}
+
+function isSmallTranslationReviewEdit(before, after) {
+  const left = String(before || '');
+  const right = String(after || '');
+  let prefix = 0;
+  while (prefix < left.length && prefix < right.length && left[prefix] === right[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < left.length - prefix &&
+    suffix < right.length - prefix &&
+    left[left.length - 1 - suffix] === right[right.length - 1 - suffix]
+  ) suffix++;
+  const changed = (left.length - prefix - suffix) + (right.length - prefix - suffix);
+  return changed <= Math.max(48, Math.ceil(left.length * 0.3));
+}
+
+/**
+ * Secondo passaggio facoltativo sulla traduzione. Usa sempre motore e modello
+ * della fase `translate`; le proposte restano localizzate e vengono restituite
+ * al chiamante, che le valida e le applica atomicamente al Typst.
+ */
+export async function reviewTranslationPassages({
+  settings,
+  passages,
+  sourceLang = 'auto',
+  targetLang = 'it',
+  signal,
+  onProgress,
+}) {
+  const items = (passages || []).filter((item) => item?.text?.trim());
+  if (!items.length) return [];
+  const configured = phaseConfig(settings, 'translate');
+  const specialized = configured.engine === 'local' && isTranslateGemma(configured.model);
+  const maxChars = Math.min(specialized ? 5000 : 6000, Math.max(800, settings.chunkSize || 5000));
+  const groups = [];
+  for (const item of items) {
+    const size = item.text.length + (item.original?.length || 0) + 300;
+    const previous = groups.at(-1);
+    if (!previous || previous.size + size > maxChars) groups.push({ items: [item], size });
+    else {
+      previous.items.push(item);
+      previous.size += size;
+    }
+  }
+
+  const changes = [];
+  let done = 0;
+  for (const group of groups) {
+    if (signal?.aborted) throw new DOMException('Ricontrollo annullato.', 'AbortError');
+    const answer = await engineChat({
+      settings,
+      phase: 'translate',
+      system: specialized ? undefined : SYSTEM,
+      user: buildTranslationReviewUser({
+        items: group.items,
+        sourceLang,
+        targetLang,
+        settings,
+      }),
+      temperature: 0,
+      maxTokens: 4096,
+      reasoningEffort: 'none',
+      signal,
+    });
+    const parsed = parseMarked(answer);
+    group.items.forEach((item, index) => {
+      const candidate = sanitizeTranslationCandidate({
+        current: item.text,
+        candidate: parsed.get(index),
+        previous: item.previous,
+        next: item.next,
+      });
+      if (
+        !candidate ||
+        candidate === item.text ||
+        candidate.length > Math.max(500, item.text.length * 2.2) ||
+        !preservesMarkdownStructure(item.text, candidate) ||
+        !isTranslationLanguageSafe(item.text, candidate, targetLang, sourceLang) ||
+        (!item.suspicious && !isSmallTranslationReviewEdit(item.text, candidate))
+      ) return;
+      changes.push({ id: item.id, before: item.text, after: candidate });
+    });
+    done += group.items.length;
+    onProgress?.(done, items.length);
+  }
+  return changes;
 }
