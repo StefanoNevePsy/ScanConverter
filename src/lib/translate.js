@@ -404,7 +404,7 @@ export function preservesMarkdownDelimiters(original, translated) {
 // piccolo, così i numeri dentro un URL o un DOI non generano segnaposto
 // annidati. I segnaposto contengono soltanto lettere e parentesi insolite: non
 // possono essere confusi con numeri, markup o parole del documento.
-const TRANSLATION_SCAFFOLD_RE = /<!--[\s\S]*?-->|<\/?[a-z][\w-]*\b[^>]*>|\]\((?:\\.|[^)\n])*\)|\[\^[^\]\n]+\]|https?:\/\/[^\s)\]]+|\b10\.\d{4,9}\/[\-._;()/:A-Z0-9]+\b|\d+(?:[.,]\d+)*(?:\s*%)?|(?:\\+)?[*_`$|]+/giu;
+const TRANSLATION_SCAFFOLD_RE = /<!--[\s\S]*?-->|<\/?[a-z][\w-]*\b[^>]*>|\]\((?:\\.|[^)\n])*\)|\[\^[^\]\n]+\]|#[a-zA-Z][\w.-]*|https?:\/\/[^\s)\]]+|\b10\.\d{4,9}\/[\-._;()/:A-Z0-9]+\b|\d+(?:[.,]\d+)*(?:\s*%)?|(?:\\+)?[*_`$|]+/giu;
 
 function alphabeticIndex(index) {
   let value = Number(index) + 1;

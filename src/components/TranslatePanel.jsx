@@ -83,11 +83,11 @@ export default function TranslatePanel({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-ink hover:bg-surface-2"
+        className="flex min-w-0 w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium text-ink hover:bg-surface-2"
       >
         <IconGlobe width={16} height={16} className="shrink-0 text-faint" />
-        <span className="flex-1">Traduzione</span>
-        <span className="text-xs font-normal text-faint">
+        <span className="min-w-0 flex-1">Traduzione</span>
+        <span className="max-w-[55%] truncate text-xs font-normal text-faint">
           {working
             ? repairDetail || detail || 'in corso…'
             : auditCount
@@ -176,7 +176,7 @@ export default function TranslatePanel({
                 </div>
                 <button
                   type="button"
-                  className="button-primary shrink-0"
+                  className="button-primary max-w-full shrink-0"
                   onClick={onRecheckLanguage}
                   disabled={working || disabled || !onRecheckLanguage}
                 >
@@ -226,6 +226,9 @@ export default function TranslatePanel({
                           <span>Pagina {item.page ?? '—'}</span>
                           <span>{languageLabel(item.detectedLang)}</span>
                           <span>{item.confidence >= 0.85 ? 'confidenza alta' : 'confidenza media'}</span>
+                          {item.occurrenceCount > 1 && (
+                            <span>{item.occurrenceCount} occorrenze · una sola traduzione</span>
+                          )}
                           {!item.recommended && (
                             <span className="inline-flex items-center gap-1 text-warning">
                               <IconAlert width={11} height={11} /> riferimento
@@ -299,7 +302,7 @@ export default function TranslatePanel({
                   />
                   <button
                     type="button"
-                    className="button-secondary shrink-0"
+                    className="button-secondary max-w-full shrink-0"
                     onClick={() => onRetranslate({ pages: pageSpec })}
                     disabled={working || disabled || !pageSpec.trim()}
                   >
@@ -440,7 +443,7 @@ function DuplicateAuditSection({
         </div>
         <button
           type="button"
-          className="button-secondary shrink-0"
+          className="button-secondary max-w-full shrink-0"
           onClick={onRecheck}
           disabled={busy || disabled || !onRecheck}
         >

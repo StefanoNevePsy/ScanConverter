@@ -231,6 +231,16 @@ test('protegge e ripristina deterministicamente riferimenti e markup', () => {
   assert.equal(missing.code, 'scaffold');
 });
 
+test('protegge i nomi delle funzioni Typst durante una traduzione puntuale', () => {
+  const original = 'The #emph[family ledger] preserves #footnote[an important reference].';
+  const protectedText = protectTranslationScaffolding(original);
+  assert.doesNotMatch(protectedText.text, /#emph|#footnote/u);
+  const restored = protectedText.restore(protectedText.text.replace('The', 'Il'));
+  assert.equal(restored.ok, true);
+  assert.match(restored.text, /#emph\[family ledger\]/u);
+  assert.match(restored.text, /#footnote\[an important reference\]/u);
+});
+
 test('ripristina un richiamo di nota isolato perso sul bordo della traduzione', () => {
   const original = 'Everyone should receive his due.*';
   const translated = 'A ciascuno dovrebbe spettare ciò che gli è dovuto.';

@@ -509,7 +509,26 @@ function Workspace({
   const [autofixMsg, setAutofixMsg] = useState(null);
   const [searchReq, setSearchReq] = useState(null); // ricerca pilotata nell'editor
   const [pdfSearchTarget, setPdfSearchTarget] = useState(null);
+  const [reviewReturnLabel, setReviewReturnLabel] = useState('');
+  const reviewOriginRef = useRef(null);
   const pdfSearchRequestRef = useRef(0);
+
+  const rememberReviewOrigin = useCallback((label) => {
+    const active = document.activeElement;
+    reviewOriginRef.current = active instanceof HTMLElement ? active : null;
+    setReviewReturnLabel(label);
+  }, []);
+
+  const returnToReviewOrigin = useCallback(() => {
+    const origin = reviewOriginRef.current;
+    if (!origin?.isConnected) {
+      setReviewReturnLabel('');
+      return;
+    }
+    origin.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    requestAnimationFrame(() => origin.focus({ preventScroll: true }));
+    setReviewReturnLabel('');
+  }, []);
 
   const handleSearchMatch = useCallback(async (match) => {
     const requestId = ++pdfSearchRequestRef.current;
@@ -607,20 +626,30 @@ function Workspace({
 
   // Clic su una parola sospetta → cerca nell'editor (e mostra la scheda codice).
   const locateWord = useCallback((suspect) => {
+    rememberReviewOrigin('Controllo ortografico');
     setMobileTab('code');
     setSearchReq({ query: suspect.word, wholeWord: true, id: Date.now() });
-  }, []);
+  }, [rememberReviewOrigin]);
 
   // Un solo comando coordina le due viste: seleziona il frammento realmente
   // presente nel Typst e passa la stessa occorrenza al layer testuale del PDF.
   const locatePassage = useCallback((item) => {
     const text = typeof item === 'string' ? item : item?.text || item?.sample || '';
+    const duplicateTypes = new Set(['paragraph', 'sentence', 'fragment']);
+    const returnLabel = item?.detectedLang || item?.reason
+      ? 'Controllo lingua'
+      : duplicateTypes.has(item?.type)
+        ? 'Controllo duplicati'
+        : 'Revisione del documento';
+    rememberReviewOrigin(returnLabel);
     const canonicalStart = Number.isInteger(item?.start)
       ? item.start
       : Number.isInteger(item?.referenceStart)
         ? item.referenceStart
         : 0;
-    const ratio = canonicalStart / Math.max(1, pipe.canonicalText?.length || 1);
+    const ratio = item?.sourceFormat === 'typst'
+      ? canonicalStart / Math.max(1, pipe.typstCode.length)
+      : canonicalStart / Math.max(1, pipe.canonicalText?.length || 1);
     const location = findBestEditorLocation(pipe.typstCode, text, ratio);
     if (!location) {
       setAutofixMsg('Il passaggio non è stato trovato nel Typst corrente: potrebbe essere già stato modificato o rimosso.');
@@ -641,13 +670,13 @@ function Workspace({
       });
     });
     return true;
-  }, [pipe.canonicalText, pipe.typstCode]);
+  }, [pipe.canonicalText, pipe.typstCode, rememberReviewOrigin]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       {/* Barra sorgente + stato pipeline + azioni */}
-      <div className="card flex flex-col gap-4 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-        <div className="flex items-center gap-3">
+      <div className="card flex min-w-0 flex-col gap-4 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="size-11 shrink-0 overflow-hidden rounded-lg border border-border bg-surface-2">
             {previewUrl ? (
               <img src={previewUrl} alt="" className="size-full object-cover" />
@@ -667,11 +696,11 @@ function Workspace({
           </div>
         </div>
 
-        <div className="flex-1 sm:px-2">
+        <div className="min-w-0 flex-1 sm:px-2">
           <PipelineStepper status={pipe.status} compact />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
           <button
             onClick={onExportProject}
             disabled={!!projectBusy}
@@ -800,11 +829,6 @@ function Workspace({
             text={pipe.strictReport ? pipe.canonicalText : pipe.rawText}
             styleHint={styleHint}
             fixTypos={fixTypos}
-            onReviseSelection={pipe.strictWorkflow ? handleSelectionRevision : null}
-            selectionBusy={pipe.selectionAiBusy}
-            selectionDetail={pipe.selectionAiDetail}
-            proofModelLabel={pipe.proofModelLabel}
-            translationModelLabel={pipe.translationModelLabel}
           />
           <TranslatePanel
             sourceLang={sourceLang}
@@ -868,6 +892,8 @@ function Workspace({
             selectionBusy={pipe.selectionAiBusy}
             selectionDetail={pipe.selectionAiDetail}
             translationModelLabel={pipe.translationModelLabel}
+            reviewReturnLabel={reviewReturnLabel}
+            onReturnToReview={returnToReviewOrigin}
             searchRequest={searchReq}
             onSearchMatch={handleSearchMatch}
             compiling={pipe.compiling}

@@ -18,15 +18,14 @@ import {
   splitSentences,
 } from '../lib/translate.js';
 import {
-  auditDocumentDuplicates,
-  auditDocumentLanguage,
+  auditTypstDuplicates,
+  auditTypstLanguage,
   detectPassageLanguage,
-  documentLanguagePassages,
-  findAdjacentDuplicatePassages,
-  inferDocumentLanguage,
+  findAdjacentTypstDuplicatePassages,
+  inferTypstLanguage,
   parsePageSelection,
-  reconcileDuplicateAuditWithWorkingText,
 } from '../lib/languageAudit.js';
+import { typstDocumentPassages, typstPlainText } from '../lib/typstContent.js';
 import { extractPdfText } from '../lib/pdftext.js';
 import { hasPdfData, releaseDesktopPdf } from '../lib/desktop.js';
 import { isSpreadLike, preparePages, makeThumbnail } from '../lib/pagePrep.js';
@@ -95,7 +94,6 @@ import {
 import { loadSpellIgnore, addSpellIgnore } from '../lib/storage.js';
 import { createProjectArchive, inspectProjectArchive } from '../lib/projectArchive.js';
 import {
-  mapEditorSelectionToCanonical,
   normalizeTextSelection,
   replaceTextSelection,
 } from '../lib/selectionRevision.js';
@@ -214,6 +212,10 @@ function rebaseStrictRevision({
 function selectiveTranslationContext(source, passage, sentenceCount = 2) {
   const clean = (value) => String(value || '')
     .replace(/<!--\s*pagina\s+\d+\s*-->/giu, ' ')
+    .replace(/^\s*\/\/\s*pagina\s+\d+\s*$/gimu, ' ')
+    .replace(/#[a-zA-Z][\w.-]*/gu, ' ')
+    .replace(/^\s*=+\s+/gmu, '')
+    .replace(/[\[\]]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   const before = splitSentences(clean(source.slice(Math.max(0, passage.start - 2400), passage.start)))
@@ -254,6 +256,11 @@ export function usePipeline(settings) {
 
   const [rawText, setRawText] = useState('');
   const [typstCode, setTypstCode] = useState('');
+  // Le callback di audit devono leggere sempre l'ultima battuta dell'editor
+  // senza diventare dipendenti da `typstCode` (altrimenti un libro intero
+  // verrebbe ricontrollato a ogni tasto premuto).
+  const typstCodeRef = useRef('');
+  typstCodeRef.current = typstCode;
   const [layoutOptions, setLayoutOptions] = useState(DEFAULT_LAYOUT_OPTIONS);
   const [previewPdf, setPreviewPdf] = useState(null); // byte web o handle file desktop
   const [compileError, setCompileError] = useState(null);
@@ -360,13 +367,14 @@ export function usePipeline(settings) {
     return bytes;
   }, [getCompiledPdf]);
 
-  /** Compila e confronta il layer testuale del PDF con la fonte canonica. */
+  /** Compila e confronta il layer testuale del PDF con il Typst autorevole. */
   const verifyStrictPdf = useCallback(async (source, existingBytes = null) => {
     const s = sessionRef.current;
     if (s?.workflow !== 'strict') return existingBytes;
+    const authoritativeText = typstPlainText(source);
     const verificationKey = await createPdfVerificationKey({
       source,
-      canonicalText: s.canonicalText || s.rawText,
+      canonicalText: authoritativeText,
       figures: figuresRef.current,
       issueResolutions: s.strictIssueResolutions || {},
     });
@@ -414,7 +422,7 @@ export function usePipeline(settings) {
       s.verifiedPdfArtifact = pdfBytes;
       return pdfBytes;
     }
-    const expected = sourcePlainText(s.canonicalText || s.rawText);
+    const expected = sourcePlainText(authoritativeText);
     const actual = sourcePlainText(pdfText);
     const sequence = compareTokenSequences(expected, actual);
     const inventory = compareTokenInventory(expected, actual);
@@ -503,49 +511,43 @@ export function usePipeline(settings) {
     setSessions(all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)));
   }, []);
 
-  const refreshLanguageAudit = useCallback((session = sessionRef.current) => {
-    const source = session?.canonicalText || session?.rawText || '';
+  const refreshLanguageAudit = useCallback((session = sessionRef.current, sourceOverride = '') => {
+    const source = sourceOverride || typstCodeRef.current || session?.editorCode || '';
     if (!source.trim()) {
       setLanguageAudit(null);
       setDuplicateAudit(null);
       return null;
     }
-    // Le ripetizioni possono nascere già dall'overlap OCR fra due pagine:
-    // mostrarle anche prima della traduzione permette di distinguere la loro
-    // provenienza da un'eventuale eco del contesto restituita dal modello.
-    setDuplicateAudit(reconcileDuplicateAuditWithWorkingText(
-      auditDocumentDuplicates(source),
-      session?.editorCode || '',
-    ));
+    // Da questo punto il Typst aperto è il documento: anche gli avvisi devono
+    // nascere dai suoi offset, non da una copia OCR che l'utente non può
+    // correggere e che può essere ormai intenzionalmente diversa.
+    setDuplicateAudit(auditTypstDuplicates(source));
     if (!session?.translatedFrom) {
       setLanguageAudit(null);
       return null;
     }
-    const targetLanguage = session.targetLanguage || inferDocumentLanguage(
+    const targetLanguage = session.targetLanguage || inferTypstLanguage(
       source,
       settings.targetLang || 'it',
     );
     const sourceLanguage = session.sourceLanguage && session.sourceLanguage !== targetLanguage
       ? session.sourceLanguage
       : 'auto';
-    const audit = auditDocumentLanguage(source, targetLanguage, sourceLanguage);
+    const audit = auditTypstLanguage(source, targetLanguage, sourceLanguage);
     setLanguageAudit(audit);
     return audit;
-  }, [settings.sourceLang, settings.targetLang]);
+  }, [settings.targetLang]);
 
-  const refreshDuplicateAudit = useCallback((session = sessionRef.current) => {
-    const source = session?.canonicalText || session?.rawText || '';
+  const refreshDuplicateAudit = useCallback((session = sessionRef.current, sourceOverride = '') => {
+    const source = sourceOverride || typstCodeRef.current || session?.editorCode || '';
     if (!source.trim()) {
       setDuplicateAudit(null);
       return null;
     }
-    const audit = reconcileDuplicateAuditWithWorkingText(
-      auditDocumentDuplicates(source),
-      typstCode || session?.editorCode || '',
-    );
+    const audit = auditTypstDuplicates(source);
     setDuplicateAudit(audit);
     return audit;
-  }, [typstCode]);
+  }, []);
 
   /** Ripete soltanto l'analisi linguistica deterministica, senza chiamate AI. */
   const recheckLanguage = useCallback(() => {
@@ -593,14 +595,12 @@ export function usePipeline(settings) {
     refreshLanguageAudit();
   }, [refreshLanguageAudit]);
 
-  // Una rimozione manuale nell'editor non deve lasciare un avviso ormai
-  // obsoleto soltanto perché il testo canonico conserva ancora la seconda
-  // copia. Il riallineamento è locale, differito e attivo solo quando esistono
-  // avvisi: su libri grandi non introduce lavoro continuo durante la scrittura.
+  // Una rimozione manuale nell'editor aggiorna gli avvisi direttamente sul
+  // sorgente autorevole. Il debounce evita lavoro continuo sui libri lunghi.
   useEffect(() => {
     if (!typstCode.trim() || !duplicateAudit?.items?.length) return undefined;
     const timer = setTimeout(() => {
-      setDuplicateAudit((current) => reconcileDuplicateAuditWithWorkingText(current, typstCode));
+      setDuplicateAudit(auditTypstDuplicates(typstCode));
     }, 700);
     return () => clearTimeout(timer);
   }, [typstCode]); // L'audit corrente è volutamente uno snapshot da filtrare, non una dipendenza.
@@ -629,6 +629,7 @@ export function usePipeline(settings) {
         fidelity: c.fidelity || null,
       })),
       workflow: s.workflow || 'legacy',
+      documentAuthority: s.editorCode?.trim() ? 'typst' : 'ocr',
       canonicalText: s.canonicalText || null,
       corrections: s.corrections || [],
       ocrComparisons: s.ocrComparisons || [],
@@ -1099,10 +1100,12 @@ export function usePipeline(settings) {
           layoutPlan,
           pdf: null,
         });
-        setTypstCode(combineDocument(strict.preamble, [strict.body]));
+        const strictSource = combineDocument(strict.preamble, [strict.body]);
+        sessionRef.current.editorCode = strictSource;
+        setTypstCode(strictSource);
         await saveFigures(id, figuresRef.current);
         await persist();
-        refreshLanguageAudit(sessionRef.current);
+        refreshLanguageAudit(sessionRef.current, strictSource);
         setPhase('running');
         setActiveStep('compile');
         setStatus((s) => ({ ...s, format: 'done', compile: 'active' }));
@@ -2002,31 +2005,24 @@ export function usePipeline(settings) {
     }
     const fixed = repaired;
     const s = sessionRef.current;
-    const previousCanonical = s?.workflow === 'strict' ? s.canonicalText : null;
-    if (previousCanonical) {
-      const canonicalHyphenation = speller
-        ? fixOcrHyphenation(previousCanonical, speller).fixed
-        : previousCanonical;
-      s.canonicalText = fixSpacing(canonicalHyphenation).fixed;
-    }
     if (s) s.editorCode = fixed;
     setTypstCode(fixed);
     const compiled = await recompile(fixed);
     if (!compiled) {
       if (s) {
-        s.canonicalText = previousCanonical;
         s.editorCode = typstCode;
       }
       setTypstCode(typstCode);
       return { ok: false, message: 'Correzioni annullate: il documento modificato non supera la verifica.' };
     }
     await persist();
+    refreshLanguageAudit(s, fixed);
     if (speller) {
       const ignore = new Set(loadSpellIgnore());
       setSpellReport({ suspects: findSuspects(fixed, speller, ignore) });
     }
     return { ok: true, message: `Spaziatura sistemata: ${changes.join(' · ')}` };
-  }, [typstCode, recompile, persist]);
+  }, [typstCode, recompile, persist, refreshLanguageAudit]);
 
   /**
    * Correzione rapida di TUTTI i sospetti con un LLM veloce: invia solo
@@ -2088,20 +2084,18 @@ export function usePipeline(settings) {
         // Rete di sicurezza: se il documento compilava PRIMA ma non DOPO le
         // correzioni, si annulla tutto (mai peggiorare la compilazione).
         const strictSession = sessionRef.current?.workflow === 'strict' ? sessionRef.current : null;
-        const previousCanonical = strictSession?.canonicalText;
         const previousCorrections = strictSession?.corrections || [];
         try {
           const pdfBytes = await getCompiledPdf(code);
           if (strictSession) {
-            const canonical = applySpellFixes(previousCanonical || strictSession.rawText, corrections);
-            strictSession.canonicalText = canonical.code;
             strictSession.corrections = [
               ...previousCorrections,
-              ...canonical.applied.map((a) => ({
+              ...applied.map((a) => ({
                 before: a.word,
                 after: a.fix,
                 type: 'spelling',
                 count: a.count,
+                authority: 'typst',
               })),
             ];
             await verifyStrictPdf(code, pdfBytes);
@@ -2110,7 +2104,6 @@ export function usePipeline(settings) {
           setCompileError(null);
         } catch (eAfter) {
           if (strictSession) {
-            strictSession.canonicalText = previousCanonical;
             strictSession.corrections = previousCorrections;
           }
           let beforeOk = false;
@@ -2129,7 +2122,10 @@ export function usePipeline(settings) {
           }
           setCompileError(eAfter.message || 'Errore di compilazione Typst.');
         }
+        if (sessionRef.current) sessionRef.current.editorCode = code;
         setTypstCode(code);
+        await persist();
+        refreshLanguageAudit(sessionRef.current, code);
         const ignore = new Set(loadSpellIgnore());
         setSpellReport({ suspects: findSuspects(code, speller, ignore) });
         return {
@@ -2147,7 +2143,7 @@ export function usePipeline(settings) {
         setSpellBusy(false);
       }
     },
-    [getCompiledPdf, spellReport, typstCode, settings, verifyStrictPdf],
+    [getCompiledPdf, persist, refreshLanguageAudit, spellReport, typstCode, settings, verifyStrictPdf],
   );
 
   /**
@@ -2182,22 +2178,13 @@ export function usePipeline(settings) {
       }
       // Rete di sicurezza: se compilava PRIMA ma non DOPO, si annulla tutto.
       const strictSession = sessionRef.current?.workflow === 'strict' ? sessionRef.current : null;
-      const previousCanonical = strictSession?.canonicalText;
       const previousCorrections = strictSession?.corrections || [];
       try {
         const pdfBytes = await getCompiledPdf(code);
         if (strictSession) {
-          let nextCanonical = previousCanonical || strictSession.rawText;
-          for (const change of changes) {
-            if (!nextCanonical.includes(change.before)) {
-              throw new Error('Una correzione non è riconducibile in modo univoco al testo OCR canonico.');
-            }
-            nextCanonical = nextCanonical.replace(change.before, change.after);
-          }
-          strictSession.canonicalText = nextCanonical;
           strictSession.corrections = [
             ...previousCorrections,
-            ...changes.map((c) => ({ ...c, type: 'contextual' })),
+            ...changes.map((c) => ({ ...c, type: 'contextual', authority: 'typst' })),
           ];
           await verifyStrictPdf(code, pdfBytes);
         }
@@ -2205,7 +2192,6 @@ export function usePipeline(settings) {
         setCompileError(null);
       } catch (eAfter) {
         if (strictSession) {
-          strictSession.canonicalText = previousCanonical;
           strictSession.corrections = previousCorrections;
         }
         let beforeOk = false;
@@ -2224,7 +2210,10 @@ export function usePipeline(settings) {
         }
         setCompileError(eAfter.message || 'Errore di compilazione Typst.');
       }
+      if (sessionRef.current) sessionRef.current.editorCode = code;
       setTypstCode(code);
+      await persist();
+      refreshLanguageAudit(sessionRef.current, code);
       return {
         ok: true,
         message:
@@ -2240,36 +2229,34 @@ export function usePipeline(settings) {
       setProofreadBusy(false);
       setProofreadDetail('');
     }
-  }, [getCompiledPdf, typstCode, settings, verifyStrictPdf]);
+  }, [getCompiledPdf, persist, refreshLanguageAudit, typstCode, settings, verifyStrictPdf]);
 
   /**
-   * Traduce o rilegge soltanto una selezione. Gli offset possono arrivare dal
-   * "Testo di lavoro" oppure dall'editor Typst; in quest'ultimo caso vengono
-   * prima ricondotti deterministicamente alla fonte canonica. Il rebase
-   * preserva il Typst circostante e il documento viene compilato prima di
-   * rendere persistente la modifica; in caso di errore non cambia alcuno stato.
+   * Traduce o rilegge una selezione direttamente nel Typst autorevole. Gli
+   * offset sono quelli visibili nell'editor: non esiste più un secondo testo
+   * nascosto da localizzare o sincronizzare. Prima del salvataggio il sorgente
+   * completo deve comunque superare il compilatore.
    */
-  const reviseTextSelection = useCallback(async ({ start, end, mode, source = 'canonical' }) => {
+  const reviseTextSelection = useCallback(async ({ start, end, mode }) => {
     const s = sessionRef.current;
     if (s?.workflow !== 'strict') {
       return {
         ok: false,
-        message: 'Gli interventi IA sulla selezione richiedono il workflow rigoroso, che mantiene testo e Typst sincronizzati.',
+        message: 'Gli interventi IA sulla selezione richiedono il workflow rigoroso.',
       };
     }
     if (!['proof', 'translate'].includes(mode)) {
       return { ok: false, message: 'Tipo di intervento non riconosciuto.' };
     }
-    const currentCanonical = s.canonicalText || s.rawText || '';
-    const selection = source === 'typst'
-      ? mapEditorSelectionToCanonical({
-        canonical: currentCanonical,
-        editorCode: typstCode || s.editorCode || '',
-        start,
-        end,
-      })
-      : normalizeTextSelection(currentCanonical, start, end);
+    const currentEditor = typstCode || s.editorCode || '';
+    const selection = normalizeTextSelection(currentEditor, start, end);
     if (!selection.ok) return selection;
+    if (/^\s*#(?:set|show|let|import|include)\b/mu.test(selection.text)) {
+      return {
+        ok: false,
+        message: 'La selezione include il preambolo o comandi strutturali: evidenzia soltanto il testo visibile.',
+      };
+    }
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -2307,7 +2294,7 @@ export function usePipeline(settings) {
         revisedText = proof.code;
         proofChanges = proof.changes;
       } else {
-        const context = selectiveTranslationContext(currentCanonical, selection);
+        const context = selectiveTranslationContext(currentEditor, selection);
         const translated = await translateMarkdown({
           settings,
           markdown: selection.text,
@@ -2351,21 +2338,7 @@ export function usePipeline(settings) {
         };
       }
 
-      const nextCanonical = replaceTextSelection(currentCanonical, selection, revisedText);
-      let nextCode = rebaseStrictRevision({
-        editorCode: typstCode || s.editorCode || '',
-        currentCanonical,
-        nextCanonical,
-        before: selection.text,
-        after: revisedText,
-        layoutPlan: s.layoutPlan || {},
-      });
-      if (nextCode == null) {
-        return {
-          ok: false,
-          message: 'La selezione è esatta nel testo, ma il blocco Typst corrispondente non ha un contesto univoco. Nessuna modifica applicata.',
-        };
-      }
+      let nextCode = replaceTextSelection(currentEditor, selection, revisedText);
       nextCode = ensureExplicitHyphenation(nextCode);
       setSelectionAiDetail('Compilo il Typst prima di salvare…');
       const checked = await diagnoseTypst(nextCode, figuresRef.current);
@@ -2378,8 +2351,6 @@ export function usePipeline(settings) {
       }
 
       const parts = splitPreamble(nextCode);
-      s.canonicalText = nextCanonical;
-      if (mode === 'translate') s.rawText = nextCanonical;
       if (mode === 'proof') {
         s.corrections = [
           ...(s.corrections || []),
@@ -2387,6 +2358,7 @@ export function usePipeline(settings) {
             ...change,
             type: 'selection_contextual',
             referenceStart: selection.start,
+            authority: 'typst',
           })),
         ];
       }
@@ -2394,7 +2366,7 @@ export function usePipeline(settings) {
       s.preamble = parts.preamble;
       s.chunks = [{
         ...(s.chunks?.[0] || {}),
-        text: mode === 'translate' ? nextCanonical : s.rawText,
+        text: s.rawText,
         body: parts.body,
         status: 'done',
         fidelity: { coverage: 1, missing: [] },
@@ -2405,7 +2377,6 @@ export function usePipeline(settings) {
       s.strictReviewKey = null;
       releaseDesktopPdf(compiledPdfRef.current.pdf);
       compiledPdfRef.current = { source: '', figures: null, pdf: null };
-      if (mode === 'translate') setRawText(nextCanonical);
       setTypstCode(nextCode);
       setPreviewPdf(null);
       setCompileError(null);
@@ -2418,7 +2389,7 @@ export function usePipeline(settings) {
       setStatus((current) => ({ ...current, format: 'done', compile: 'pending' }));
       setPhase('done');
       await persist();
-      refreshLanguageAudit(s);
+      refreshLanguageAudit(s, nextCode);
       return {
         ok: true,
         message: mode === 'translate'
@@ -2562,13 +2533,13 @@ export function usePipeline(settings) {
     if (s?.workflow !== 'strict') {
       return {
         ok: false,
-        message: 'La ritraduzione selettiva richiede il workflow rigoroso, che mantiene una fonte canonica ribasabile.',
+        message: 'La ritraduzione selettiva richiede il workflow rigoroso.',
       };
     }
-    const canonical = s.canonicalText || s.rawText || '';
-    if (!canonical.trim()) return { ok: false, message: 'Nessun testo da controllare.' };
-    const targetLanguage = s.targetLanguage || inferDocumentLanguage(
-      canonical,
+    const editor = typstCode || s.editorCode || '';
+    if (!editor.trim()) return { ok: false, message: 'Nessun Typst da controllare.' };
+    const targetLanguage = s.targetLanguage || inferTypstLanguage(
+      editor,
       settings.targetLang || 'it',
     );
     const declaredSource = s.sourceLanguage && s.sourceLanguage !== targetLanguage
@@ -2583,10 +2554,21 @@ export function usePipeline(settings) {
     }
     const wantedIds = new Set(ids || []);
     const wantedPages = new Set(requestedPages);
-    const selected = documentLanguagePassages(canonical)
+    const groupedAudit = auditTypstLanguage(editor, targetLanguage, declaredSource);
+    const wantedPassageIds = new Set();
+    for (const item of groupedAudit.items) {
+      if (!wantedIds.has(item.id)) continue;
+      for (const id of item.passageIds || [item.id]) wantedPassageIds.add(id);
+    }
+    const selected = typstDocumentPassages(editor)
       .map((passage) => ({
         ...passage,
-        detection: detectPassageLanguage(passage.text, targetLanguage, declaredSource),
+        detection: detectPassageLanguage(
+          passage.visibleText || passage.text,
+          targetLanguage,
+          declaredSource,
+          { kind: passage.kind },
+        ),
       }))
       .filter((passage) => (
         passage.translate && (
@@ -2594,7 +2576,7 @@ export function usePipeline(settings) {
           // nell'interfaccia. Per una pagina digitata a mano, invece, si
           // includono solo i passaggi effettivamente sospetti: tradurre anche
           // l'italiano già corretto sarebbe un rischio inutile.
-          wantedIds.has(passage.id) ||
+          wantedPassageIds.has(passage.id) ||
           (wantedPages.has(passage.page) && passage.detection.suspicious)
         )
       ));
@@ -2606,10 +2588,11 @@ export function usePipeline(settings) {
           : 'Nessun passaggio traducibile nella selezione.',
       };
     }
-    if (selected.length > 160) {
+    const uniqueRequests = new Set(selected.map((passage) => passage.text)).size;
+    if (uniqueRequests > 160 || selected.length > 1200) {
       return {
         ok: false,
-        message: `La selezione contiene ${selected.length} passaggi: dividila in gruppi più piccoli (massimo 160).`,
+        message: `La selezione richiede ${uniqueRequests} traduzioni per ${selected.length} occorrenze: dividila in gruppi più piccoli (massimo 160 testi distinti).`,
       };
     }
 
@@ -2629,10 +2612,15 @@ export function usePipeline(settings) {
           id: passage.id,
           page: passage.page,
           reason,
-          sample: passage.text.replace(/\s+/g, ' ').trim().slice(0, 180),
+          start: passage.start,
+          end: passage.end,
+          text: passage.text,
+          sourceFormat: passage.sourceFormat,
+          sample: (passage.visibleText || passage.text).replace(/\s+/g, ' ').trim().slice(0, 180),
         });
       };
       let completed = 0;
+      const translationCache = new Map();
       // Ogni passaggio ha una richiesta propria. Il batching faceva dipendere
       // l'associazione dalla disciplina del modello nel ripetere tutte le
       // etichette: una sola omissione poteva rendere sospetti molti paragrafi
@@ -2644,7 +2632,14 @@ export function usePipeline(settings) {
         const sourceLanguage = passage.detection.suspicious
           ? passage.detection.detectedLang
           : declaredSource;
-        const context = selectiveTranslationContext(canonical, passage);
+        const cacheKey = `${sourceLanguage}\u0000${passage.text}`;
+        const cachedTranslation = translationCache.get(cacheKey);
+        if (cachedTranslation) {
+          replacements.push({ ...passage, translated: cachedTranslation });
+          completed++;
+          continue;
+        }
+        const context = selectiveTranslationContext(editor, passage);
         setLanguageRepairDetail(
           `Ritraduco ${completed + 1}/${selected.length}` +
           `${passage.page ? ` · pagina ${passage.page}` : ''}…`,
@@ -2686,6 +2681,7 @@ export function usePipeline(settings) {
             );
             continue;
           }
+          translationCache.set(cacheKey, translated);
           replacements.push({ ...passage, translated });
         } catch (error) {
           if (controller.signal.aborted || error?.name === 'AbortError') throw error;
@@ -2697,38 +2693,19 @@ export function usePipeline(settings) {
       }
 
       setLanguageRepairDetail('Verifico il sorgente Typst senza applicare modifiche…');
-      let nextCanonical = canonical;
-      let nextEditor = typstCode || s.editorCode || '';
-      const applied = [];
+      let nextEditor = editor;
+      const applied = [...replacements];
+      // Gli offset arrivano dal Typst stesso e vengono applicati dal fondo:
+      // non serve più cercare un equivalente in una fonte nascosta.
       for (const replacement of [...replacements].sort((a, b) => b.start - a.start)) {
-        const revisedCanonical = nextCanonical.slice(0, replacement.start) + replacement.translated +
-          nextCanonical.slice(replacement.end);
-        const rebased = rebaseStrictPassage(nextEditor, replacement.text, replacement.translated) ??
-          rebaseCanonicalRevision(
-            nextEditor,
-            nextCanonical,
-            revisedCanonical,
-            s.layoutPlan || {},
-          ) ??
-          rebaseStrictPassageFuzzy(nextEditor, replacement.text, replacement.translated) ??
-          rebaseMissingCanonicalPassage(
-            nextEditor,
-            nextCanonical,
-            revisedCanonical,
-            s.layoutPlan || {},
-            replacement.text,
-            replacement.translated,
-          );
-        if (rebased == null) {
-          skip(
-            replacement,
-            'Il passaggio non è stato localizzato in modo univoco nel Typst, neppure tramite il contesto della pagina.',
-          );
+        if (editor.slice(replacement.start, replacement.end) !== replacement.text) {
+          skip(replacement, 'Il passaggio è cambiato nell’editor durante la ritraduzione.');
+          const index = applied.indexOf(replacement);
+          if (index >= 0) applied.splice(index, 1);
           continue;
         }
-        nextEditor = rebased;
-        nextCanonical = revisedCanonical;
-        applied.push(replacement);
+        nextEditor = nextEditor.slice(0, replacement.start) + replacement.translated +
+          nextEditor.slice(replacement.end);
       }
       if (!applied.length) {
         const report = { applied: 0, skipped: skipped.length, items: skipped };
@@ -2745,19 +2722,8 @@ export function usePipeline(settings) {
       // solo quando sono adiacenti e testualmente identici, poi ribasiamo la
       // rimozione con il contesto completo per scegliere l'occorrenza giusta.
       let removedDuplicates = 0;
-      for (const duplicate of findAdjacentDuplicatePassages(nextCanonical).sort((a, b) => b.start - a.start)) {
-        const revisedCanonical = nextCanonical.slice(0, duplicate.start) + nextCanonical.slice(duplicate.end);
-        const rebased = rebaseCanonicalRevision(
-          nextEditor,
-          nextCanonical,
-          revisedCanonical,
-          s.layoutPlan || {},
-        );
-        if (rebased == null) {
-          continue;
-        }
-        nextEditor = rebased;
-        nextCanonical = revisedCanonical;
+      for (const duplicate of findAdjacentTypstDuplicatePassages(nextEditor).sort((a, b) => b.start - a.start)) {
+        nextEditor = nextEditor.slice(0, duplicate.start) + nextEditor.slice(duplicate.end);
         removedDuplicates++;
       }
       const checked = await diagnoseTypst(nextEditor, figuresRef.current);
@@ -2765,33 +2731,12 @@ export function usePipeline(settings) {
         // Se è stata la sola deduplicazione automatica a creare un problema,
         // conserva comunque tutte le ritraduzioni già verificate nel rebase.
         if (removedDuplicates) {
-          const withoutDedupeCanonical = canonical;
-          let withoutDedupeEditor = typstCode || s.editorCode || '';
-          let rebuiltCanonical = withoutDedupeCanonical;
-          let rebuildOk = true;
+          let withoutDedupeEditor = editor;
           for (const replacement of [...applied].sort((a, b) => b.start - a.start)) {
-            const revised = rebuiltCanonical.slice(0, replacement.start) + replacement.translated +
-              rebuiltCanonical.slice(replacement.end);
-            const rebased = rebaseStrictPassage(withoutDedupeEditor, replacement.text, replacement.translated) ??
-              rebaseCanonicalRevision(withoutDedupeEditor, rebuiltCanonical, revised, s.layoutPlan || {}) ??
-              rebaseStrictPassageFuzzy(withoutDedupeEditor, replacement.text, replacement.translated) ??
-              rebaseMissingCanonicalPassage(
-                withoutDedupeEditor,
-                rebuiltCanonical,
-                revised,
-                s.layoutPlan || {},
-                replacement.text,
-                replacement.translated,
-              );
-            if (rebased == null) {
-              rebuildOk = false;
-              break;
-            }
-            withoutDedupeEditor = rebased;
-            rebuiltCanonical = revised;
+            withoutDedupeEditor = withoutDedupeEditor.slice(0, replacement.start) +
+              replacement.translated + withoutDedupeEditor.slice(replacement.end);
           }
-          if (rebuildOk && (await diagnoseTypst(withoutDedupeEditor, figuresRef.current)).ok) {
-            nextCanonical = rebuiltCanonical;
+          if ((await diagnoseTypst(withoutDedupeEditor, figuresRef.current)).ok) {
             nextEditor = withoutDedupeEditor;
             removedDuplicates = 0;
           } else {
@@ -2811,13 +2756,11 @@ export function usePipeline(settings) {
       }
 
       const parts = splitPreamble(nextEditor);
-      s.rawText = nextCanonical;
-      s.canonicalText = nextCanonical;
       s.editorCode = nextEditor;
       s.preamble = parts.preamble;
       s.chunks = [{
         ...(s.chunks?.[0] || {}),
-        text: nextCanonical,
+        text: s.rawText,
         body: parts.body,
         status: 'done',
         fidelity: { coverage: 1, missing: [] },
@@ -2827,7 +2770,6 @@ export function usePipeline(settings) {
       s.strictReviewKey = null;
       releaseDesktopPdf(compiledPdfRef.current.pdf);
       compiledPdfRef.current = { source: '', figures: null, pdf: null };
-      setRawText(nextCanonical);
       setTypstCode(nextEditor);
       setPreviewPdf(null);
       setCompileError(null);
@@ -2835,7 +2777,7 @@ export function usePipeline(settings) {
       setStatus((current) => ({ ...current, format: 'done', compile: 'pending' }));
       setPhase('done');
       await persist();
-      refreshLanguageAudit(s);
+      refreshLanguageAudit(s, nextEditor);
       const report = { applied: applied.length, skipped: skipped.length, items: skipped };
       setLanguageRepairReport(report);
       return {
@@ -2864,36 +2806,19 @@ export function usePipeline(settings) {
     if (s?.workflow !== 'strict') {
       return { ok: false, message: 'La rimozione sicura dei duplicati richiede il workflow rigoroso.' };
     }
-    const canonical = s.canonicalText || s.rawText || '';
+    const editor = typstCode || s.editorCode || '';
     const wanted = new Set(ids || []);
-    const freshAudit = reconcileDuplicateAuditWithWorkingText(
-      auditDocumentDuplicates(canonical),
-      typstCode || s.editorCode || '',
-    );
+    const freshAudit = auditTypstDuplicates(editor);
     const selected = freshAudit.items.filter((item) => wanted.has(item.id));
     if (!selected.length) return { ok: false, message: 'Nessun duplicato ancora valido nella selezione.' };
 
     setDuplicateRepairBusy(true);
     setDuplicateRepairDetail('Localizzo le ripetizioni nel Typst…');
     try {
-      let nextCanonical = canonical;
-      let nextEditor = typstCode || s.editorCode || '';
+      let nextEditor = editor;
       let removed = 0;
-      let skipped = 0;
       for (const duplicate of [...selected].sort((a, b) => b.start - a.start)) {
-        const revised = nextCanonical.slice(0, duplicate.start) + nextCanonical.slice(duplicate.end);
-        const rebased = rebaseCanonicalRevision(
-          nextEditor,
-          nextCanonical,
-          revised,
-          s.layoutPlan || {},
-        );
-        if (rebased == null) {
-          skipped++;
-          continue;
-        }
-        nextCanonical = revised;
-        nextEditor = rebased;
+        nextEditor = nextEditor.slice(0, duplicate.start) + nextEditor.slice(duplicate.end);
         removed++;
       }
       if (!removed) {
@@ -2913,13 +2838,11 @@ export function usePipeline(settings) {
       }
 
       const parts = splitPreamble(nextEditor);
-      s.rawText = nextCanonical;
-      s.canonicalText = nextCanonical;
       s.editorCode = nextEditor;
       s.preamble = parts.preamble;
       s.chunks = [{
         ...(s.chunks?.[0] || {}),
-        text: nextCanonical,
+        text: s.rawText,
         body: parts.body,
         status: 'done',
         fidelity: { coverage: 1, missing: [] },
@@ -2929,7 +2852,6 @@ export function usePipeline(settings) {
       s.strictReviewKey = null;
       releaseDesktopPdf(compiledPdfRef.current.pdf);
       compiledPdfRef.current = { source: '', figures: null, pdf: null };
-      setRawText(nextCanonical);
       setTypstCode(nextEditor);
       setPreviewPdf(null);
       setCompileError(null);
@@ -2937,11 +2859,10 @@ export function usePipeline(settings) {
       setStatus((current) => ({ ...current, format: 'done', compile: 'pending' }));
       setPhase('done');
       await persist();
-      refreshLanguageAudit(s);
+      refreshLanguageAudit(s, nextEditor);
       return {
         ok: true,
         message: `${removed} duplicati rimossi localmente e verificati con Typst. ` +
-          (skipped ? `${skipped} lasciati invariati perché non localizzabili con sicurezza. ` : '') +
           'Ricompila per aggiornare l’anteprima.',
       };
     } catch (error) {
@@ -3024,43 +2945,46 @@ export function usePipeline(settings) {
       const occurrence = s.corrections.slice(0, index).filter(
         (item) => item.before === correction.before && item.after === correction.after,
       ).length;
-      const nextCanonical = replaceContextualText(currentCanonical, currentText, target, {
+      // Prima modifica il Typst autorevole. Il vecchio testo OCR serve solo
+      // come coordinata di recupero per registri creati prima di questa
+      // versione, mai come stato da sincronizzare sopra l'editor.
+      let nextCode = replaceContextualText(typstCode, currentText, target, {
+        referenceSource: currentCanonical,
+        referenceFind: correction.before,
+        occurrence,
+        replaceCount: Math.max(1, Number(correction.count) || 1),
+      });
+      const temporaryCanonical = replaceContextualText(currentCanonical, currentText, target, {
         referenceSource: s.rawText,
         referenceFind: correction.before,
         occurrence,
         replaceCount: Math.max(1, Number(correction.count) || 1),
       });
-      if (nextCanonical == null) {
-        return {
-          ok: false,
-          message: 'Il passaggio non è localizzabile con un contesto univoco: nessuna modifica è stata applicata.',
-        };
+      if (nextCode == null && temporaryCanonical != null) {
+        nextCode = rebaseStrictRevision({
+          editorCode: typstCode,
+          currentCanonical,
+          nextCanonical: temporaryCanonical,
+          before: currentText,
+          after: target,
+          layoutPlan: s.layoutPlan || {},
+        });
       }
-      let nextCode = rebaseStrictRevision({
-        editorCode: typstCode,
-        currentCanonical,
-        nextCanonical,
-        before: currentText,
-        after: target,
-        layoutPlan: s.layoutPlan || {},
-      });
       if (nextCode == null) {
         return {
           ok: false,
-          message: 'Il frammento Typst non ha un contesto abbastanza univoco per essere sostituito in sicurezza.',
+          message: 'Il passaggio non è più presente nel Typst o non ha un contesto univoco: nessuna modifica applicata.',
         };
       }
       nextCode = ensureExplicitHyphenation(nextCode);
 
       const previous = {
-        canonicalText: s.canonicalText,
         corrections: s.corrections,
         editorCode: s.editorCode,
         preamble: s.preamble,
         chunks: s.chunks,
       };
       const pdfBytes = await getCompiledPdf(nextCode);
-      s.canonicalText = nextCanonical;
       s.corrections = nextCorrections;
       s.editorCode = nextCode;
       const parts = splitPreamble(nextCode);
@@ -3074,7 +2998,6 @@ export function usePipeline(settings) {
       try {
         await verifyStrictPdf(nextCode, pdfBytes);
       } catch (e) {
-        s.canonicalText = previous.canonicalText;
         s.corrections = previous.corrections;
         s.editorCode = previous.editorCode;
         s.preamble = previous.preamble;
@@ -3085,6 +3008,7 @@ export function usePipeline(settings) {
       setPreviewPdf(pdfBytes);
       setCompileError(null);
       await persist();
+      refreshLanguageAudit(s, nextCode);
       return { ok: true, message: 'Scelta applicata e PDF ricontrollato.' };
     } catch (e) {
       if (e?.name === 'AbortError') return { ok: false, message: 'Revisione annullata.' };
@@ -3092,7 +3016,7 @@ export function usePipeline(settings) {
     } finally {
       setStrictCorrectionBusy(null);
     }
-  }, [getCompiledPdf, persist, settings, typstCode, verifyStrictPdf]);
+  }, [getCompiledPdf, persist, refreshLanguageAudit, settings, typstCode, verifyStrictPdf]);
 
   /** Azioni sui passaggi discordanti fra fonte canonica e PDF compilato. */
   const reviewStrictIssue = useCallback(async (index, action) => {
@@ -3118,7 +3042,7 @@ export function usePipeline(settings) {
       if (pdf) {
         const key = await createPdfVerificationKey({
           source: s.editorCode || typstCode,
-          canonicalText: s.canonicalText || s.rawText,
+          canonicalText: typstPlainText(s.editorCode || typstCode),
           figures: figuresRef.current,
           issueResolutions: next,
         });
@@ -3175,14 +3099,26 @@ export function usePipeline(settings) {
       }
 
       const currentCanonical = s.canonicalText || s.rawText;
-      let nextCanonical = currentCanonical;
       let nextCode;
       if (action === 'apply-ai' && review.choice === 'proposal') {
-        nextCanonical = replaceUniqueText(currentCanonical, issue.source, review.text);
-        if (nextCanonical == null) {
-          return { ok: false, message: 'La frase canonica non è localizzabile in modo univoco; nessuna modifica applicata.' };
+        nextCode = replaceContextualText(typstCode, issue.source, review.text, {
+          referenceSource: typstPlainText(typstCode),
+          referenceFind: issue.source,
+        });
+        // Compatibilità con vecchi rapporti nati dal riferimento OCR: il
+        // rebase può ancora localizzare il blocco, senza promuovere l'OCR a
+        // nuovo stato del documento.
+        if (nextCode == null) {
+          const temporaryCanonical = replaceUniqueText(currentCanonical, issue.source, review.text);
+          if (temporaryCanonical != null) {
+            nextCode = rebaseCanonicalRevision(
+              typstCode,
+              currentCanonical,
+              temporaryCanonical,
+              s.layoutPlan || {},
+            );
+          }
         }
-        nextCode = rebaseCanonicalRevision(typstCode, currentCanonical, nextCanonical, s.layoutPlan || {});
       } else {
         // Sia il comando manuale sia l'esito "canonical" rigenerano il blocco
         // dal testo OCR canonico, eliminando troncamenti o caratteri invisibili.
@@ -3194,7 +3130,6 @@ export function usePipeline(settings) {
       nextCode = ensureExplicitHyphenation(nextCode);
 
       const previous = {
-        canonicalText: s.canonicalText,
         editorCode: s.editorCode,
         preamble: s.preamble,
         chunks: s.chunks,
@@ -3202,7 +3137,6 @@ export function usePipeline(settings) {
         resolutions: s.strictIssueResolutions,
       };
       const pdfBytes = await getCompiledPdf(nextCode);
-      s.canonicalText = nextCanonical;
       s.editorCode = nextCode;
       s.strictIssueResolutions = {
         ...(s.strictIssueResolutions || {}),
@@ -3226,7 +3160,6 @@ export function usePipeline(settings) {
       try {
         await verifyStrictPdf(nextCode, pdfBytes);
       } catch (e) {
-        s.canonicalText = previous.canonicalText;
         s.editorCode = previous.editorCode;
         s.preamble = previous.preamble;
         s.chunks = previous.chunks;
@@ -3238,6 +3171,7 @@ export function usePipeline(settings) {
       setPreviewPdf(pdfBytes);
       setCompileError(null);
       await persist();
+      refreshLanguageAudit(s, nextCode);
       return { ok: true, message: 'Passaggio rigenerato, compilato e confrontato nuovamente.' };
     } catch (e) {
       if (e?.name === 'AbortError') return { ok: false, message: 'Revisione annullata.' };
@@ -3245,7 +3179,7 @@ export function usePipeline(settings) {
     } finally {
       setStrictIssueBusy(null);
     }
-  }, [getCompiledPdf, persist, settings, strictReport, typstCode, verifyStrictPdf]);
+  }, [getCompiledPdf, persist, refreshLanguageAudit, settings, strictReport, typstCode, verifyStrictPdf]);
 
   /**
    * Ri-genera SOLO il layout: riusa il testo OCR già estratto e ri-esegue la

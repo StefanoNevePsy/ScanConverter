@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand, IconSpell, IconText } from './Icons.jsx';
+import { IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand, IconSpell, IconText, IconArrowLeft } from './Icons.jsx';
 import CopyButton from './CopyButton.jsx';
 import { findEditorMatches, scrollTextareaOffsetIntoView } from '../lib/editorScroll.js';
 
@@ -25,6 +25,8 @@ export default function TypstEditor({
   selectionBusy,
   selectionDetail,
   translationModelLabel,
+  reviewReturnLabel,
+  onReturnToReview,
   searchRequest,
   onSearchMatch,
   compiling,
@@ -195,16 +197,20 @@ export default function TypstEditor({
 
   return (
     <section id="typst-editor-panel" className="card flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="flex flex-col items-stretch justify-between gap-2 border-b border-border px-4 py-2.5 sm:flex-row sm:items-center sm:gap-3">
-        <div className="flex items-center gap-2">
+      <header className="flex min-w-0 flex-col items-stretch justify-between gap-2 border-b border-border px-4 py-2.5 sm:flex-row sm:items-center sm:gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
           <h2 className="text-sm font-medium text-ink">Codice Typst</h2>
-          <span className="hidden text-xs text-faint sm:inline">modificabile</span>
+          {value.trim() && (
+            <span className="rounded-full border border-lime/60 bg-lime-soft px-2 py-0.5 text-[10px] font-semibold text-ink">
+              Fonte del documento
+            </span>
+          )}
           {onReviseSelection && (
             <span className="hidden text-xs text-faint xl:inline">seleziona il testo per correggerlo o tradurlo con l’IA</span>
           )}
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
           {onSpellcheck && (
             <button
               onClick={onSpellcheck}
@@ -261,6 +267,22 @@ export default function TypstEditor({
           </button>
         </div>
       </header>
+
+      {reviewReturnLabel && onReturnToReview && (
+        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border bg-lime-soft px-3 py-2">
+          <p className="min-w-0 truncate text-xs text-muted">
+            Stai verificando un punto aperto da <span className="font-semibold text-ink">{reviewReturnLabel}</span>.
+          </p>
+          <button
+            type="button"
+            onClick={onReturnToReview}
+            className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:bg-surface-2"
+          >
+            <IconArrowLeft width={13} height={13} />
+            Torna alla lista
+          </button>
+        </div>
+      )}
 
       {searchOpen && (
         <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface/60 px-3 py-2">

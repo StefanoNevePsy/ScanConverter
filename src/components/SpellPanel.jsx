@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { IconSpell, IconSpinner, IconX, IconWand, IconRefresh, IconCheck, IconSearch } from './Icons.jsx';
+import { IconSpell, IconSpinner, IconX, IconWand, IconRefresh, IconCheck, IconSearch, IconBookPlus } from './Icons.jsx';
 
 /*
   Esito del controllo ortografico locale (dizionari it+en). Ogni parola è un
@@ -43,15 +43,15 @@ export default function SpellPanel({
 
   return (
     <section className="card overflow-hidden">
-      <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
-        <div className="flex items-center gap-2.5">
+      <header className="flex min-w-0 items-start justify-between gap-3 border-b border-border px-4 py-2.5 sm:items-center">
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
           <IconSpell width={16} height={16} className="text-primary" />
           <h2 className="text-sm font-medium text-ink">Controllo ortografico</h2>
           <span className="text-xs text-faint">
             {report.error
               ? report.error
               : suspects.length
-                ? `${selected.length}/${suspects.length} selezionate per l’AI · tocca per escludere`
+                ? `${selected.length}/${suspects.length} selezionate per l’AI · il libro aggiunge al dizionario`
                 : 'nessun sospetto'}
           </span>
         </div>
@@ -97,6 +97,15 @@ export default function SpellPanel({
                 >
                   <IconSearch width={11} height={11} />
                 </button>
+                <button
+                  type="button"
+                  onClick={() => onIgnore([s.word])}
+                  title={`Aggiungi «${s.word}» al dizionario personale e non segnalarla più`}
+                  aria-label={`Aggiungi «${s.word}» al dizionario personale`}
+                  className="border-l border-border/50 px-1.5 py-1 text-muted transition-colors hover:bg-lime-soft hover:text-ink"
+                >
+                  <IconBookPlus width={12} height={12} />
+                </button>
               </span>
             );
           })}
@@ -110,8 +119,8 @@ export default function SpellPanel({
         )
       )}
 
-      <footer className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
+      <footer className="flex min-w-0 flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <button
             onClick={onFixSpacing}
             disabled={busy}
@@ -140,12 +149,12 @@ export default function SpellPanel({
           )}
         </div>
         {suspects.length > 0 && (
-          <div className="flex min-w-0 flex-col items-end gap-1">
+          <div className="flex min-w-0 max-w-full flex-col items-stretch gap-1 sm:items-end">
             <button
               onClick={() => onFixAll(selected)}
               disabled={busy || !selected.length}
               title={`Usa ${modelLabel || 'il modello di rilettura selezionato'}`}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-60"
+              className="inline-flex max-w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-60"
             >
               {busy ? <IconSpinner width={14} height={14} /> : <IconWand width={14} height={14} />}
               {busy ? 'Correggo…' : `Correggi ${selected.length} con AI`}

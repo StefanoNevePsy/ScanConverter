@@ -83,7 +83,7 @@ export default function StrictReportPanel({
               )}
               {!pdfOk && (
                 <p className="mt-2 text-xs text-muted">
-                  Il PDF non viene bloccato: confronta i termini indicati con il pannello OCR prima dell’uso definitivo.
+                  Il PDF non viene bloccato: confronta i termini indicati con il Typst, che resta la fonte del documento.
                 </p>
               )}
               {!!report.pdf.issues?.length && (
@@ -103,7 +103,7 @@ export default function StrictReportPanel({
                       <div key={issue.id} className="overflow-hidden rounded-lg border border-border bg-surface/70">
                         <div className="grid gap-px bg-border sm:grid-cols-2">
                           <div className="bg-surface p-3">
-                            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-faint">Fonte OCR canonica</div>
+                            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-faint">Testo atteso dal Typst</div>
                             <p className="leading-relaxed text-ink">{highlightWords(issue.source, issue.missing)}</p>
                           </div>
                           <div className="bg-surface p-3">
@@ -154,7 +154,7 @@ export default function StrictReportPanel({
                               disabled={busy}
                               onClick={() => runIssueAction(issueIndex, 'restore-canonical')}
                               className="rounded-md border border-success/30 bg-success/10 px-2.5 py-1.5 text-xs text-success hover:bg-success/15 disabled:opacity-50"
-                            >Ripristina dalla fonte OCR</button>
+                            >Recupera dal riferimento OCR</button>
                             <button
                               type="button"
                               disabled={busy}
@@ -221,7 +221,7 @@ export default function StrictReportPanel({
                 <div>
                   <div className="font-medium text-ink">Revisione delle correzioni</div>
                   <p className="mt-0.5 text-xs text-muted">
-                    Scegli il testo OCR, la correzione applicata o chiedi un controllo puntuale all’IA.
+                    Il registro conserva l’OCR come riferimento recuperabile; ogni scelta viene applicata al Typst.
                   </p>
                 </div>
                 <span className="shrink-0 text-xs text-faint">{corrections.length} voci</span>

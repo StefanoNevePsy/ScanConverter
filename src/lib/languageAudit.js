@@ -7,9 +7,11 @@
   senza spedire di nuovo l'intero libro a un modello.
 */
 
+import { typstDocumentPassages, typstPlainText } from './typstContent.js';
+
 const PROFILES = {
   it: 'il lo la i gli le un uno una e ed di del dello della dei degli delle a al allo alla ai agli alle da dal dallo dalla dai dagli dalle in nel nello nella nei negli nelle con su per tra fra che chi cui come questo questa questi queste quello quella sono era erano essere stato stata non più anche ma o ha hanno aveva ogni altro altri quando dove mentre perché quindi'.split(' '),
-  en: 'the a an and of to in is are was were be been being that this these those for with from by on at as it its his her their our your not but or have has had which who what when where how into than then also more may can could would should each other between through about one all'.split(' '),
+  en: 'the a an and of to in is are was were be been being that this these those for with from by on at as it its his her their our your not but or have has had which who what when where how into than then also more may can could would should each other between through about one all family families relationship relationships loyalty loyalties obligation obligations parents children therapy treatment theory practice chapter introduction conclusion development'.split(' '),
   fr: 'le la les un une des et de du au aux à en est sont était étaient être que qui dont pour avec par sur dans ce cette ces son sa ses leur leurs ne pas mais ou plus aussi comme quand où entre chaque autre'.split(' '),
   de: 'der die das ein eine einer und von zu im in ist sind war waren sein dass dieser diese dieses für mit aus durch auf als es seine ihre nicht aber oder haben hat hatte welcher welche wenn wo wie zwischen auch mehr jeder andere'.split(' '),
   es: 'el la los las un una unos unas y de del al en es son era eran ser que quien para con por sobre este esta estos estas su sus no pero o más también como cuando donde entre cada otro'.split(' '),
@@ -19,6 +21,20 @@ const PROFILES = {
 const SETS = Object.fromEntries(
   Object.entries(PROFILES).map(([code, words]) => [code, new Set(words)]),
 );
+
+// I titoli e le frasi brevi spesso non contengono abbastanza parole-funzione
+// per superare la soglia dei paragrafi. Le desinenze sono un secondo segnale,
+// volutamente debole: da sole valgono soltanto quando la lingua sorgente è
+// dichiarata e almeno due parole concordano, così nomi propri e termini
+// specialistici isolati non diventano falsi positivi.
+const MORPHOLOGY = {
+  it: /(?:zione|zioni|mente|ità|ivo|iva|ivi|ive|ale|ali|ile|ili|ico|ica|ici|iche|are|ere|ire|ato|ata|ati|ate)$/iu,
+  en: /(?:ing|ed|tion|tions|ity|ities|ties|ness|ship|ships|ous|ive|ives|ally|ment|ments|able|ible|less)$/iu,
+  fr: /(?:ique|iques|tion|tions|ment|ments|euse|euses|eux|aire|aires|isme|ismes)$/iu,
+  de: /(?:ung|ungen|keit|keiten|heit|heiten|lich|liche|ischen|schaft|schaften)$/iu,
+  es: /(?:ción|ciones|mente|idad|idades|ado|ada|ados|adas|ido|ida|idos|idas|oso|osa)$/iu,
+  pt: /(?:ção|ções|mente|dade|dades|ado|ada|ados|adas|ido|ida|idos|idas|oso|osa)$/iu,
+};
 
 const REFERENCE_HEADING_RE = /^(?:#{1,6}\s*)?(?:riferimenti|bibliografia|references|bibliography|subject index|author index|indice analitico|indice degli autori)\b/imu;
 
@@ -218,27 +234,51 @@ export function documentLanguagePassages(markdown) {
   return passages;
 }
 
-export function detectPassageLanguage(text, targetLang = 'it', sourceLang = 'auto') {
+export function detectPassageLanguage(text, targetLang = 'it', sourceLang = 'auto', options = {}) {
   const words = (plainText(text).toLocaleLowerCase().match(/\p{L}{2,}/gu) || []);
   const hits = Object.fromEntries(
     Object.entries(SETS).map(([code, set]) => [code, words.reduce((n, word) => n + (set.has(word) ? 1 : 0), 0)]),
   );
+  const morphologyHits = Object.fromEntries(
+    Object.keys(SETS).map((code) => [
+      code,
+      words.reduce((total, word) => total + (MORPHOLOGY[code]?.test(word) ? 1 : 0), 0),
+    ]),
+  );
   const candidates = Object.keys(SETS).filter((code) => code !== targetLang);
-  let detectedLang = candidates.sort((a, b) => hits[b] - hits[a])[0] || sourceLang;
+  const score = (code) => (hits[code] || 0) * 3 + (morphologyHits[code] || 0);
+  let detectedLang = candidates.sort((a, b) => score(b) - score(a))[0] || sourceLang;
   if (sourceLang !== 'auto' && sourceLang !== targetLang && SETS[sourceLang]) {
-    if (hits[sourceLang] >= (hits[detectedLang] || 0) - 1) detectedLang = sourceLang;
+    if (score(sourceLang) >= score(detectedLang) - 1) detectedLang = sourceLang;
   }
   const sourceHits = hits[detectedLang] || 0;
   const targetHits = hits[targetLang] || 0;
-  const evidence = sourceHits + targetHits;
-  const confidence = evidence ? sourceHits / evidence : 0;
-  const suspicious = words.length >= 15 && sourceHits >= 5 && sourceHits >= targetHits + 3 && confidence >= 0.65;
+  const sourceMorphologyHits = morphologyHits[detectedLang] || 0;
+  const targetMorphologyHits = morphologyHits[targetLang] || 0;
+  const sourceEvidence = score(detectedLang);
+  const targetEvidence = score(targetLang);
+  const evidence = sourceEvidence + targetEvidence;
+  const confidence = evidence ? sourceEvidence / evidence : 0;
+  const longPassage = words.length >= 15 && sourceHits >= 5 && sourceHits >= targetHits + 3 && confidence >= 0.65;
+  const shortSentence = words.length >= 5 && words.length < 15 && sourceHits >= 2 &&
+    sourceHits >= targetHits + 2 && sourceEvidence >= targetEvidence + 5 && confidence >= 0.75;
+  const declaredMorphology = sourceLang !== 'auto' && detectedLang === sourceLang &&
+    sourceMorphologyHits >= 2 && targetEvidence === 0;
+  const shortHeading = options.kind === 'heading' && words.length >= 2 && words.length <= 14 && (
+    (sourceHits >= 2 && sourceHits >= targetHits + 2 && confidence >= 0.75) ||
+    (sourceHits >= 1 && sourceMorphologyHits >= 1 && sourceEvidence >= targetEvidence + 3) ||
+    declaredMorphology
+  );
+  const suspicious = longPassage || shortSentence || shortHeading;
   return {
     words: words.length,
     hits,
+    morphologyHits,
     detectedLang,
     sourceHits,
     targetHits,
+    sourceMorphologyHits,
+    targetMorphologyHits,
     confidence,
     suspicious,
     referenceLike: referenceLike(text, words),
@@ -262,6 +302,11 @@ export function inferDocumentLanguage(markdown, fallback = 'it') {
   return (scores[ranked[0]] || 0) >= 5 ? ranked[0] : (SETS[fallback] ? fallback : 'it');
 }
 
+/** Lingua dominante del contenuto effettivamente visibile nel Typst. */
+export function inferTypstLanguage(typst, fallback = 'it') {
+  return inferDocumentLanguage(typstPlainText(typst), fallback);
+}
+
 /**
  * Guardia ad alta precisione per le risposte del modello. I riferimenti
  * bibliografici possono dover conservare titoli originali, quindi non vengono
@@ -280,16 +325,23 @@ export function isTranslationLanguageSafe(
   return !detectPassageLanguage(translated, targetLang, expectedSource).suspicious;
 }
 
-export function auditDocumentLanguage(markdown, targetLang = 'it', sourceLang = 'auto') {
-  const passages = documentLanguagePassages(markdown);
+function auditLanguagePassages(passages, targetLang = 'it', sourceLang = 'auto') {
   const items = passages
     .filter((passage) => passage.translate)
-    .map((passage) => ({ ...passage, ...detectPassageLanguage(passage.text, targetLang, sourceLang) }))
+    .map((passage) => ({
+      ...passage,
+      ...detectPassageLanguage(
+        passage.visibleText || passage.text,
+        targetLang,
+        sourceLang,
+        { kind: passage.kind },
+      ),
+    }))
     .filter((passage) => passage.suspicious)
     .map((passage) => ({
       ...passage,
       recommended: !passage.referenceLike && !passage.referenceSection && passage.kind !== 'table',
-      sample: plainText(passage.text).replace(/\s+/g, ' ').trim().slice(0, 240),
+      sample: plainText(passage.visibleText || passage.text).replace(/\s+/g, ' ').trim().slice(0, 240),
     }));
   return {
     targetLang,
@@ -301,26 +353,107 @@ export function auditDocumentLanguage(markdown, targetLang = 'it', sourceLang = 
   };
 }
 
+export function auditDocumentLanguage(markdown, targetLang = 'it', sourceLang = 'auto') {
+  return auditLanguagePassages(documentLanguagePassages(markdown), targetLang, sourceLang);
+}
+
+/** Controllo lingua sul sorgente Typst, con offset direttamente applicabili. */
+export function auditTypstLanguage(typst, targetLang = 'it', sourceLang = 'auto') {
+  const passages = typstDocumentPassages(typst);
+  let referenceSection = false;
+  for (const passage of passages) {
+    if (passage.kind === 'heading') {
+      if (REFERENCE_HEADING_RE.test(passage.visibleText)) referenceSection = true;
+      else referenceSection = false;
+    }
+    passage.referenceSection = referenceSection;
+  }
+  const audit = auditLanguagePassages(passages, targetLang, sourceLang);
+  // Testatine e titoli brevi possono ricorrere su centinaia di pagine. Una
+  // sola voce evita liste interminabili e permette al chiamante di tradurre
+  // la frase una volta sola, riusando poi l'esito su tutte le occorrenze.
+  const grouped = [];
+  const byKey = new Map();
+  for (const item of audit.items) {
+    const canGroup = item.words <= 12 && item.recommended && !item.referenceSection;
+    const key = canGroup
+      ? `${item.detectedLang}\u0000${duplicateKey(item.visibleText || item.text)}`
+      : '';
+    const existing = key ? byKey.get(key) : null;
+    if (existing) {
+      existing.passageIds.push(item.id);
+      existing.occurrences.push({
+        id: item.id,
+        page: item.page,
+        start: item.start,
+        end: item.end,
+        text: item.text,
+      });
+      existing.occurrenceCount++;
+      if (Number.isFinite(item.page) && !existing.occurrencePages.includes(item.page)) {
+        existing.occurrencePages.push(item.page);
+      }
+      continue;
+    }
+    const next = {
+      ...item,
+      passageIds: [item.id],
+      occurrences: [{
+        id: item.id,
+        page: item.page,
+        start: item.start,
+        end: item.end,
+        text: item.text,
+      }],
+      occurrenceCount: 1,
+      occurrencePages: Number.isFinite(item.page) ? [item.page] : [],
+    };
+    grouped.push(next);
+    if (key) byKey.set(key, next);
+  }
+  return {
+    ...audit,
+    items: grouped,
+    pages: [...new Set(grouped.flatMap((item) => item.occurrencePages))],
+    recommended: grouped.filter((item) => item.recommended).length,
+    groupedOccurrences: audit.items.length - grouped.length,
+    sourceFormat: 'typst',
+  };
+}
+
 /**
  * Trova soltanto duplicati adiacenti praticamente certi. La chiave ignora
  * markup, maiuscole, accenti e punteggiatura, ma richiede prosa abbastanza
  * lunga, stessa pagina e stessa sequenza di parole: niente deduplicazione
  * "semantica" che potrebbe eliminare una ripetizione intenzionale.
  */
-export function findAdjacentDuplicatePassages(markdown) {
-  const passages = documentLanguagePassages(markdown).filter((passage) => (
+function adjacentDuplicates(passages) {
+  const eligible = passages.filter((passage) => (
     passage.translate && passage.kind === 'prose' && !passage.referenceSection
   ));
   const duplicates = [];
-  for (let index = 1; index < passages.length; index++) {
-    const previous = passages[index - 1];
-    const passage = passages[index];
+  for (let index = 1; index < eligible.length; index++) {
+    const previous = eligible[index - 1];
+    const passage = eligible[index];
     if (previous.page !== passage.page) continue;
-    const key = duplicateKey(passage.text);
-    if (key.length < 50 || key.split(' ').length < 9 || key !== duplicateKey(previous.text)) continue;
+    const key = duplicateKey(passage.visibleText || passage.text);
+    if (
+      key.length < 50 ||
+      key.split(' ').length < 9 ||
+      key !== duplicateKey(previous.visibleText || previous.text)
+    ) continue;
     duplicates.push({ ...passage, duplicateOf: previous.id });
   }
   return duplicates;
+}
+
+
+export function findAdjacentDuplicatePassages(markdown) {
+  return adjacentDuplicates(documentLanguagePassages(markdown));
+}
+
+export function findAdjacentTypstDuplicatePassages(typst) {
+  return adjacentDuplicates(typstDocumentPassages(typst));
 }
 
 /**
@@ -328,22 +461,22 @@ export function findAdjacentDuplicatePassages(markdown) {
  * L'ordine di precedenza evita suggerimenti sovrapposti: un intero paragrafo
  * duplicato non viene segnalato anche come frase o frammento duplicato.
  */
-export function auditDocumentDuplicates(markdown) {
-  const passages = documentLanguagePassages(markdown).filter((passage) => (
+function auditDuplicatePassages(passages) {
+  const eligible = passages.filter((passage) => (
     passage.translate && passage.kind === 'prose' && !passage.referenceSection
   ));
   const candidates = [];
-  for (const duplicate of findAdjacentDuplicatePassages(markdown)) {
+  for (const duplicate of adjacentDuplicates(passages)) {
     candidates.push({
       ...duplicate,
       id: `duplicate-paragraph-${duplicate.start}-${duplicate.end}`,
       type: 'paragraph',
-      duplicateOfStart: passages.find((item) => item.id === duplicate.duplicateOf)?.start ?? null,
-      sample: plainText(duplicate.text).replace(/\s+/g, ' ').trim().slice(0, 240),
+      duplicateOfStart: eligible.find((item) => item.id === duplicate.duplicateOf)?.start ?? null,
+      sample: plainText(duplicate.visibleText || duplicate.text).replace(/\s+/g, ' ').trim().slice(0, 240),
       recommended: true,
     });
   }
-  for (const passage of passages) {
+  for (const passage of eligible) {
     candidates.push(...repeatedSentenceItems(passage), ...repeatedFragmentItems(passage));
   }
   const priority = { paragraph: 0, sentence: 1, fragment: 2 };
@@ -355,15 +488,26 @@ export function auditDocumentDuplicates(markdown) {
     accepted.push(candidate);
   }
   const items = accepted.sort((a, b) => a.start - b.start);
+  const sourceFormat = passages.find((passage) => passage.sourceFormat)?.sourceFormat;
   return {
-    totalPassages: passages.length,
-    items,
+    totalPassages: eligible.length,
+    items: sourceFormat ? items.map((item) => ({ ...item, sourceFormat })) : items,
     counts: {
       paragraphs: items.filter((item) => item.type === 'paragraph').length,
       sentences: items.filter((item) => item.type === 'sentence').length,
       fragments: items.filter((item) => item.type === 'fragment').length,
     },
   };
+}
+
+
+export function auditDocumentDuplicates(markdown) {
+  return auditDuplicatePassages(documentLanguagePassages(markdown));
+}
+
+/** Duplicati calcolati direttamente sul Typst aperto, senza riconciliazione. */
+export function auditTypstDuplicates(typst) {
+  return { ...auditDuplicatePassages(typstDocumentPassages(typst)), sourceFormat: 'typst' };
 }
 
 function countExactNormalizedPassages(normalizedDocument, normalizedPassage) {

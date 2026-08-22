@@ -65,6 +65,14 @@ export const IconSpell = (p) => (
   </svg>
 );
 
+export const IconBookPlus = (p) => (
+  <svg {...base} {...p}>
+    <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11a2 2 0 0 1 2 2v15a2 2 0 0 0-2-2H6.5A2.5 2.5 0 0 0 4 20.5z" />
+    <path d="M13 5a2 2 0 0 1 2-2h2.5A2.5 2.5 0 0 1 20 5.5V12" />
+    <path d="M17 17h6M20 14v6" />
+  </svg>
+);
+
 export const IconSearch = (p) => (
   <svg {...base} {...p}>
     <circle cx="11" cy="11" r="7" />

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   auditDocumentDuplicates,
   auditDocumentLanguage,
+  auditTypstDuplicates,
+  auditTypstLanguage,
   detectPassageLanguage,
   documentLanguagePassages,
   findAdjacentDuplicatePassages,
@@ -29,6 +31,44 @@ test('non scambia un paragrafo italiano con termini tecnici per inglese', () => 
     'en',
   );
   assert.equal(detected.suspicious, false);
+});
+
+test('rileva titoli e frasi brevi rimasti in inglese', () => {
+  const source = [
+    '#set text(lang: "it")',
+    '// pagina 7',
+    '= Invisible loyalties',
+    '',
+    'This is not the answer.',
+    '',
+    '== Family obligations',
+    '',
+    '= Lealtà invisibili',
+  ].join('\n\n');
+  const audit = auditTypstLanguage(source, 'it', 'en');
+  assert.equal(audit.items.length, 3);
+  assert.deepEqual(audit.items.map((item) => item.sample), [
+    'Invisible loyalties',
+    'This is not the answer.',
+    'Family obligations',
+  ]);
+  assert.ok(audit.items.every((item) => source.slice(item.start, item.end) === item.text));
+});
+
+test('non segnala un titolo italiano con un termine tecnico inglese isolato', () => {
+  const source = '// pagina 8\n\n= Il concetto di feedback nella terapia';
+  assert.equal(auditTypstLanguage(source, 'it', 'en').items.length, 0);
+});
+
+test('raggruppa le testatine brevi identiche conservando tutte le occorrenze Typst', () => {
+  const source = [2, 3, 4]
+    .map((page) => `// pagina ${page}\n\n= Invisible loyalties`)
+    .join('\n\n');
+  const audit = auditTypstLanguage(source, 'it', 'en');
+  assert.equal(audit.items.length, 1);
+  assert.equal(audit.items[0].occurrenceCount, 3);
+  assert.equal(audit.items[0].passageIds.length, 3);
+  assert.deepEqual(audit.items[0].occurrencePages, [2, 3, 4]);
 });
 
 test('riconosce la lingua dominante dei vecchi progetti senza metadati', () => {
@@ -119,4 +159,14 @@ test('nasconde un duplicato canonico già rimosso manualmente dal Typst', () => 
   const reconciled = reconcileDuplicateAuditWithWorkingText(audit, workingTypst);
   assert.equal(reconciled.items.length, 0);
   assert.equal(reconciled.hiddenFromWorkingText, 1);
+});
+
+test('trova e rimuove dalla lista i duplicati usando direttamente gli offset Typst', () => {
+  const paragraph = 'La famiglia è un sistema relazionale nel quale obblighi e lealtà attraversano più generazioni.';
+  const source = `#set text(lang: "it")\n\n// pagina 12\n\n${paragraph}\n\n${paragraph}`;
+  const audit = auditTypstDuplicates(source);
+  assert.equal(audit.items.length, 1);
+  const duplicate = audit.items[0];
+  assert.equal(source.slice(duplicate.start, duplicate.end), duplicate.text);
+  assert.equal(duplicate.sourceFormat, 'typst');
 });

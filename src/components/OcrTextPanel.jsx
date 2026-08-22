@@ -113,12 +113,12 @@ export default function OcrTextPanel({
         <span className="flex items-center gap-2.5">
           <IconText width={16} height={16} className="text-annote" />
           <span className="text-sm font-medium text-ink">
-            {targeted ? 'Testo di lavoro' : 'Testo OCR (per LLM esterni)'}
+            {targeted ? 'Testo di lavoro' : 'OCR originale · riferimento'}
           </span>
           <span className="hidden text-xs text-faint sm:inline">
             {targeted
               ? `${total > 1 ? `${total} parti · ` : ''}seleziona un brano per un intervento IA puntuale`
-              : `${total > 1 ? `${total} parti · ` : ''}copialo per generare il Typst con ChatGPT / Gemma`}
+              : `${total > 1 ? `${total} parti · ` : ''}sola lettura: il Typst è la fonte del documento`}
           </span>
         </span>
         <span className={`text-faint transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
@@ -165,8 +165,8 @@ export default function OcrTextPanel({
               {targeted
                 ? 'Il testo selezionato viene sostituito solo dopo i controlli di sicurezza e una compilazione Typst riuscita.'
                 : total > 1
-                ? 'Incolla ogni parte nella stessa chat, in ordine; poi unisci il Typst nell’editor.'
-                : 'Poi incolla il Typst generato nell’editor e premi “Genera PDF”.'}
+                ? 'Riferimento recuperabile: le modifiche al documento si fanno nell’editor Typst.'
+                : 'Riferimento recuperabile: non viene sincronizzato sopra le modifiche del Typst.'}
             </span>
           </div>
 
