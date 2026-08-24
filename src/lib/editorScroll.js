@@ -85,10 +85,12 @@ export function findBestEditorLocation(editorCode, sourceText, approximateRatio 
   return null;
 }
 
-/** Porta un offset testuale al centro anche quando una singola riga sorgente
- * occupa molte righe VISIVE nel textarea per effetto del wrapping. */
-export function scrollTextareaOffsetIntoView(editor, value, offset) {
-  if (!editor || typeof document === 'undefined') return;
+/**
+ * Copia invisibile del textarea: stesse metriche di testo e stessa larghezza,
+ * quindi lo stesso wrapping. \u00c8 l'unico modo per sapere dove finisce
+ * VISIVAMENTE un offset quando una riga sorgente ne occupa cinque a schermo.
+ */
+function textareaMirror(editor) {
   const computed = window.getComputedStyle(editor);
   const mirror = document.createElement('div');
   const copied = [
@@ -108,6 +110,14 @@ export function scrollTextareaOffsetIntoView(editor, value, offset) {
     boxSizing: 'border-box',
     whiteSpace: 'pre-wrap',
   });
+  return mirror;
+}
+
+/** Porta un offset testuale al centro anche quando una singola riga sorgente
+ * occupa molte righe VISIVE nel textarea per effetto del wrapping. */
+export function scrollTextareaOffsetIntoView(editor, value, offset) {
+  if (!editor || typeof document === 'undefined') return;
+  const mirror = textareaMirror(editor);
   mirror.append(document.createTextNode(value.slice(0, offset)));
   const marker = document.createElement('span');
   marker.textContent = value.slice(offset, offset + 1) || '\u200b';
@@ -115,4 +125,38 @@ export function scrollTextareaOffsetIntoView(editor, value, offset) {
   document.body.append(mirror);
   editor.scrollTop = Math.max(0, marker.offsetTop - editor.clientHeight / 2 + LINE_H / 2);
   mirror.remove();
+}
+
+/**
+ * Altezza (in pixel, rispetto all'inizio del contenuto) di pi\u00f9 offset in una
+ * sola misurazione.
+ *
+ * Serve ai segni nel margine: misurarli uno per uno costringerebbe il browser
+ * a un ricalcolo del layout per ogni puntino, e un libro ne ha centinaia.
+ *
+ * @returns {number[]} un valore per ogni offset, nello stesso ordine
+ */
+export function measureTextareaOffsets(editor, value, offsets) {
+  if (!editor || typeof document === 'undefined' || !offsets?.length) return [];
+  const text = String(value || '');
+  // Ordinati e senza doppioni: ogni marcatore consuma il carattere su cui sta,
+  // quindi due marcatori sullo stesso offset sposterebbero il testo che segue.
+  const ordered = [...new Set(offsets)].sort((a, b) => a - b);
+  const mirror = textareaMirror(editor);
+  const markers = [];
+  let cursor = 0;
+  for (const offset of ordered) {
+    const at = Math.max(cursor, Math.min(text.length, offset));
+    if (at > cursor) mirror.append(document.createTextNode(text.slice(cursor, at)));
+    const marker = document.createElement('span');
+    marker.textContent = text.slice(at, at + 1) || '\u200b';
+    mirror.append(marker);
+    markers.push(marker);
+    cursor = Math.min(text.length, at + 1);
+  }
+  document.body.append(mirror);
+  const tops = new Map();
+  ordered.forEach((offset, index) => tops.set(offset, markers[index].offsetTop));
+  mirror.remove();
+  return offsets.map((offset) => tops.get(offset) ?? 0);
 }

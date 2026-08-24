@@ -193,3 +193,65 @@ export const IconGlobe = (p) => (
     <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z" />
   </svg>
 );
+
+export const IconListBullet = (p) => (
+  <svg {...base} {...p}>
+    <path d="M9 6h11M9 12h11M9 18h11" />
+    <circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const IconListOrdered = (p) => (
+  <svg {...base} {...p}>
+    <path d="M10 6h10M10 12h10M10 18h10" />
+    <path d="M3 4.6l1.5-.6V8" />
+    <path d="M3.1 10.4a1.4 1.4 0 1 1 2.2 1.7L3 14h2.5" />
+    <path d="M3.2 16.2h2.2l-1.4 1.6a1.3 1.3 0 1 1-.9 2.2" />
+  </svg>
+);
+
+export const IconIndent = (p) => (
+  <svg {...base} {...p}>
+    <path d="M10 6h11M10 12h11M10 18h11" />
+    <path d="M3 9l3 3-3 3z" fill="currentColor" />
+  </svg>
+);
+
+export const IconOutdent = (p) => (
+  <svg {...base} {...p}>
+    <path d="M10 6h11M10 12h11M10 18h11" />
+    <path d="M6 9l-3 3 3 3z" fill="currentColor" />
+  </svg>
+);
+
+export const IconListOff = (p) => (
+  <svg {...base} {...p}>
+    <path d="M9 6h11M9 12h7M9 18h4" />
+    <circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none" />
+    <path d="M15 15l6 6M21 15l-6 6" />
+  </svg>
+);
+
+export const IconChevronUp = (p) => (
+  <svg {...base} {...p}>
+    <path d="M6 15l6-6 6 6" />
+  </svg>
+);
+
+export const IconChevronDown = (p) => (
+  <svg {...base} {...p}>
+    <path d="M6 9l6 6 6-6" />
+  </svg>
+);
+
+export const IconSkip = (p) => (
+  <svg {...base} {...p}>
+    <path d="M5 12h11" />
+    <path d="M12 7l5 5-5 5" />
+    <path d="M20 5v14" />
+  </svg>
+);

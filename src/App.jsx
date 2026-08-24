@@ -510,8 +510,61 @@ function Workspace({
   const [searchReq, setSearchReq] = useState(null); // ricerca pilotata nell'editor
   const [pdfSearchTarget, setPdfSearchTarget] = useState(null);
   const [reviewReturnLabel, setReviewReturnLabel] = useState('');
+  // Parole che l'utente ha dichiarato buone per questo controllo: escluse
+  // dall'invio all'AI e dalla revisione guidata, ma non ancora messe nel
+  // dizionario personale (quello è un impegno che dura oltre la sessione).
+  const [spellSkip, setSpellSkip] = useState(() => new Set());
+  const [spellListOpen, setSpellListOpen] = useState(false);
+  const [reviewToken, setReviewToken] = useState(0); // 0 = revisione chiusa
   const reviewOriginRef = useRef(null);
   const pdfSearchRequestRef = useRef(0);
+
+  const spellToken = pipe.spellReport?.token || 0;
+  const spellSuspects = pipe.spellReport?.suspects;
+
+  // Un controllo NUOVO apre la revisione dalla prima fermata e richiude
+  // l'elenco completo. Se la revisione è già aperta il token resta quello:
+  // correggere una parola non deve riportare l'utente in cima al documento.
+  useEffect(() => {
+    if (!spellToken) return;
+    setSpellListOpen(false);
+    setReviewToken((current) => current || (spellSuspects?.length ? spellToken : 0));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spellToken]);
+
+  // Chiuso il pannello si azzera tutto: le esclusioni valgono per il controllo
+  // a cui si riferiscono.
+  useEffect(() => {
+    if (pipe.spellReport) return;
+    setReviewToken(0);
+    setSpellSkip((current) => (current.size ? new Set() : current));
+  }, [pipe.spellReport]);
+
+  const reviewItems = useMemo(
+    () => (spellSuspects || []).filter((s) => !spellSkip.has(s.word)),
+    [spellSuspects, spellSkip],
+  );
+
+  const review = useMemo(
+    () => (reviewToken
+      ? { token: reviewToken, label: 'Controllo ortografico', items: reviewItems }
+      : null),
+    [reviewToken, reviewItems],
+  );
+
+  const toggleSpellSkip = useCallback((word) => {
+    setSpellSkip((current) => {
+      const next = new Set(current);
+      if (next.has(word)) next.delete(word);
+      else next.add(word);
+      return next;
+    });
+  }, []);
+
+  const startSpellReview = useCallback(() => {
+    setReviewToken(Date.now());
+    setSpellListOpen(false);
+  }, []);
 
   const rememberReviewOrigin = useCallback((label) => {
     const active = document.activeElement;
@@ -567,6 +620,23 @@ function Workspace({
     },
     [pipe],
   );
+
+  // Azioni della barra di revisione, una parola alla volta.
+  const handleReviewFix = useCallback(
+    (word) => handleSpellFixAll([word]),
+    [handleSpellFixAll],
+  );
+
+  const handleReviewDictionary = useCallback(
+    (word) => pipe.ignoreSpellWords([word]),
+    [pipe],
+  );
+
+  const handleReviewSkip = useCallback((word) => {
+    setSpellSkip((current) => new Set(current).add(word));
+  }, []);
+
+  const handleReviewExit = useCallback(() => setReviewToken(0), []);
 
   const handleFixSpacing = useCallback(async () => {
     const res = await pipe.fixPunctuation();
@@ -800,6 +870,12 @@ function Workspace({
         <SpellPanel
           report={pipe.spellReport}
           busy={pipe.spellBusy}
+          skip={spellSkip}
+          onToggleSkip={toggleSpellSkip}
+          expanded={spellListOpen}
+          onToggleExpanded={() => setSpellListOpen((open) => !open)}
+          reviewing={!!reviewToken}
+          onReview={startSpellReview}
           onFixAll={handleSpellFixAll}
           onRecheck={pipe.runSpellcheck}
           onLocate={locateWord}
@@ -892,6 +968,13 @@ function Workspace({
             selectionBusy={pipe.selectionAiBusy}
             selectionDetail={pipe.selectionAiDetail}
             translationModelLabel={pipe.translationModelLabel}
+            enumMarker={pipe.layoutOptions?.enumNumbering || '1.'}
+            review={review}
+            reviewBusy={pipe.spellBusy}
+            onReviewFix={handleReviewFix}
+            onReviewDictionary={handleReviewDictionary}
+            onReviewSkip={handleReviewSkip}
+            onReviewExit={handleReviewExit}
             reviewReturnLabel={reviewReturnLabel}
             onReturnToReview={returnToReviewOrigin}
             searchRequest={searchReq}

@@ -1,12 +1,41 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand, IconSpell, IconText, IconArrowLeft } from './Icons.jsx';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  IconRefresh, IconSpinner, IconAlert, IconSearch, IconX, IconWand, IconSpell, IconText,
+  IconArrowLeft, IconBookPlus, IconCheck, IconChevronUp, IconChevronDown, IconSkip,
+  IconListBullet, IconListOrdered, IconIndent, IconOutdent, IconEye, IconEyeOff,
+} from './Icons.jsx';
 import CopyButton from './CopyButton.jsx';
-import { findEditorMatches, scrollTextareaOffsetIntoView } from '../lib/editorScroll.js';
+import {
+  findEditorMatches,
+  scrollTextareaOffsetIntoView,
+  measureTextareaOffsets,
+} from '../lib/editorScroll.js';
+import {
+  buildReviewStops,
+  stopIndexAtOrAfter,
+  stepStop,
+  stopLines,
+} from '../lib/reviewQueue.js';
+import {
+  toList,
+  clearList,
+  indentIntoItem,
+  endList,
+  describeSelection,
+} from '../lib/listEdit.js';
+
+/** Selezione da mostrare nella barra delle azioni, o niente se è vuota. */
+function describeRange(value, start, end) {
+  const selected = String(value || '').slice(start, end);
+  if (end <= start || !selected.trim()) return null;
+  return { start, end, count: end - start, sample: selected.replace(/\s+/gu, ' ').trim() };
+}
 
 /**
  * Editor a colonna sinistra: codice Typst generato e modificabile dall'utente,
- * con numeri di riga, ricerca/sostituzione (Ctrl+F) per modifiche puntiformi
- * e correzione AI degli errori di compilazione.
+ * con numeri di riga, ricerca/sostituzione (Ctrl+F) per modifiche puntiformi,
+ * correzione AI degli errori di compilazione, azioni di elenco sulla selezione
+ * e revisione guidata dei sospetti ortografici, una fermata alla volta.
  */
 export default function TypstEditor({
   value,
@@ -25,6 +54,13 @@ export default function TypstEditor({
   selectionBusy,
   selectionDetail,
   translationModelLabel,
+  enumMarker = '1.',
+  review,
+  reviewBusy,
+  onReviewFix,
+  onReviewDictionary,
+  onReviewSkip,
+  onReviewExit,
   reviewReturnLabel,
   onReturnToReview,
   searchRequest,
@@ -35,9 +71,12 @@ export default function TypstEditor({
 }) {
   const taRef = useRef(null);
   const gutterRef = useRef(null);
+  const marksRef = useRef(null);
   const searchRef = useRef(null);
   const pendingJumpRef = useRef(false);
   const pendingJumpOccurrenceRef = useRef(0);
+  const pendingStopRef = useRef(false);
+  const pendingSelectionRef = useRef(null);
   const activeMatchRef = useRef(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -47,6 +86,9 @@ export default function TypstEditor({
   const [wholeWord, setWholeWord] = useState(false);
   const [editorSelection, setEditorSelection] = useState(null);
   const [selectionNotice, setSelectionNotice] = useState('');
+  const [reviewOffset, setReviewOffset] = useState(0);
+  const [marksOn, setMarksOn] = useState(true);
+  const [markTops, setMarkTops] = useState([]);
 
   const lineCount = useMemo(
     () => Math.max(value.split('\n').length, 1),
@@ -79,9 +121,12 @@ export default function TypstEditor({
   }, [searchRequest]);
 
   const syncScroll = () => {
-    if (gutterRef.current && taRef.current) {
-      gutterRef.current.scrollTop = taRef.current.scrollTop;
-    }
+    const editor = taRef.current;
+    if (!editor) return;
+    if (gutterRef.current) gutterRef.current.scrollTop = editor.scrollTop;
+    // I segni nel margine scorrono con il testo senza passare da React: uno
+    // stato aggiornato a ogni evento di scroll farebbe ridisegnare l'editor.
+    if (marksRef.current) marksRef.current.style.transform = `translateY(${-editor.scrollTop}px)`;
   };
 
   /** Seleziona e porta a video l'occorrenza k (con wrap-around). */
@@ -153,24 +198,203 @@ export default function TypstEditor({
     taRef.current?.focus();
   };
 
+  /* ── Revisione guidata ──────────────────────────────────────────────────
+     Le parole sospette diventano fermate in ordine di documento. La posizione
+     (`reviewOffset`), non l'indice, è il segnaposto: dopo una correzione il
+     testo cambia lunghezza e le fermate cambiano numero, ma il punto in cui
+     l'utente stava lavorando resta lo stesso. */
+  const reviewOpen = !!review;
+  // Le fermate si ricalcolano sul testo FERMO: ogni ricalcolo scorre l'intero
+  // documento per ciascuna parola sospetta, e farlo a ogni tasto premuto
+  // renderebbe l'editor inservibile proprio mentre si corregge.
+  const [settledValue, setSettledValue] = useState(value);
+  useEffect(() => {
+    if (!reviewOpen) return undefined;
+    // Una modifica che arriva da un'azione (correzione AI, proposta applicata)
+    // non è digitazione: le fermate servono subito, non fra quattro decimi.
+    if (pendingStopRef.current) {
+      setSettledValue(value);
+      return undefined;
+    }
+    const timer = setTimeout(() => setSettledValue(value), 400);
+    return () => clearTimeout(timer);
+  }, [value, reviewOpen]);
+
+  const stops = useMemo(
+    () => (reviewOpen ? buildReviewStops(settledValue, review.items || []) : []),
+    [reviewOpen, review?.items, settledValue],
+  );
+  const stopIndex = stops.length ? Math.max(0, stopIndexAtOrAfter(stops, reviewOffset)) : -1;
+  const stop = stopIndex >= 0 ? stops[stopIndex] : null;
+
+  const showStop = (target) => {
+    if (!target) return;
+    setReviewOffset(target.start);
+    requestAnimationFrame(() => {
+      const editor = taRef.current;
+      if (!editor) return;
+      editor.focus({ preventScroll: true });
+      editor.setSelectionRange(target.start, target.end, 'forward');
+      scrollTextareaOffsetIntoView(editor, value, target.start);
+      syncScroll();
+    });
+    onSearchMatch?.({
+      query: target.word,
+      start: target.start,
+      end: target.end,
+      occurrence: target.occurrence,
+      id: `review-${target.start}-${Date.now()}`,
+    });
+  };
+
+  const goToStop = (delta) => {
+    if (!stops.length) return;
+    showStop(stops[stepStop(stops, stopIndex, delta)]);
+  };
+
+  // Apertura di una nuova revisione: si riparte dalla prima fermata.
+  useEffect(() => {
+    if (!review?.token) return;
+    setReviewOffset(0);
+    pendingStopRef.current = true;
+  }, [review?.token]);
+
+  // Dopo un'azione che cambia il testo (correzione AI, proposta applicata) le
+  // fermate si ricalcolano: si va a quella che ora occupa il posto corrente.
+  useEffect(() => {
+    if (!pendingStopRef.current) return;
+    // Le fermate sono ancora quelle del testo di prima: saltare adesso
+    // porterebbe a un offset che non esiste più.
+    if (settledValue !== value) return;
+    pendingStopRef.current = false;
+    if (!stops.length) {
+      onSearchMatch?.(null);
+      return;
+    }
+    showStop(stops[Math.max(0, stopIndexAtOrAfter(stops, reviewOffset))]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stops]);
+
+  const runReviewAction = (action, word) => {
+    if (!action || !word) return;
+    pendingStopRef.current = true;
+    action(word);
+  };
+
+  /** Applica la proposta deterministica del controllo ortografico. */
+  const applySuggestion = () => {
+    if (!stop?.suggestedFix) return;
+    pendingStopRef.current = true;
+    onChange(value.slice(0, stop.start) + stop.suggestedFix + value.slice(stop.end));
+  };
+
+  /* ── Segni nel margine ──────────────────────────────────────────────────
+     Misurati sul testo reale invece che moltiplicando il numero di riga per
+     l'altezza: una riga sorgente lunga ne occupa parecchie a schermo, e i
+     puntini finirebbero via via più in alto del punto che indicano. */
+  const marks = useMemo(() => (marksOn ? stopLines(stops) : []), [marksOn, stops]);
+
+  useLayoutEffect(() => {
+    const editor = taRef.current;
+    if (!editor || !marks.length) {
+      setMarkTops((previous) => (previous.length ? [] : previous));
+      return undefined;
+    }
+    const measure = () => {
+      setMarkTops(measureTextareaOffsets(editor, settledValue, marks.map((m) => m.start)));
+      syncScroll();
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(editor);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marks, settledValue]);
+
+  /* ── Azioni di elenco ───────────────────────────────────────────────────
+     Lavorano sul Typst che l'utente ha davanti: «termina elenco» è togliere il
+     rientro alle righe scelte, non un marcatore da reinterpretare. La
+     selezione viene ripristinata dopo la modifica, così le azioni si possono
+     concatenare (elenco → rientra) senza ricominciare da capo. */
+  const applyListEdit = (transform) => {
+    const editor = taRef.current;
+    if (!editor || disabled) return;
+    const result = transform(value, editor.selectionStart, editor.selectionEnd);
+    if (!result || result.value === value) return;
+    pendingSelectionRef.current = { start: result.start, end: result.end };
+    setSelectionNotice('');
+    onChange(result.value);
+  };
+
+  useEffect(() => {
+    const pending = pendingSelectionRef.current;
+    if (!pending) return;
+    pendingSelectionRef.current = null;
+    // `onSelect` non scatta per una selezione impostata da noi: senza questo
+    // la barra sparirebbe a ogni pulsante premuto e non si potrebbero
+    // concatenare le azioni (elenco, poi rientro).
+    setEditorSelection(describeRange(value, pending.start, pending.end));
+    requestAnimationFrame(() => {
+      const editor = taRef.current;
+      if (!editor) return;
+      editor.focus({ preventScroll: true });
+      editor.setSelectionRange(pending.start, pending.end, 'forward');
+      syncScroll();
+    });
+  }, [value]);
+
+  const listState = useMemo(
+    () => (editorSelection ? describeSelection(value, editorSelection.start, editorSelection.end) : null),
+    [editorSelection, value],
+  );
+
+  const toggleList = (kind) => {
+    const active = kind === 'bullet' ? listState?.bullet : listState?.ordered;
+    applyListEdit((text, start, end) => (
+      active ? clearList(text, start, end) : toList(text, start, end, kind, { marker: enumMarker })
+    ));
+  };
+
   const onEditorKeyDown = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+    const key = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && key === 'f') {
       e.preventDefault();
       openSearch();
+    } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === '8' || e.key === '*')) {
+      e.preventDefault();
+      toggleList('bullet');
+    } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === '7' || e.key === '/')) {
+      e.preventDefault();
+      toggleList('ordered');
+    } else if ((e.ctrlKey || e.metaKey) && e.key === ']') {
+      e.preventDefault();
+      applyListEdit(indentIntoItem);
+    } else if ((e.ctrlKey || e.metaKey) && e.key === '[') {
+      e.preventDefault();
+      applyListEdit(endList);
+    } else if (e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowRight') && stops.length) {
+      e.preventDefault();
+      goToStop(1);
+    } else if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowLeft') && stops.length) {
+      e.preventDefault();
+      goToStop(-1);
     } else if (e.key === 'Escape' && editorSelection) {
       setEditorSelection(null);
       setSelectionNotice('');
+    } else if (e.key === 'Escape' && reviewOpen) {
+      onReviewExit?.();
     }
   };
 
   const captureEditorSelection = (event) => {
-    if (!onReviseSelection) return;
     const start = event.currentTarget.selectionStart;
     const end = event.currentTarget.selectionEnd;
-    const selected = value.slice(start, end);
-    setEditorSelection(end > start && selected.trim()
-      ? { start, end, count: end - start, sample: selected.replace(/\s+/gu, ' ').trim() }
-      : null);
+    // Durante la revisione la fermata corrente è già selezionata dall'app: la
+    // barra della selezione ripeterebbe soltanto quello che dice la barra di
+    // revisione, un piano di comandi in più senza niente in più da fare.
+    const isCurrentStop = stop && start === stop.start && end === stop.end;
+    setEditorSelection(isCurrentStop ? null : describeRange(value, start, end));
     setSelectionNotice('');
   };
 
@@ -195,6 +419,9 @@ export default function TypstEditor({
     }
   };
 
+  const listButton = 'inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-2 disabled:opacity-50';
+  const listButtonActive = 'inline-flex min-h-9 min-w-9 items-center justify-center gap-1.5 rounded-lg border border-primary/50 bg-primary-soft px-2 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-surface-2 disabled:opacity-50';
+
   return (
     <section id="typst-editor-panel" className="card flex min-h-0 flex-1 flex-col overflow-hidden">
       <header className="flex min-w-0 flex-col items-stretch justify-between gap-2 border-b border-border px-4 py-2.5 sm:flex-row sm:items-center sm:gap-3">
@@ -207,10 +434,25 @@ export default function TypstEditor({
             </span>
           )}
           {onReviseSelection && (
-            <span className="hidden text-xs text-faint xl:inline">seleziona il testo per correggerlo o tradurlo con l’IA</span>
+            <span className="hidden text-xs text-faint xl:inline">seleziona il testo per correggerlo, tradurlo o metterlo in elenco</span>
           )}
         </div>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          {reviewOpen && (
+            <button
+              onClick={() => setMarksOn((on) => !on)}
+              title={marksOn
+                ? 'Nascondi i segni degli errori nel margine'
+                : 'Mostra i segni degli errori nel margine'}
+              aria-label="Segni degli errori nel margine"
+              aria-pressed={marksOn}
+              className={`rounded-lg p-1.5 transition-colors ${
+                marksOn ? 'bg-warning/15 text-ink' : 'bg-surface-2 text-muted hover:text-ink'
+              }`}
+            >
+              {marksOn ? <IconEye width={14} height={14} /> : <IconEyeOff width={14} height={14} />}
+            </button>
+          )}
           {onSpellcheck && (
             <button
               onClick={onSpellcheck}
@@ -267,6 +509,127 @@ export default function TypstEditor({
           </button>
         </div>
       </header>
+
+      {reviewOpen && (
+        <div className="flex min-w-0 flex-col gap-2 border-b border-border bg-warning/10 px-3 py-2.5 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-ink">
+              <IconSpell width={14} height={14} className="shrink-0 text-warning" />
+              {review.label || 'Revisione'}
+              {stops.length > 0 && (
+                <span className="tabular-nums text-muted">
+                  {stopIndex + 1}/{stops.length}
+                </span>
+              )}
+              {stop && (
+                <span className="rounded-full border border-warning/50 bg-surface px-2 py-0.5 font-mono text-[11px] text-ink">
+                  {stop.word}
+                </span>
+              )}
+              <span className="hidden text-[10px] font-normal text-faint xl:inline">
+                Alt+↓ e Alt+↑ per spostarsi
+              </span>
+            </div>
+            {stop ? (
+              <p className="mt-1 truncate font-mono text-[11px] leading-relaxed text-muted">
+                {stop.before}
+                <span className="rounded bg-warning/30 px-0.5 text-ink">{stop.word}</span>
+                {stop.after}
+              </p>
+            ) : (
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                <IconCheck width={13} height={13} className="text-success" />
+                Nessun sospetto rimasto nel testo: la revisione è finita.
+              </p>
+            )}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {stops.length > 1 && (
+              <div className="flex items-center overflow-hidden rounded-lg border border-border bg-surface">
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => goToStop(-1)}
+                  aria-label="Sospetto precedente"
+                  title="Sospetto precedente (Alt+↑)"
+                  className="grid min-h-9 min-w-9 place-items-center text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                >
+                  <IconChevronUp width={14} height={14} />
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => goToStop(1)}
+                  aria-label="Sospetto successivo"
+                  title="Sospetto successivo (Alt+↓)"
+                  className="grid min-h-9 min-w-9 place-items-center border-l border-border text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                >
+                  <IconChevronDown width={14} height={14} />
+                </button>
+              </div>
+            )}
+            {stop?.suggestedFix && (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={applySuggestion}
+                title={`Sostituisci con «${stop.suggestedFix}» — proposta locale, senza AI`}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-lime/60 bg-lime-soft px-2.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-2"
+              >
+                <IconCheck width={13} height={13} />
+                <span className="max-w-40 truncate font-mono">{stop.suggestedFix}</span>
+              </button>
+            )}
+            {stop && onReviewSkip && (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => runReviewAction(onReviewSkip, stop.word)}
+                title={`«${stop.word}» va bene: escludila dalla revisione di adesso`}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-2"
+              >
+                <IconSkip width={13} height={13} />
+                Va bene
+              </button>
+            )}
+            {stop && onReviewDictionary && (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => runReviewAction(onReviewDictionary, stop.word)}
+                title={`Aggiungi «${stop.word}» al dizionario personale: non verrà più segnalata`}
+                aria-label={`Aggiungi «${stop.word}» al dizionario personale`}
+                className="grid min-h-9 min-w-9 place-items-center rounded-lg border border-border bg-surface text-muted transition-colors hover:bg-lime-soft hover:text-ink"
+              >
+                <IconBookPlus width={14} height={14} />
+              </button>
+            )}
+            {stop && onReviewFix && (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => runReviewAction(onReviewFix, stop.word)}
+                disabled={!!reviewBusy || disabled}
+                title={`Correggi «${stop.word}» con ${proofModelLabel || 'il modello di rilettura selezionato'}`}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-50"
+              >
+                {reviewBusy ? <IconSpinner width={13} height={13} /> : <IconWand width={13} height={13} />}
+                Correggi
+              </button>
+            )}
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onReviewExit?.()}
+              aria-label="Chiudi la revisione guidata"
+              title="Chiudi la revisione guidata (Esc)"
+              className="grid min-h-9 min-w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <IconX width={14} height={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {reviewReturnLabel && onReturnToReview && (
         <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border bg-lime-soft px-3 py-2">
@@ -362,12 +725,15 @@ export default function TypstEditor({
         </div>
       )}
 
-      {onReviseSelection && editorSelection && (
-        <div className="flex flex-col gap-2 border-b border-border bg-primary-soft px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+      {editorSelection && (
+        <div className="flex flex-col gap-2 border-b border-border bg-primary-soft px-3 py-2.5 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-xs font-semibold text-ink">
               <span className="size-2 shrink-0 rounded-full bg-primary" aria-hidden="true" />
               Selezione Typst · <span className="tabular-nums">{editorSelection.count}</span> caratteri
+              {listState?.lines > 1 && (
+                <span className="font-normal text-muted">· {listState.lines} righe</span>
+              )}
             </div>
             <p className="mt-0.5 truncate text-xs text-muted">
               {selectionBusy
@@ -376,28 +742,80 @@ export default function TypstEditor({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => runEditorSelectionAction('proof')}
-              disabled={!!selectionBusy || disabled}
-              title={`Correggi soltanto la selezione con ${proofModelLabel || 'il modello di rilettura selezionato'}`}
-              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-50"
-            >
-              {selectionBusy === 'proof' ? <IconSpinner width={13} height={13} /> : <IconWand width={13} height={13} />}
-              Correggi selezione
-            </button>
-            <button
-              type="button"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => runEditorSelectionAction('translate')}
-              disabled={!!selectionBusy || disabled}
-              title={`Traduci soltanto la selezione con ${translationModelLabel || 'il modello di traduzione selezionato'}`}
-              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-primary/40 bg-surface px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-surface-2 disabled:opacity-50"
-            >
-              {selectionBusy === 'translate' ? <IconSpinner width={13} height={13} /> : <IconText width={13} height={13} />}
-              Traduci selezione
-            </button>
+            <div className="flex items-center gap-1 rounded-lg bg-surface/70 p-0.5">
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => toggleList('bullet')}
+                disabled={disabled}
+                aria-pressed={!!listState?.bullet}
+                aria-label="Elenco puntato"
+                title="Elenco puntato — ogni riga diventa una voce (Ctrl+Shift+8)"
+                className={listState?.bullet ? listButtonActive : listButton}
+              >
+                <IconListBullet width={14} height={14} />
+              </button>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => toggleList('ordered')}
+                disabled={disabled}
+                aria-pressed={!!listState?.ordered}
+                aria-label="Elenco numerato"
+                title={`Elenco numerato con marcatore «${enumMarker}» (Ctrl+Shift+7)`}
+                className={listState?.ordered ? listButtonActive : listButton}
+              >
+                <IconListOrdered width={14} height={14} />
+              </button>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => applyListEdit(indentIntoItem)}
+                disabled={disabled}
+                aria-label="Rientra nella voce precedente"
+                title="Rientra nella voce precedente: il testo resta dentro la voce e la numerazione non riparte (Ctrl+])"
+                className={listButton}
+              >
+                <IconIndent width={14} height={14} />
+              </button>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => applyListEdit(endList)}
+                disabled={disabled}
+                aria-label="Termina l’elenco qui"
+                title="Termina l’elenco qui: toglie un livello di rientro (Ctrl+[)"
+                className={listButton}
+              >
+                <IconOutdent width={14} height={14} />
+              </button>
+            </div>
+            {onReviseSelection && (
+              <>
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => runEditorSelectionAction('proof')}
+                  disabled={!!selectionBusy || disabled}
+                  title={`Correggi soltanto la selezione con ${proofModelLabel || 'il modello di rilettura selezionato'}`}
+                  className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-ink transition-colors hover:bg-primary-strong disabled:opacity-50"
+                >
+                  {selectionBusy === 'proof' ? <IconSpinner width={13} height={13} /> : <IconWand width={13} height={13} />}
+                  Correggi selezione
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => runEditorSelectionAction('translate')}
+                  disabled={!!selectionBusy || disabled}
+                  title={`Traduci soltanto la selezione con ${translationModelLabel || 'il modello di traduzione selezionato'}`}
+                  className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-primary/40 bg-surface px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-surface-2 disabled:opacity-50"
+                >
+                  {selectionBusy === 'translate' ? <IconSpinner width={13} height={13} /> : <IconText width={13} height={13} />}
+                  Traduci selezione
+                </button>
+              </>
+            )}
             <button
               type="button"
               onMouseDown={(event) => event.preventDefault()}
@@ -437,6 +855,29 @@ export default function TypstEditor({
             </div>
           ))}
         </div>
+        {marks.length > 0 && (
+          <div className="pointer-events-none absolute inset-0 overflow-hidden">
+            <div ref={marksRef} className="absolute inset-x-0 top-0">
+              {marks.map((mark, index) => (markTops[index] === undefined ? null : (
+                <button
+                  key={mark.line}
+                  type="button"
+                  tabIndex={-1}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => showStop(stops.find((item) => item.start === mark.start))}
+                  title={mark.count > 1
+                    ? `${mark.count} parole sospette alla riga ${mark.line}`
+                    : `Parola sospetta alla riga ${mark.line}`}
+                  aria-label={`Vai al sospetto della riga ${mark.line}`}
+                  className={`pointer-events-auto absolute left-1 size-2 rounded-full transition-transform hover:scale-150 ${
+                    stop && stop.line === mark.line ? 'bg-primary' : 'bg-warning'
+                  }`}
+                  style={{ top: markTops[index] + 8 }}
+                />
+              )))}
+            </div>
+          </div>
+        )}
         <textarea
           ref={taRef}
           value={value}

@@ -271,7 +271,8 @@ export function usePipeline(settings) {
   const [downloading, setDownloading] = useState(false);
   const [projectBusy, setProjectBusy] = useState(null); // 'export' | 'import' | null
   const [aiFixing, setAiFixing] = useState(false);
-  const [spellReport, setSpellReport] = useState(null); // {suspects, error?} | null
+  const [spellReport, setSpellReport] = useState(null); // {suspects, error?, token} | null
+  const spellTokenRef = useRef(0); // cambia solo a ogni controllo NUOVO
   const [spellBusy, setSpellBusy] = useState(false);
   const [proofreadBusy, setProofreadBusy] = useState(false);
   const [proofreadDetail, setProofreadDetail] = useState(''); // "3/12 paragrafi…"
@@ -1973,6 +1974,19 @@ export function usePipeline(settings) {
   }, [compilePreviewPdf, typstCode, settings, describeCompileError]);
 
   /**
+   * Pubblica un esito del controllo con un `token` di CONTROLLO.
+   *
+   * Serve a distinguere un controllo nuovo da una modifica dell'elenco già
+   * mostrato (una parola aggiunta al dizionario): la revisione guidata riparte
+   * dalla prima fermata solo nel primo caso, altrimenti l'utente verrebbe
+   * riportato in cima al documento a ogni parola sistemata.
+   */
+  const publishSpellReport = useCallback((report) => {
+    spellTokenRef.current += 1;
+    setSpellReport({ ...report, token: spellTokenRef.current });
+  }, []);
+
+  /**
    * Controllo ortografico locale (dizionari it+en impacchettati): elenca le
    * parole ignote a entrambi, con conteggio e contesto.
    */
@@ -1982,13 +1996,13 @@ export function usePipeline(settings) {
     try {
       const speller = await loadSpeller();
       const ignore = new Set(loadSpellIgnore());
-      setSpellReport({ suspects: findSuspects(typstCode, speller, ignore) });
+      publishSpellReport({ suspects: findSuspects(typstCode, speller, ignore) });
     } catch (e) {
-      setSpellReport({ suspects: [], error: e.message || 'Dizionari non disponibili.' });
+      publishSpellReport({ suspects: [], error: e.message || 'Dizionari non disponibili.' });
     } finally {
       setSpellBusy(false);
     }
-  }, [typstCode]);
+  }, [typstCode, publishSpellReport]);
 
   const closeSpellReport = useCallback(() => setSpellReport(null), []);
 
@@ -2030,7 +2044,7 @@ export function usePipeline(settings) {
     if (!changes.length) {
       if (speller) {
         const ignore = new Set(loadSpellIgnore());
-        setSpellReport({ suspects: findSuspects(typstCode, speller, ignore) });
+        publishSpellReport({ suspects: findSuspects(typstCode, speller, ignore) });
       }
       return { ok: true, message: 'Spaziatura e punteggiatura già a posto.' };
     }
@@ -2050,10 +2064,10 @@ export function usePipeline(settings) {
     refreshLanguageAudit(s, fixed);
     if (speller) {
       const ignore = new Set(loadSpellIgnore());
-      setSpellReport({ suspects: findSuspects(fixed, speller, ignore) });
+      publishSpellReport({ suspects: findSuspects(fixed, speller, ignore) });
     }
     return { ok: true, message: `Spaziatura sistemata: ${changes.join(' · ')}` };
-  }, [typstCode, recompile, persist, refreshLanguageAudit]);
+  }, [typstCode, recompile, persist, refreshLanguageAudit, publishSpellReport]);
 
   /**
    * Correzione rapida di TUTTI i sospetti con un LLM veloce: invia solo
@@ -2158,7 +2172,7 @@ export function usePipeline(settings) {
         await persist();
         refreshLanguageAudit(sessionRef.current, code);
         const ignore = new Set(loadSpellIgnore());
-        setSpellReport({ suspects: findSuspects(code, speller, ignore) });
+        publishSpellReport({ suspects: findSuspects(code, speller, ignore) });
         return {
           ok: true,
           message:
@@ -2174,7 +2188,7 @@ export function usePipeline(settings) {
         setSpellBusy(false);
       }
     },
-    [getCompiledPdf, persist, refreshLanguageAudit, spellReport, typstCode, settings, verifyStrictPdf],
+    [getCompiledPdf, persist, refreshLanguageAudit, spellReport, typstCode, settings, verifyStrictPdf, publishSpellReport],
   );
 
   /**
