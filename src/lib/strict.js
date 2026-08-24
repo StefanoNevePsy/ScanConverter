@@ -596,6 +596,86 @@ function latexTable(block) {
 }
 
 /** Converte un documento Markdown OCR in corpo Typst deterministico. */
+/*
+  ------------------------------------------------ elenchi con corpo dentro
+
+  Il caso che rompe tutto è comunissimo nella saggistica: un elenco numerato
+  in cui ogni voce è seguita da una spiegazione e da un esempio — spesso una
+  trascrizione di seduta con più interlocutori. Fra una voce e l'altra ci sono
+  quindi paragrafi, e in Markdown quei paragrafi CHIUDONO l'elenco.
+
+  Ne seguivano due difetti insieme: la numerazione ripartiva da 1 a ogni voce
+  (cinque voci tutte «1.»), e il corpo della voce finiva a margine sinistro,
+  indistinguibile dal testo corrente.
+
+  Un blocco compreso fra due voci dello stesso elenco appartiene alla prima:
+  questo è certo, non è un'euristica. Incerto è solo dove finisca l'ULTIMA
+  voce, che nessun blocco successivo delimita — lì si prosegue finché le righe
+  sono battute di dialogo, e si smette al primo paragrafo di prosa.
+*/
+
+/** Una voce di elenco numerato: ogni riga del blocco comincia con un numero. */
+function isEnumeratedItem(block) {
+  const lines = String(block || '').trim().split('\n');
+  return lines.length > 0 && lines.every((l) => /^\s*\d+[.)]\s+/.test(l));
+}
+
+/** Riga di dialogo: «TERAPISTA:», «FIGLIO:», «PADRE (sorridendo):». */
+const DIALOGUE_RE = /^\s*\p{Lu}[\p{Lu}\s'’.-]{1,40}(?:\s*\([^)]{0,80}\))?\s*:/u;
+
+/** Un blocco che non può mai stare dentro una voce di elenco. */
+function breaksList(block) {
+  const t = String(block || '').trim();
+  return /^#{1,6}\s/.test(t) || /^!\[/.test(t) || /^\s*\|/.test(t) || /\\begin\{tabular\}/.test(t);
+}
+
+// Oltre questa distanza fra due voci non si tratta più del corpo di una voce
+// ma di un elenco che è finito e di un altro che comincia molto dopo.
+const MAX_ITEM_BODY = 24;
+
+/**
+ * Blocchi da rientrare sotto la voce di elenco che li precede.
+ * @param {string[]} blocks blocchi Markdown del documento
+ * @returns {Set<number>} indici dei blocchi da rientrare
+ */
+export function planListNesting(blocks) {
+  const nested = new Set();
+  for (let i = 0; i < blocks.length; i++) {
+    if (!isEnumeratedItem(blocks[i])) continue;
+
+    // Fin dove arriva il corpo di questa voce?
+    let next = -1;
+    for (let j = i + 1; j < blocks.length && j <= i + MAX_ITEM_BODY; j++) {
+      if (breaksList(blocks[j])) break;
+      if (isEnumeratedItem(blocks[j])) { next = j; break; }
+    }
+
+    if (next > i + 1) {
+      for (let j = i + 1; j < next; j++) nested.add(j);
+      continue;
+    }
+    if (next !== -1) continue; // voci consecutive: niente in mezzo
+
+    // Ultima voce: nessun blocco la delimita. Si prosegue finché sono battute
+    // di dialogo — l'esempio che illustra la voce — e si smette alla prosa.
+    for (let j = i + 1; j < blocks.length; j++) {
+      const t = String(blocks[j] || '').trim();
+      if (/^<!--/.test(t)) continue; // i marcatori di pagina non interrompono
+      if (breaksList(t) || !DIALOGUE_RE.test(t)) break;
+      nested.add(j);
+    }
+  }
+  return nested;
+}
+
+/** Rientra un blocco perché Typst lo renda dentro la voce che lo precede. */
+function indentUnderItem(rendered) {
+  return String(rendered)
+    .split('\n')
+    .map((line) => (line ? `  ${line}` : line))
+    .join('\n');
+}
+
 export function markdownToStrictTypst(markdown, plan = {}) {
   const blocks = String(markdown || '').trim().split(/\n{2,}/);
   const styleMap = new Map();
@@ -604,21 +684,26 @@ export function markdownToStrictTypst(markdown, plan = {}) {
   for (const item of plan.headings || []) {
     if (Number.isInteger(item?.level)) headingLevelMap.set(item.id, Math.max(1, Math.min(6, item.level)));
   }
+  const nestedBlocks = planListNesting(blocks);
   const out = [];
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
     const original = blocks[blockIndex];
     const blockId = `b-${blockIndex + 1}`;
-    const emitProse = (rendered) => {
+    // Restituisce invece di accodare: un blocco che va rientrato dentro una
+    // voce di elenco deve poter essere prima stilato e poi rientrato, non
+    // perdere lo stile per il fatto di stare dentro.
+    const styleProse = (rendered) => {
       const style = styleMap.get(blockId);
       if (style === 'quote') {
-        out.push(`#block(inset: (left: 1em), stroke: (left: 0.5pt + luma(170)))[#text(style: "italic")[${rendered}]]`);
-      } else if (style === 'center') {
-        out.push(`#align(center)[${rendered}]`);
-      } else if (style === 'compact') {
-        out.push(`#block(spacing: 0.45em)[${rendered}]`);
-      } else {
-        out.push(rendered);
+        return `#block(inset: (left: 1em), stroke: (left: 0.5pt + luma(170)))[#text(style: "italic")[${rendered}]]`;
       }
+      if (style === 'center') return `#align(center)[${rendered}]`;
+      if (style === 'compact') return `#block(spacing: 0.45em)[${rendered}]`;
+      return rendered;
+    };
+    const emitProse = (rendered) => {
+      const styled = styleProse(rendered);
+      out.push(nestedBlocks.has(blockIndex) ? indentUnderItem(styled) : styled);
     };
     let block = original.trim();
     if (!block) continue;
@@ -656,17 +741,36 @@ export function markdownToStrictTypst(markdown, plan = {}) {
     }
     const lines = block.split('\n');
     if (lines.every((l) => /^\s*[-*+]\s+/.test(l))) {
-      out.push(lines.map((l) => `- ${inlineMarkdownToTypst(l.replace(/^\s*[-*+]\s+/, ''))}`).join('\n'));
+      const body = lines
+        .map((l) => `- ${inlineMarkdownToTypst(l.replace(/^\s*[-*+]\s+/, ''))}`)
+        .join('\n');
+      out.push(nestedBlocks.has(blockIndex) ? indentUnderItem(body) : body);
       continue;
     }
     if (lines.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
-      out.push(lines.map((l) => `+ ${inlineMarkdownToTypst(l.replace(/^\s*\d+[.)]\s+/, ''))}`).join('\n'));
+      // Il numero SCRITTO NELL'ORIGINALE, non `+`. Typst con `+` numera da sé
+      // e riparte da 1 a ogni elenco nuovo: se fra una voce e l'altra c'è un
+      // paragrafo — una spiegazione, una trascrizione di seduta — ogni voce
+      // diventa un elenco a sé e sono tutte «1.». Verificato col compilatore:
+      // `+` dopo un paragrafo riparte, `2.` no.
+      const body = lines
+        .map((l) => {
+          const marker = l.match(/^\s*(\d+)[.)]\s+/);
+          const text = inlineMarkdownToTypst(l.replace(/^\s*\d+[.)]\s+/, ''));
+          return `${marker[1]}. ${text}`;
+        })
+        .join('\n');
+      out.push(nestedBlocks.has(blockIndex) ? indentUnderItem(body) : body);
       continue;
     }
-    emitProse(lines.map((line) => {
+    const prose = lines.map((line) => {
       const pageLine = line.trim().match(/^<!--\s*pagina\s+(\d+)\s*-->$/i);
       return pageLine ? `// pagina ${pageLine[1]}` : inlineMarkdownToTypst(line);
-    }).join('\n'));
+    }).join('\n');
+    // Un blocco compreso fra due voci dello stesso elenco appartiene alla
+    // prima: rientrandolo, Typst lo rende dentro la voce invece che a margine
+    // sinistro, e l'elenco non viene interrotto.
+    emitProse(prose);
   }
   return out.join('\n\n');
 }
