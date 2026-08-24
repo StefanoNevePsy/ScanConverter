@@ -52,6 +52,7 @@ export const DEFAULT_LAYOUT_OPTIONS = Object.freeze({
   headingAboveEm: 1.4,
   headingBelowEm: 0.75,
   headingNumbering: 'none',
+  enumNumbering: '1.',
   paper: 'a4',
   pageWidthMm: 210,
   pageHeightMm: 297,
@@ -149,6 +150,11 @@ export function normalizeLayoutOptions(selection = {}) {
     headingNumbering: extras.has('numbered')
       ? 'decimal'
       : oneOf(selection.headingNumbering, ['none', 'decimal', 'decimal-dot', 'roman'], 'none'),
+    // Marcatore delle voci di elenco numerato. È RESA, non struttura: Typst
+    // riconosce l'elenco solo dalla forma «1.», ma può stamparlo «1)» come
+    // fanno molti saggi italiani. Senza questa opzione la parentesi
+    // dell'autore andrebbe persa nella conversione.
+    enumNumbering: oneOf(selection.enumNumbering, ['1.', '1)', 'a)', 'i.'], '1.'),
     paper: oneOf(selection.paper, [...Object.keys(PAPER), 'custom'], 'a4'),
     pageWidthMm: rounded(clamp(selection.pageWidthMm, 210, 80, 500)),
     pageHeightMm: rounded(clamp(selection.pageHeightMm, 297, 80, 700)),
@@ -275,6 +281,9 @@ export function buildPreamble(selection = {}, opts = {}) {
     `#set footnote.entry(gap: ${options.footnoteGapEm}em)`,
   ];
   if (headingNumbering) lines.push(`#set heading(numbering: "${headingNumbering}")`);
+  if (options.enumNumbering && options.enumNumbering !== '1.') {
+    lines.push(`#set enum(numbering: "${options.enumNumbering}")`);
+  }
   return lines.join('\n');
 }
 

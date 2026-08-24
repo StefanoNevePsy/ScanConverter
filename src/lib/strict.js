@@ -614,6 +614,30 @@ function latexTable(block) {
   sono battute di dialogo, e si smette al primo paragrafo di prosa.
 */
 
+/**
+ * Marcatore usato dall'autore per le voci numerate: «1.» oppure «1)».
+ *
+ * Serve perché Typst riconosce un elenco SOLO dalla forma `1.` — verificato:
+ * `1) testo` resta testo normale, senza rientro di continuazione e senza
+ * numerazione. Convertendo però si perderebbe la parentesi dell'autore, che
+ * in saggistica italiana è la forma più comune. La si recupera nel preambolo
+ * con `#set enum(numbering: "1)")`, dove è liberamente modificabile.
+ *
+ * @param {string} markdown
+ * @returns {'1.'|'1)'}
+ */
+export function detectEnumMarker(markdown) {
+  let dot = 0;
+  let paren = 0;
+  for (const line of String(markdown || '').split('\n')) {
+    const m = line.match(/^\s*\d+([.)])\s+/);
+    if (!m) continue;
+    if (m[1] === ')') paren++;
+    else dot++;
+  }
+  return paren > dot ? '1)' : '1.';
+}
+
 /** Una voce di elenco numerato: ogni riga del blocco comincia con un numero. */
 function isEnumeratedItem(block) {
   const lines = String(block || '').trim().split('\n');
@@ -810,8 +834,17 @@ export function sourcePlainText(markdown) {
 /** Crea un documento completo usando il preambolo locale predefinito. */
 export function buildStrictDocument(markdown, layoutPlan = {}) {
   const body = markdownToStrictTypst(markdown, layoutPlan);
-  const preamble = buildPreamble(layoutPlan.document || {}, { title: extractTitle(body) });
-  return { preamble, body, sourceText: sourcePlainText(markdown) };
+  // Il marcatore dell'autore («1.» o «1)») è una scelta di RESA e vive nel
+  // preambolo, dove resta modificabile: qui si legge dal documento solo per
+  // partire da quello che c'era invece che da un default arbitrario. Una
+  // scelta già espressa dall'utente ha comunque la precedenza.
+  const documentOptions = { enumNumbering: detectEnumMarker(markdown), ...(layoutPlan.document || {}) };
+  const preamble = buildPreamble(documentOptions, { title: extractTitle(body) });
+  // `documentOptions` torna al chiamante perché ciò che è stato DEDOTTO dal
+  // documento entri nelle opzioni di impaginazione: altrimenti alla prima
+  // ristilizzazione il pannello rimanderebbe una selezione che non contiene
+  // il marcatore, e la parentesi dell'autore sparirebbe.
+  return { preamble, body, documentOptions, sourceText: sourcePlainText(markdown) };
 }
 
 /** Sostituzione ammessa soltanto quando il frammento compare una sola volta. */

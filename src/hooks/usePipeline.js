@@ -1070,6 +1070,8 @@ export function usePipeline(settings) {
           ),
         );
         const strict = buildStrictDocument(canonicalText, layoutPlan);
+        const strictOptions = normalizeLayoutOptions(strict.documentOptions);
+        setLayoutOptions(strictOptions);
         const previousComparisons = sessionRef.current?.ocr?.comparisons || [];
         sessionRef.current = {
           id,
@@ -1093,6 +1095,9 @@ export function usePipeline(settings) {
             fidelity: { coverage: 1, missing: [] },
           }],
           preamble: strict.preamble,
+          // Le opzioni dedotte dal documento vanno persistite con la sessione:
+          // riaprendola devono essere quelle di prima, non i default.
+          layoutOptions: strictOptions,
           styleHint: undefined,
           lastError: '',
         };
@@ -1776,7 +1781,11 @@ export function usePipeline(settings) {
     async (sel) => {
       if (!typstCode.trim()) return false;
       const { body } = splitPreamble(typstCode);
-      const normalized = normalizeLayoutOptions(sel);
+      // La selezione del pannello copre solo le opzioni che il pannello
+      // mostra: fondendola sopra quelle correnti, ciò che è stato dedotto dal
+      // documento — il marcatore degli elenchi, per esempio — non viene
+      // azzerato da una ristilizzazione che non lo riguarda.
+      const normalized = normalizeLayoutOptions({ ...layoutOptions, ...sel });
       const preamble = buildPreamble(normalized, { title: extractTitle(body) });
       const next = combineDocument(preamble, [body]);
       setTypstCode(next);
@@ -1788,7 +1797,7 @@ export function usePipeline(settings) {
       }
       return recompile(next);
     },
-    [typstCode, recompile],
+    [typstCode, recompile, layoutOptions],
   );
 
   /**

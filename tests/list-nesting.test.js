@@ -18,7 +18,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { markdownToStrictTypst, planListNesting } from '../src/lib/strict.js';
+import {
+  buildStrictDocument,
+  detectEnumMarker,
+  markdownToStrictTypst,
+  planListNesting,
+} from '../src/lib/strict.js';
+import { normalizeLayoutOptions, buildPreamble } from '../src/lib/preamble.js';
 
 /** Il documento reale, come esce dall'OCR: un paragrafo per blocco. */
 const CASO = [
@@ -142,4 +148,45 @@ test('nessun testo viene alterato, solo rientri e numeri', () => {
   const attese = parole(CASO.replace(/^\d+\.\s+/gm, ''));
   const ottenute = parole(typst.replace(/^\s*\d+\.\s+/gm, ''));
   assert.equal(ottenute, attese);
+});
+
+/* ------------------------------------------ il marcatore dell’autore */
+
+test('la parentesi dell’autore viene riconosciuta', () => {
+  // La pagina 16 dell’originale numera le voci «1)» «2)» «3)», non «1.».
+  assert.equal(detectEnumMarker('1) prima\n\nUn paragrafo.\n\n2) seconda'), '1)');
+  assert.equal(detectEnumMarker('1. prima\n\n2. seconda'), '1.');
+  assert.equal(detectEnumMarker('Nessun elenco qui.'), '1.');
+});
+
+test('con marcatori misti vince quello prevalente', () => {
+  assert.equal(detectEnumMarker('1) a\n2) b\n3) c\n1. d'), '1)');
+});
+
+test('la parentesi finisce nel preambolo, non nel testo', () => {
+  const md = ['Le relazioni dovranno essere indagate:', '1) prima voce', 'Del testo.', '2) seconda voce'].join('\n\n');
+  const { preamble, body } = buildStrictDocument(md);
+  assert.match(preamble, /#set enum\(numbering: "1\)"\)/);
+  // Nel corpo resta la forma «1.»: è l’unica che Typst riconosce come elenco.
+  // Verificato col compilatore: «1)» resterebbe testo, senza numerazione né
+  // rientro di continuazione.
+  assert.match(body, /^1\. prima voce$/m);
+  assert.match(body, /^2\. seconda voce$/m);
+});
+
+test('un documento con i punti non aggiunge la riga sugli elenchi', () => {
+  const { preamble } = buildStrictDocument('1. prima\n\nDel testo.\n\n2. seconda');
+  assert.equal(/#set enum/.test(preamble), false, 'il default non va dichiarato');
+});
+
+test('una ristilizzazione non azzera il marcatore dedotto', () => {
+  // Il pannello rimanda solo le opzioni che mostra: fondendole sopra quelle
+  // correnti, ciò che è stato dedotto dal documento sopravvive.
+  const dedotte = normalizeLayoutOptions({ enumNumbering: '1)' });
+  const dopoRistile = normalizeLayoutOptions({ ...dedotte, font: 'newcm', paper: 'a5' });
+  assert.equal(dopoRistile.enumNumbering, '1)');
+  assert.match(buildPreamble(dopoRistile, {}), /#set enum\(numbering: "1\)"\)/);
+
+  // Senza la fusione — cioè passando la sola selezione — si perderebbe.
+  assert.equal(normalizeLayoutOptions({ font: 'newcm', paper: 'a5' }).enumNumbering, '1.');
 });
