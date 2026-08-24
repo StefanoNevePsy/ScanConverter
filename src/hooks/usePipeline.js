@@ -10,6 +10,7 @@ import { refinePageTables } from '../lib/segments.js';
 import { localOcrBlocks } from '../lib/local.js';
 import { toTypstLocal } from '../lib/engines.js';
 import { ENGINE_LABELS, phaseConfig } from '../lib/phases.js';
+import { structureFromBlocks } from '../lib/docmodel.js';
 import {
   translateDocument as translateMarkdown,
   languageLabel,
@@ -107,6 +108,8 @@ import {
   savePages,
   getPage,
   savePart,
+  saveBlocks,
+  getBlocks,
   saveParts,
   getParts,
   getSession,
@@ -1302,6 +1305,9 @@ export function usePipeline(settings) {
           // Solo la parte appena estratta: il record di sessione porta ormai i
           // soli contatori, quindi il salvataggio è costante per pagina.
           await savePart(s.id, i, s.ocr.parts[i]);
+          // I riquadri servono a dedurre la gerarchia sul libro INTERO, a OCR
+          // finito: senza conservarli qui, a quel punto non esistono più.
+          await saveBlocks(s.id, i, pageBlocks);
           await persistOcr('ocr');
           await deletePage(s.id, i);
         } catch (e) {
@@ -1326,7 +1332,23 @@ export function usePipeline(settings) {
     async (signal) => {
       const s = sessionRef.current;
       await deletePagesFor(s.id);
-      const extracted = normalizeHeadingLevels(s.ocr.parts.filter(Boolean).join('\n\n'));
+      const joined = s.ocr.parts.filter(Boolean).join('\n\n');
+
+      // Qui, e SOLO qui, esiste il libro intero: è l'unico momento in cui si
+      // può decidere che cosa sia un titolo di capitolo confrontandolo con
+      // tutti gli altri. Deciso pagina per pagina, sulla pagina dell'indice la
+      // riga più grande è una riga d'indice e diventa un titolo di livello 1.
+      setDetail('Ricostruzione della gerarchia sul documento intero…');
+      const structured = structureFromBlocks(joined, await getBlocks(s.id));
+      if (structured.releveled || structured.demoted) {
+        s.structureReport = {
+          releveled: structured.releveled,
+          demoted: structured.demoted,
+          levels: structured.inventory?.levels?.length || 0,
+        };
+      }
+
+      const extracted = normalizeHeadingLevels(structured.markdown);
       s.rawText = extracted;
       setRawText(extracted);
       setStatus((x) => ({ ...x, ocr: 'done' }));

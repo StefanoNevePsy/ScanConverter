@@ -13,7 +13,7 @@
 */
 
 const DB_NAME = 'scanconverter';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let dbPromise = null;
 
@@ -51,6 +51,15 @@ function openDB() {
         // riparte dall'ultimo gruppo valido invece di rifare ore di lavoro.
         if (!db.objectStoreNames.contains('translation')) {
           db.createObjectStore('translation', { keyPath: 'key' });
+        }
+        // v5: i BLOCCHI dell'OCR di ogni pagina — tipo, riquadro, testo.
+        // Prima morivano dentro `assemblePage`, che ne restituiva solo il
+        // Markdown: la geometria della pagina serve una volta sola, per
+        // dedurre la gerarchia sul libro intero, ma senza conservarla quella
+        // deduzione non è possibile. I documenti già elaborati non li hanno,
+        // e continuano a funzionare come prima.
+        if (!db.objectStoreNames.contains('block')) {
+          db.createObjectStore('block', { keyPath: 'key' });
         }
         if (req.transaction) migrateToV3(req.transaction);
       };
@@ -189,6 +198,46 @@ export async function savePart(id, index, text) {
   }
 }
 
+/**
+ * Blocchi OCR di UNA pagina: tipo semantico, riquadro, testo.
+ *
+ * Si salvano accanto al Markdown, non al posto suo: il Markdown resta il
+ * formato di scambio di tutta la pipeline, i blocchi servono a decidere i
+ * ruoli una volta sola quando l'OCR è finito.
+ */
+export async function saveBlocks(id, index, blocks) {
+  if (!Array.isArray(blocks) || !blocks.length) return;
+  try {
+    await tx('block', 'readwrite', (s) => s.put({
+      key: `${id}::${index}`,
+      id,
+      index,
+      // Solo ciò che serve alla deduzione dei ruoli: il testo è già nella
+      // parte corrispondente e duplicarlo raddoppierebbe lo spazio su disco.
+      blocks: blocks.map((b) => ({
+        type: b?.type || 'Text',
+        bbox: b?.bbox || null,
+        chars: String(b?.text || '').replace(/\s+/g, ' ').trim().length,
+        text: String(b?.text || '').slice(0, 400),
+      })),
+    }));
+  } catch {
+    /* senza blocchi la pipeline funziona come prima: non è un errore fatale */
+  }
+}
+
+/** Blocchi di tutte le pagine di un documento, ordinati per pagina. */
+export async function getBlocks(id) {
+  try {
+    const all = (await tx('block', 'readonly', (s) => s.getAll(idRange(id)))) || [];
+    return all
+      .sort((a, b) => a.index - b.index)
+      .map((record) => ({ page: record.index + 1, blocks: record.blocks || [] }));
+  } catch {
+    return [];
+  }
+}
+
 /** Importa più parti OCR in una sola transazione. */
 export async function saveParts(id, parts) {
   const records = (parts || [])
@@ -259,6 +308,7 @@ export async function deleteSession(id) {
     await tx('session', 'readwrite', (s) => s.delete(id));
     await tx('summary', 'readwrite', (s) => s.delete(id));
     await tx('part', 'readwrite', (s) => s.delete(idRange(id)));
+    await tx('block', 'readwrite', (s) => s.delete(idRange(id)));
     await tx('figure', 'readwrite', (s) => s.delete(idRange(id)));
     await tx('translation', 'readwrite', (s) => s.delete(idRange(id)));
     await deletePagesFor(id);

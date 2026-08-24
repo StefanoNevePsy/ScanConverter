@@ -70,7 +70,14 @@ export function blockTypography(block, aspect = DEFAULT_PAGE_ASPECT) {
   if (!bbox) return null;
   const w = Math.max(0, (bbox.xmax ?? 0) - (bbox.xmin ?? 0));
   const h = Math.max(0, (bbox.ymax ?? 0) - (bbox.ymin ?? 0));
-  const chars = String(block.text || '').replace(/\s+/g, ' ').trim().length;
+  // `chars` prevale sul testo: i blocchi riletti da IndexedDB conservano il
+  // testo TRONCATO (ne basta un estratto per riconoscere i titoli) ma il
+  // conteggio vero. Misurare un paragrafo da 1200 caratteri come se ne avesse
+  // 400 gli attribuirebbe meno righe, quindi un corpo più grande — e la prosa
+  // finirebbe promossa a titolo.
+  const chars = Number.isFinite(block.chars) && block.chars > 0
+    ? block.chars
+    : String(block.text || '').replace(/\s+/g, ' ').trim().length;
   if (w <= 0 || h <= 0 || chars === 0) return null;
 
   const raw = Math.sqrt((GLYPH_ADVANCE * chars * h * aspect) / w);
@@ -345,4 +352,92 @@ export function assignRoles(pages, options = {}) {
   });
 
   return { inventory, roles };
+}
+
+/*
+  ------------------------------------------------ applicazione al Markdown
+
+  Il Markdown resta il formato di scambio di tutta la pipeline: cambiarlo
+  significherebbe riscrivere strutturazione, traduzione, rilettura e verifiche
+  di fedeltà tutte insieme. Qui si interviene solo sui LIVELLI dei titoli e
+  sulle righe che non sono titoli affatto, lasciando intatto ogni altro
+  carattere del documento.
+
+  L'aggancio è per testo, non per posizione: i blocchi Markdown non
+  corrispondono uno a uno a quelli dell'OCR (le didascalie si fondono con le
+  figure, le note si agganciano alla prosa, l'arredo di pagina sparisce).
+  I titoli però sono corti e distintivi, e sono gli unici che interessano.
+*/
+
+/** Chiave di confronto: ciò che sopravvive a spazi e maiuscole. */
+function headingKey(text) {
+  return String(text || '')
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/<!--[^>]*-->/g, '')
+    .replace(/[*_`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Riscrive i livelli dei titoli del Markdown secondo i ruoli dedotti.
+ *
+ * Conservativo per costruzione: un titolo che compare più volte con livelli
+ * diversi viene lasciato com'era, perché non c'è modo di sapere quale
+ * occorrenza sia quale. Meglio un livello vecchio che uno sbagliato.
+ *
+ * @param {string} markdown
+ * @param {Array} roles esito di `assignRoles`
+ * @returns {{markdown:string, releveled:number, demoted:number}}
+ */
+export function applyRolesToMarkdown(markdown, roles) {
+  const wanted = new Map();
+  for (const role of roles || []) {
+    if (role.role !== 'heading' && role.role !== 'toc-entry') continue;
+    const key = headingKey(role.text);
+    if (!key) continue;
+    const level = role.role === 'heading' ? role.level : 0;
+    if (wanted.has(key) && wanted.get(key) !== level) {
+      wanted.set(key, null); // ambiguo: non si tocca
+    } else if (!wanted.has(key)) {
+      wanted.set(key, level);
+    }
+  }
+
+  let releveled = 0;
+  let demoted = 0;
+  const out = String(markdown || '').split(/\n{2,}/).map((chunk) => {
+    // Un blocco può cominciare con il commento di pagina: il titolo è dopo.
+    const match = chunk.match(/^((?:<!--[^>]*-->\s*)*)(#{1,6})\s+/);
+    if (!match) return chunk;
+    const level = wanted.get(headingKey(chunk.replace(/^(?:<!--[^>]*-->\s*)*/, '')));
+    if (level === undefined || level === null) return chunk;
+    if (level === 0) {
+      demoted++;
+      return chunk.replace(/^((?:<!--[^>]*-->\s*)*)#{1,6}\s+/, '$1');
+    }
+    if (level === match[2].length) return chunk;
+    releveled++;
+    return chunk.replace(/^((?:<!--[^>]*-->\s*)*)#{1,6}\s+/, `$1${'#'.repeat(level)} `);
+  });
+
+  return { markdown: out.join('\n\n'), releveled, demoted };
+}
+
+/**
+ * Deduce i ruoli dai blocchi conservati e li applica al Markdown della
+ * sessione. Senza blocchi — documenti elaborati da versioni precedenti —
+ * restituisce il Markdown invariato invece di fallire.
+ *
+ * @param {string} markdown
+ * @param {Array<{page:number, blocks:Array}>} pages
+ */
+export function structureFromBlocks(markdown, pages) {
+  if (!pages?.length) return { markdown, releveled: 0, demoted: 0, inventory: null };
+  const { inventory, roles } = assignRoles(pages);
+  // Senza livelli distinti non c'è niente da correggere, e riscrivere a caso
+  // sarebbe peggio del punto di partenza.
+  if (!inventory.levels.length) return { markdown, releveled: 0, demoted: 0, inventory };
+  return { ...applyRolesToMarkdown(markdown, roles), inventory };
 }

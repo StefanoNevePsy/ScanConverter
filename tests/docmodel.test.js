@@ -60,6 +60,24 @@ test('la stima del corpo distingue titolo, sezione e prosa', () => {
   assert.ok(body.lines >= 3, `la prosa deve risultare su più righe, non ${body.lines}`);
 });
 
+test('il conteggio vero dei caratteri prevale sul testo troncato', () => {
+  // I blocchi riletti da IndexedDB conservano solo un estratto del testo. Se
+  // la misura si basasse su quello, un paragrafo lungo sembrerebbe stare in
+  // meno righe — quindi in corpo più grande — e verrebbe preso per un titolo.
+  const long = block('Text', PROSE.repeat(4), { size: 0.018 });
+  const truncated = { ...long, text: long.text.slice(0, 400), chars: long.text.length };
+  const full = blockTypography(long, PAGE_ASPECT);
+  const stored = blockTypography(truncated, PAGE_ASPECT);
+  assert.ok(
+    Math.abs(stored.size - full.size) < full.size * 0.02,
+    `troncato ${stored.size} vs intero ${full.size}`,
+  );
+
+  // Senza il conteggio, la stessa prosa risulterebbe molto più «grande».
+  const naive = blockTypography({ ...truncated, chars: undefined }, PAGE_ASPECT);
+  assert.ok(naive.size > full.size * 1.3, 'il difetto deve essere reale, non teorico');
+});
+
 test('un blocco senza riquadro o senza testo non è misurabile', () => {
   assert.equal(blockTypography({ text: 'x', bbox: null }), null);
   assert.equal(blockTypography({ text: '   ', bbox: { xmin: 0, xmax: 1, ymin: 0, ymax: 1 } }), null);
