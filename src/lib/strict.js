@@ -787,14 +787,30 @@ export function markdownToStrictTypst(markdown, plan = {}) {
       out.push(nestedBlocks.has(blockIndex) ? indentUnderItem(body) : body);
       continue;
     }
-    const prose = lines.map((line) => {
-      const pageLine = line.trim().match(/^<!--\s*pagina\s+(\d+)\s*-->$/i);
-      return pageLine ? `// pagina ${pageLine[1]}` : inlineMarkdownToTypst(line);
-    }).join('\n');
+    // Il paragrafo esce come UNA riga sola. Gli a capo dell'OCR per Typst sono
+    // spazi, ma nell'editor spezzavano ogni capoverso in monconi; e il segno di
+    // pagina in mezzo — un commento innocuo per il PDF, verificato — tagliava
+    // la frase a metà proprio dove si sta leggendo. Il segno resta, ma dopo il
+    // paragrafo: il capoverso appartiene alla pagina in cui è cominciato.
+    const pageMarks = [];
+    const prose = lines
+      .map((line) => {
+        const pageLine = line.trim().match(/^<!--\s*pagina\s+(\d+)\s*-->$/i);
+        if (pageLine) {
+          pageMarks.push(`// pagina ${pageLine[1]}`);
+          return null;
+        }
+        return inlineMarkdownToTypst(line);
+      })
+      .filter((line) => line !== null)
+      .join(' ')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
     // Un blocco compreso fra due voci dello stesso elenco appartiene alla
     // prima: rientrandolo, Typst lo rende dentro la voce invece che a margine
     // sinistro, e l'elenco non viene interrotto.
-    emitProse(prose);
+    if (prose) emitProse(prose);
+    out.push(...pageMarks);
   }
   return out.join('\n\n');
 }

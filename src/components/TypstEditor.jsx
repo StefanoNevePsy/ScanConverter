@@ -16,6 +16,7 @@ import {
   stepStop,
   stopLines,
 } from '../lib/reviewQueue.js';
+import { replaceOccurrence, replaceAllPreservingCase } from '../lib/replaceCase.js';
 import {
   toList,
   clearList,
@@ -170,20 +171,27 @@ export default function TypstEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches]);
 
+  // La ricerca ignora le maiuscole; la sostituzione le CONSERVA. Così la forma
+  // giusta si scrive una volta sola, in minuscolo, e «Perche» e «PERCHE»
+  // vengono corrette ciascuna con il proprio taglio.
   const replaceCurrent = () => {
     if (!matches.length) return;
     const pos = matches[current];
     pendingJumpRef.current = true;
     pendingJumpOccurrenceRef.current = current;
-    onChange(value.slice(0, pos) + replaceStr + value.slice(pos + query.length));
+    onChange(replaceOccurrence(value, pos, pos + query.length, replaceStr));
   };
 
   const replaceAll = () => {
     if (!query || !matches.length) return;
-    const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    const { value: next, count } = replaceAllPreservingCase(value, query, replaceStr, { wholeWord });
+    if (!count) return;
     pendingJumpRef.current = true;
     pendingJumpOccurrenceRef.current = 0;
-    onChange(value.replace(re, () => replaceStr));
+    // Sistemata la parola dappertutto, la revisione va avanti da sola: è il
+    // motivo per cui la si stava correggendo.
+    if (reviewOpen) pendingStopRef.current = true;
+    onChange(next);
   };
 
   const openSearch = () => {
@@ -230,6 +238,16 @@ export default function TypstEditor({
   const showStop = (target) => {
     if (!target) return;
     setReviewOffset(target.start);
+    // La parola in revisione finisce nel campo di ricerca, con la sua
+    // occorrenza già selezionata: se è sbagliata in dieci punti, si scrive la
+    // forma giusta nel campo accanto e si preme «Tutte». La proposta locale,
+    // quando c'è, è già lì pronta.
+    setSearchOpen(true);
+    setQuery(target.word);
+    setWholeWord(/^[\p{L}\p{M}'’]+$/u.test(target.word));
+    setCurrent(target.occurrence);
+    setReplaceStr(target.suggestedFix || '');
+    activeMatchRef.current = true;
     requestAnimationFrame(() => {
       const editor = taRef.current;
       if (!editor) return;

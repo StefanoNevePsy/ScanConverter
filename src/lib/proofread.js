@@ -250,8 +250,11 @@ export async function requestProofread({ settings, paragraphs, signal }) {
     system: withContext(SYSTEM, settings),
     user,
     temperature: 0,
-    maxTokens: 8192,
+    // La risposta ripete i paragrafi ricevuti: il tetto deve stare largo sopra
+    // l'ingresso, altrimenti la risposta viene troncata e il lotto è perso.
+    maxTokens: 16384,
     json: true,
+    noThinking: true,
     signal,
   });
   const parsed = extractJson(text);
@@ -318,9 +321,49 @@ export async function requestCorrectionReview({ settings, before, after, context
  * @param {AbortSignal} [p.signal]
  * @param {(done:number,total:number)=>void} [p.onProgress]
  * @returns {Promise<{code:string, checked:number, changed:number, skipped:number,
- *   changes:{before:string, after:string}[]}>}
+ *   changes:{before:string, after:string}[], failed:number, error:string}>}
+ *   `failed` conta i paragrafi che non è stato possibile controllare: senza
+ *   questo numero un guasto del modello è indistinguibile da un testo pulito.
  */
-export async function proofreadBody({ settings, code, batchSize = 12, signal, onProgress, speller = null }) {
+/**
+ * Chiede la rilettura di un lotto, dimezzandolo a ogni fallimento fino al
+ * singolo paragrafo.
+ *
+ * Un lotto perso è testo che resta com'era senza che nessuno lo sappia: prima
+ * l'errore veniva inghiottito e la pipeline dichiarava «nessun refuso da
+ * correggere» anche quando NIENTE era stato letto. Qui si insiste sui pezzi
+ * più piccoli e si tiene il conto di ciò che non si è potuto controllare.
+ *
+ * @returns {Promise<{map: Map<number,string>, failed: number, error: string}>}
+ *          `map` è indicizzata come il lotto ricevuto
+ */
+export async function proofreadBatch({ settings, paragraphs, signal, offset = 0 }) {
+  try {
+    const map = await requestProofread({ settings, paragraphs, signal });
+    const shifted = new Map();
+    for (const [i, value] of map) shifted.set(i + offset, value);
+    return { map: shifted, failed: 0, error: '' };
+  } catch (e) {
+    if (e?.name === 'AbortError') throw e;
+    if (paragraphs.length === 1) {
+      return { map: new Map(), failed: 1, error: e?.message || 'Errore sconosciuto.' };
+    }
+    const half = Math.ceil(paragraphs.length / 2);
+    const left = await proofreadBatch({
+      settings, paragraphs: paragraphs.slice(0, half), signal, offset,
+    });
+    const right = await proofreadBatch({
+      settings, paragraphs: paragraphs.slice(half), signal, offset: offset + half,
+    });
+    return {
+      map: new Map([...left.map, ...right.map]),
+      failed: left.failed + right.failed,
+      error: left.error || right.error,
+    };
+  }
+}
+
+export async function proofreadBody({ settings, code, batchSize = 8, signal, onProgress, speller = null }) {
   const blocks = splitParagraphs(code);
   let checker = speller;
   if (!checker) {
@@ -340,19 +383,17 @@ export async function proofreadBody({ settings, code, batchSize = 12, signal, on
   let changed = 0;
   let skipped = 0;
   let done = 0;
+  let failed = 0; // paragrafi che nessuna richiesta è riuscita a controllare
+  let error = '';
 
   for (let start = 0; start < targets.length; start += batchSize) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const batch = targets.slice(start, start + batchSize);
     const paragraphs = batch.map((b) => blocks[b]);
-    let map;
-    try {
-      map = await requestProofread({ settings, paragraphs, signal });
-    } catch (e) {
-      if (e?.name === 'AbortError') throw e;
-      // Un lotto fallito non blocca il resto: quei paragrafi restano intatti.
-      map = new Map();
-    }
+    const attempt = await proofreadBatch({ settings, paragraphs, signal });
+    const map = attempt.map;
+    failed += attempt.failed;
+    if (attempt.error && !error) error = attempt.error;
     batch.forEach((b, k) => {
       const before = blocks[b];
       const after = map.get(k);
@@ -373,5 +414,5 @@ export async function proofreadBody({ settings, code, batchSize = 12, signal, on
     onProgress?.(done, targets.length);
   }
 
-  return { code: blocks.join(''), checked: targets.length, changed, skipped, changes };
+  return { code: blocks.join(''), checked: targets.length, changed, skipped, changes, failed, error };
 }

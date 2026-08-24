@@ -1,4 +1,7 @@
-import { IconSpell, IconSpinner, IconX, IconWand, IconRefresh, IconCheck, IconSearch, IconBookPlus, IconChevronDown, IconChevronUp } from './Icons.jsx';
+import { useRef, useState } from 'react';
+import { IconSpell, IconSpinner, IconX, IconWand, IconRefresh, IconCheck, IconSearch, IconBookPlus, IconChevronDown, IconChevronUp, IconDownload, IconUpload } from './Icons.jsx';
+import { exportSpellIgnore, importSpellIgnore, loadSpellIgnore } from '../lib/storage.js';
+import { saveTextFile } from '../lib/download.js';
 
 /*
   Esito del controllo ortografico locale (dizionari it+en).
@@ -34,6 +37,38 @@ export default function SpellPanel({
 }) {
   const suspects = report?.suspects || [];
   const skipped = skip || new Set();
+  const fileRef = useRef(null);
+  const [dictionaryNotice, setDictionaryNotice] = useState('');
+  const [dictionarySize, setDictionarySize] = useState(() => loadSpellIgnore().length);
+
+  const addToDictionary = (words) => {
+    onIgnore(words);
+    setDictionarySize(loadSpellIgnore().length);
+  };
+
+  const exportDictionary = async () => {
+    try {
+      await saveTextFile(exportSpellIgnore(), 'dizionario-scanconverter.txt');
+      setDictionaryNotice(`Dizionario esportato: ${dictionarySize} parole.`);
+    } catch (e) {
+      setDictionaryNotice(e.message || 'Esportazione non riuscita.');
+    }
+  };
+
+  const importDictionary = async (file) => {
+    if (!file) return;
+    try {
+      const { added, total } = importSpellIgnore(await file.text());
+      setDictionarySize(total);
+      setDictionaryNotice(
+        added
+          ? `Importate ${added} parole nuove: il dizionario ne contiene ${total}. Ricontrolla per applicarle.`
+          : `Nessuna parola nuova: erano già tutte nel dizionario (${total}).`,
+      );
+    } catch (e) {
+      setDictionaryNotice(e.message || 'Importazione non riuscita.');
+    }
+  };
 
   if (!report) return null;
 
@@ -132,7 +167,7 @@ export default function SpellPanel({
                   </button>
                   <button
                     type="button"
-                    onClick={() => onIgnore([s.word])}
+                    onClick={() => addToDictionary([s.word])}
                     title={`Aggiungi «${s.word}» al dizionario personale e non segnalarla più`}
                     aria-label={`Aggiungi «${s.word}» al dizionario personale`}
                     className="border-l border-border/50 px-1.5 py-1 text-muted transition-colors hover:bg-lime-soft hover:text-ink"
@@ -152,6 +187,50 @@ export default function SpellPanel({
           </p>
         )
       )}
+
+      {/* Il dizionario personale vale per TUTTI i documenti, anche quelli che
+          arriveranno: esportarlo è il modo di portarselo su un altro computer
+          e di non ricominciare da capo a segnare gli stessi nomi propri. */}
+      <div className="flex min-w-0 flex-wrap items-center gap-2 border-t border-border px-4 py-2.5">
+        <span className="text-xs text-muted">
+          Dizionario personale · <span className="tabular-nums text-ink">{dictionarySize}</span> parole
+        </span>
+        <button
+          type="button"
+          onClick={exportDictionary}
+          disabled={!dictionarySize}
+          title="Salva le parole del dizionario in un file di testo, una per riga"
+          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-ink disabled:opacity-50"
+        >
+          <IconDownload width={13} height={13} />
+          Esporta
+        </button>
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          title="Aggiungi al dizionario le parole di un file esportato (una per riga)"
+          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-ink"
+        >
+          <IconUpload width={13} height={13} />
+          Importa
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".txt,.json,text/plain,application/json"
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            importDictionary(file);
+          }}
+        />
+        {dictionaryNotice && (
+          <span role="status" className="min-w-0 text-xs text-ink">{dictionaryNotice}</span>
+        )}
+      </div>
 
       <footer className="flex min-w-0 flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -173,7 +252,7 @@ export default function SpellPanel({
           </button>
           {skipped.size > 0 && (
             <button
-              onClick={() => onIgnore([...skipped])}
+              onClick={() => addToDictionary([...skipped])}
               disabled={busy}
               title="Le parole escluse non verranno più segnalate (dizionario personale, salvato sul dispositivo)"
               className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-medium text-muted transition-colors hover:text-ink disabled:opacity-50"

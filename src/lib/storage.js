@@ -285,6 +285,57 @@ export function addSpellIgnore(words) {
   return list;
 }
 
+/** Toglie parole dal dizionario personale. @returns {string[]} lista aggiornata */
+export function removeSpellIgnore(words) {
+  const drop = new Set((words || []).map((w) => String(w).trim().toLowerCase()).filter(Boolean));
+  const list = loadSpellIgnore().filter((w) => !drop.has(w));
+  write(SPELL_IGNORE_KEY, JSON.stringify(list));
+  return list;
+}
+
+/**
+ * Dizionario personale come testo: una parola per riga, in ordine.
+ *
+ * Un file di testo, non un formato dell'applicazione: si legge, si modifica a
+ * mano e si passa a un altro computer senza chiedere il permesso a nessuno.
+ */
+export function exportSpellIgnore() {
+  const words = [...new Set(loadSpellIgnore())].sort((a, b) => a.localeCompare(b, 'it'));
+  return `# Dizionario personale ScanConverter — ${words.length} parole\n${words.join('\n')}\n`;
+}
+
+/**
+ * Importa un dizionario personale.
+ *
+ * Accetta il testo esportato (righe, con eventuali commenti «#») e anche un
+ * semplice array JSON, così un file scritto a mano o salvato da una versione
+ * precedente non viene rifiutato per un dettaglio di formato.
+ *
+ * @param {string} text
+ * @param {{replace?: boolean}} [options] `replace` sostituisce invece di unire
+ * @returns {{added:number, total:number, words:string[]}}
+ */
+export function importSpellIgnore(text, options = {}) {
+  const raw = String(text || '');
+  let incoming = [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) incoming = parsed;
+  } catch {
+    incoming = raw.split(/\r?\n/);
+  }
+  const words = incoming
+    .map((line) => String(line).trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .map((word) => word.toLowerCase());
+  if (!words.length) throw new Error('Nessuna parola trovata nel file.');
+  const before = new Set(options.replace ? [] : loadSpellIgnore());
+  const added = words.filter((word) => !before.has(word)).length;
+  if (options.replace) write(SPELL_IGNORE_KEY, JSON.stringify([]));
+  const list = addSpellIgnore(words);
+  return { added, total: list.length, words: list };
+}
+
 function writeInt(key, value, fallback, { min, max }) {
   const n = parseInt(value, 10);
   const clamped = Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;

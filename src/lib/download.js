@@ -100,6 +100,27 @@ export async function saveProjectArchive(bytes, fileName) {
 }
 
 /**
+ * Salva un file di testo (dizionario personale) con il dialogo disponibile.
+ * @param {string} text
+ * @param {string} fileName
+ */
+export async function saveTextFile(text, fileName) {
+  const bytes = new TextEncoder().encode(String(text ?? ''));
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await SaveFile.save({ name: fileName, mime: 'text/plain', data: bytesToBase64(bytes) });
+      return {};
+    } catch (e) {
+      const msg = String(e?.message || e);
+      if (/cancel/i.test(msg)) return { cancelled: true };
+      throw new Error(`Salvataggio non riuscito: ${msg}`);
+    }
+  }
+  downloadBytes(bytes, fileName, 'text/plain;charset=utf-8');
+  return {};
+}
+
+/**
  * Condivide il PDF con il foglio di condivisione nativo (solo su nativo:
  * scrive in cache e apre lo share sheet; sul web ricade sul download).
  * @param {Uint8Array} bytes

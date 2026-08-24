@@ -74,6 +74,7 @@ export async function engineChat({
   maxTokens = 4096,
   json = false,
   reasoningEffort,
+  noThinking = false,
   signal,
 }) {
   const configured = phase ? phaseConfig(settings, phase) : null;
@@ -110,6 +111,7 @@ export async function engineChat({
       temperature,
       maxTokens,
       json,
+      noThinking,
       signal,
     });
   }

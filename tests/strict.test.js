@@ -183,12 +183,15 @@ test('ripara una parola sovrapposta e riunisce il paragrafo', () => {
   assert.equal(repaired.changes[0].overlap, 'cercando');
 });
 
-test('conserva i marcatori pagina dentro una frase riunita', () => {
+test('la frase riunita resta su una riga e il marcatore pagina la segue', () => {
   const source = 'Stavamo cercando il punto.\n\n<!-- pagina 2 -->\ncercando il punto nodale corretto.';
   const repaired = repairBoundaryOverlaps(source);
   assert.match(repaired.text, /Stavamo\n<!-- pagina 2 -->\ncercando il punto nodale/);
   const body = buildStrictDocument(repaired.text).body;
-  assert.match(body, /Stavamo\n\/\/ pagina 2\ncercando il punto nodale/);
+  // Il capoverso non va spezzato a metà frase: nell'editor si legge di
+  // seguito, e il segno di pagina esce dopo, come blocco a sé.
+  assert.match(body, /Stavamo cercando il punto nodale corretto\./);
+  assert.match(body, /\n\n\/\/ pagina 2/);
   assert.doesNotMatch(body, /<!--/);
 });
 
@@ -287,7 +290,8 @@ test('riunisce un paragrafo che continua nella pagina successiva', () => {
   assert.match(repaired.text, /importanti,\n<!-- pagina 19 -->\nche erano nodali/);
   assert.equal(repaired.changes[0].type, 'boundary_paragraph_continuation');
   const body = buildStrictDocument(repaired.text).body;
-  assert.match(body, /importanti,\n\/\/ pagina 19\nche erano nodali/);
+  assert.match(body, /importanti, che erano nodali per tutti\./);
+  assert.match(body, /\n\n\/\/ pagina 19/);
 });
 
 test('non elimina ripetizioni intenzionali tra paragrafi autonomi', () => {
@@ -387,4 +391,19 @@ test('il piano editoriale può correggere solo il livello dei titoli esistenti',
   assert.match(doc.body, /^== Capitolo$/m);
   assert.match(doc.body, /^=== Sezione$/m);
   assert.match(doc.body, /Testo invariato\./);
+});
+
+test('il segno di pagina non spezza mai un capoverso', () => {
+  const source = [
+    'Il terapeuta osserva la scena',
+    '<!-- pagina 7 -->',
+    'e non interviene fino alla fine.',
+  ].join('\n');
+  const body = buildStrictDocument(source).body;
+  const lines = body.split('\n').filter((line) => line.trim());
+  // Il capoverso è una riga sola, il marcatore un'altra: nessuna riga mista.
+  assert.deepEqual(lines, [
+    'Il terapeuta osserva la scena e non interviene fino alla fine.',
+    '// pagina 7',
+  ]);
 });

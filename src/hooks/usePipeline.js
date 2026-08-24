@@ -275,6 +275,9 @@ export function usePipeline(settings) {
   const spellTokenRef = useRef(0); // cambia solo a ogni controllo NUOVO
   const [spellBusy, setSpellBusy] = useState(false);
   const [proofreadBusy, setProofreadBusy] = useState(false);
+  // Avviso persistente sulla rilettura automatica: un guasto del modello non
+  // deve passare per «documento pulito».
+  const [proofNotice, setProofNotice] = useState('');
   const [proofreadDetail, setProofreadDetail] = useState(''); // "3/12 paragrafi…"
   const [selectionAiBusy, setSelectionAiBusy] = useState(null); // 'proof' | 'translate' | null
   const [selectionAiDetail, setSelectionAiDetail] = useState('');
@@ -1060,6 +1063,21 @@ export function usePipeline(settings) {
           });
           canonicalText = proof.code;
           corrections = [...corrections, ...proof.changes];
+          // Se la rilettura non ha potuto leggere, il documento arriva con i
+          // refusi intatti: va detto subito, non scoperto rileggendo il PDF.
+          if (proof.failed) {
+            setProofNotice(
+              `Rilettura incompleta con ${proofEngine}: ${proof.failed} paragrafi su ` +
+              `${proof.checked} non sono stati controllati, e i loro refusi (accenti ` +
+              `compresi) sono rimasti. ${(proof.error || '').slice(0, 200)}`,
+            );
+          } else if (proof.checked && !proof.changed && !proof.skipped) {
+            setProofNotice(
+              `${proofEngine} ha letto ${proof.checked} paragrafi senza proporre ` +
+              'nessuna correzione: se il testo ha accenti mancanti, controlla il ' +
+              'modello scelto per la fase di rilettura.',
+            );
+          }
         }
         const typstEngine = phaseEngineLabel(settings, 'typst');
         setDetail(`Progettazione layout Typst · ${typstEngine}…`);
@@ -2006,6 +2024,18 @@ export function usePipeline(settings) {
 
   const closeSpellReport = useCallback(() => setSpellReport(null), []);
 
+  // Controllo automatico appena il documento è pronto, una volta per sessione.
+  // Il dizionario personale vale per tutti i documenti (sta in localStorage),
+  // quindi ciò che l'utente ha già archiviato non torna a chiedere udienza.
+  const autoSpellRef = useRef('');
+  useEffect(() => {
+    const id = sessionRef.current?.id;
+    if (!id || !typstCode.trim() || phase === 'running' || spellBusy) return;
+    if (autoSpellRef.current === id) return;
+    autoSpellRef.current = id;
+    runSpellcheck();
+  }, [typstCode, phase, spellBusy, runSpellcheck]);
+
   /**
    * Aggiunge parole al dizionario personale (localStorage): non verranno più
    * segnalate né inviate all'AI, in questa e nelle prossime sessioni.
@@ -2207,18 +2237,25 @@ export function usePipeline(settings) {
     setProofreadBusy(true);
     setProofreadDetail(`Avvio ${phaseEngineLabel(settings, 'proof')}…`);
     try {
-      const { code, changed, skipped, changes } = await proofreadBody({
+      const { code, changed, skipped, changes, failed, error } = await proofreadBody({
         settings,
         code: before,
         signal: controller.signal,
         onProgress: (done, total) => setProofreadDetail(`${done}/${total} paragrafi`),
       });
+      // Un paragrafo che il modello non ha potuto leggere non è un paragrafo
+      // pulito: dirlo è l'unica difesa contro una rilettura che non c'è stata.
+      const unchecked = failed
+        ? ` · ${failed} paragrafi NON controllati (${(error || '').slice(0, 120)})`
+        : '';
       if (!changed) {
         return {
-          ok: true,
-          message: skipped
-            ? `Nessuna correzione applicata (${skipped} proposte scartate dal controllo di sicurezza) · ${phaseEngineLabel(settings, 'proof')}.`
-            : `Rilettura completata con ${phaseEngineLabel(settings, 'proof')}: nessun refuso contestuale da correggere.`,
+          ok: !failed,
+          message: failed && !skipped
+            ? `Rilettura NON riuscita con ${phaseEngineLabel(settings, 'proof')}: ${failed} paragrafi su ${'' + (failed + changed + skipped)} non sono stati controllati. ${(error || '').slice(0, 200)}`
+            : skipped
+              ? `Nessuna correzione applicata (${skipped} proposte scartate dal controllo di sicurezza)${unchecked} · ${phaseEngineLabel(settings, 'proof')}.`
+              : `Rilettura completata con ${phaseEngineLabel(settings, 'proof')}: nessun refuso contestuale da correggere.`,
         };
       }
       // Rete di sicurezza: se compilava PRIMA ma non DOPO, si annulla tutto.
@@ -2265,6 +2302,7 @@ export function usePipeline(settings) {
           `Rilettura applicata a ${changed} paragrafi (refusi OCR, parole ` +
           `spezzate o fuse, accenti e virgolette)` +
           (skipped ? ` · ${skipped} proposte scartate dal controllo` : '') +
+          unchecked +
           ` · ${phaseEngineLabel(settings, 'proof')}.`,
       };
     } catch (e) {
@@ -3470,6 +3508,8 @@ export function usePipeline(settings) {
     closeSpellReport,
     proofreadBusy,
     proofreadDetail,
+    proofNotice,
+    dismissProofNotice: () => setProofNotice(''),
     proofreadAI,
     proofModelLabel: phaseEngineLabel(settings, 'proof'),
     selectionAiBusy,

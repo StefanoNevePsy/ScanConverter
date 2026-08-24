@@ -243,31 +243,56 @@ function geminiBase() {
  * @param {AbortSignal} [p.signal]
  * @returns {Promise<string>}
  */
-export async function geminiGenerate({ apiKey, model, system, user, temperature = 0.2, maxTokens = 4096, json = false, signal }) {
+export async function geminiGenerate({
+  apiKey,
+  model,
+  system,
+  user,
+  temperature = 0.2,
+  maxTokens = 4096,
+  json = false,
+  noThinking = false,
+  signal,
+}) {
   if (!apiKey) throw new Error('Chiave API Google mancante. Aprine le Impostazioni.');
   const endpoint = `${geminiBase()}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
-  const body = {
+  const buildBody = (withThinkingConfig) => ({
     ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     contents: [{ role: 'user', parts: [{ text: user }] }],
     generationConfig: {
       temperature,
       maxOutputTokens: maxTokens,
       ...(json ? { responseMimeType: 'application/json' } : {}),
+      // I modelli Flash recenti «pensano» prima di rispondere e i token del
+      // pensiero si scalano da maxOutputTokens: su un compito meccanico come
+      // la correzione di refusi possono consumarlo tutto e lasciare la
+      // risposta vuota (finishReason MAX_TOKENS).
+      ...(withThinkingConfig ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
     },
+  });
+
+  const send = async (withThinkingConfig) => {
+    try {
+      return await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildBody(withThinkingConfig)),
+        signal,
+      });
+    } catch (e) {
+      if (e?.name === 'AbortError') throw e;
+      throw new Error(`Impossibile contattare Google Gemini (rete). ${e.message}`);
+    }
   };
 
-  let res;
-  try {
-    res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal,
-    });
-  } catch (e) {
-    if (e?.name === 'AbortError') throw e;
-    throw new Error(`Impossibile contattare Google Gemini (rete). ${e.message}`);
+  let res = await send(noThinking);
+  // Non tutti i modelli accettano di spegnere il pensiero: se lo rifiutano si
+  // riprova senza, invece di far fallire la richiesta.
+  if (!res.ok && noThinking && res.status === 400) {
+    const detail = await safeErrorDetail(res);
+    if (/thinking/i.test(detail)) res = await send(false);
+    else throw new Error(`Google Gemini ha risposto 400. ${detail}`);
   }
 
   if (!res.ok) {
@@ -279,8 +304,14 @@ export async function geminiGenerate({ apiKey, model, system, user, temperature 
   const parts = data?.candidates?.[0]?.content?.parts;
   const text = Array.isArray(parts) ? parts.map((p) => p?.text || '').join('') : '';
   const finish = data?.candidates?.[0]?.finishReason;
+  if (finish === 'MAX_TOKENS' && !text.trim()) {
+    throw tokenLimitError(
+      'Gemini ha esaurito i token della risposta senza scrivere nulla ' +
+      '(probabile budget consumato dal ragionamento interno).',
+    );
+  }
   if (finish === 'MAX_TOKENS') {
-    throw new Error('Gemini ha interrotto la risposta per limite di token.');
+    throw tokenLimitError('Gemini ha interrotto la risposta per limite di token.');
   }
   if (!text.trim()) {
     const block = data?.promptFeedback?.blockReason;
@@ -291,6 +322,13 @@ export async function geminiGenerate({ apiKey, model, system, user, temperature 
     );
   }
   return text;
+}
+
+/** Errore riconoscibile: chi chiama può riprovare con una richiesta più corta. */
+export function tokenLimitError(message) {
+  const error = new Error(message);
+  error.code = 'max_tokens';
+  return error;
 }
 
 // Istruzione OCR per Gemini (vision): trascrizione fedele, niente interpretazione.

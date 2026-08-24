@@ -866,6 +866,23 @@ function Workspace({
         onLocate={locatePassage}
       />
 
+      {pipe.proofNotice && (
+        <div
+          role="status"
+          className="card flex min-w-0 items-start justify-between gap-3 border-warning/40 bg-warning/10 px-4 py-2.5"
+        >
+          <p className="min-w-0 text-xs text-ink">{pipe.proofNotice}</p>
+          <button
+            type="button"
+            onClick={pipe.dismissProofNotice}
+            aria-label="Nascondi avviso sulla rilettura"
+            className="shrink-0 rounded-lg p-1 text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            <IconX width={14} height={14} />
+          </button>
+        </div>
+      )}
+
       {pipe.spellReport && (
         <SpellPanel
           report={pipe.spellReport}
