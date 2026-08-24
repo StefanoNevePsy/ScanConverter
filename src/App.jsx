@@ -155,7 +155,10 @@ export default function App() {
     if (!livePreview || pipe.aiFixing || !pipe.typstCode.trim()) return;
     if (pipe.typstCode === lastCompiledRef.current) return;
     const t = setTimeout(async () => {
-      const ok = await pipe.recompile(pipe.typstCode);
+      // Anteprima mentre si scrive: si compila e si mostra, senza il confronto
+      // testuale pagina per pagina che su un libro costa minuti. La verifica
+      // torna con «Genera PDF», con il download o su richiesta.
+      const ok = await pipe.recompile(pipe.typstCode, { verify: false });
       if (ok) lastCompiledRef.current = pipe.typstCode;
     }, 700);
     return () => clearTimeout(t);
@@ -864,6 +867,9 @@ function Workspace({
         issueBusy={pipe.strictIssueBusy}
         onReviewIssue={pipe.reviewStrictIssue}
         onLocate={locatePassage}
+        verificationPending={pipe.verificationPending}
+        onVerify={pipe.verifyNow}
+        verifying={pipe.compiling}
       />
 
       {pipe.proofNotice && (
@@ -1009,6 +1015,7 @@ function Workspace({
             downloading={pipe.downloading}
             onDownload={onDownload}
             searchTarget={pdfSearchTarget}
+            documentKey={file.name}
           />
         </div>
       </div>

@@ -57,7 +57,7 @@ function highlightRects(items, viewport, query) {
  * centinaia di migliaia di nodi. Lo stesso artefatto (handle file desktop o
  * byte web) viene riusato dal download senza una seconda compilazione Typst.
  */
-export default function PdfPreview({ pdfBytes, compiling, downloading, onDownload, searchTarget }) {
+export default function PdfPreview({ pdfBytes, compiling, downloading, onDownload, searchTarget, documentKey }) {
   const native = isNativeApp();
   const viewportRef = useRef(null);
   const canvasRef = useRef(null);
@@ -99,10 +99,17 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
 
   // pdf.js riceve una copia dei byte e lavora nel proprio worker. Al cambio
   // documento il loading task precedente viene distrutto esplicitamente.
+  // Cambiare documento riporta a pagina 1; RICOMPILARE lo stesso documento no:
+  // durante l'anteprima live si sta guardando una pagina precisa, e tornare
+  // ogni volta all'inizio di un libro di quattrocento pagine è insostenibile.
+  const lastDocumentKeyRef = useRef(documentKey);
   useEffect(() => {
     setPdfDocument(null);
     setPageCount(0);
-    setPageNumber(1);
+    if (lastDocumentKeyRef.current !== documentKey) {
+      lastDocumentKeyRef.current = documentKey;
+      setPageNumber(1);
+    }
     setHighlights([]);
     setLocatedSearch(null);
     setPreviewError('');
@@ -117,6 +124,7 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
         if (!active) return;
         setPdfDocument(doc);
         setPageCount(doc.numPages);
+        setPageNumber((current) => Math.min(Math.max(1, current), doc.numPages));
       })
       .catch((error) => {
         if (active) setPreviewError(error?.message || 'Impossibile aprire l’anteprima PDF.');

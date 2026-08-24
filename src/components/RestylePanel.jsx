@@ -244,7 +244,7 @@ export default function RestylePanel({
                 ['bottom-left', 'In basso a sinistra'], ['bottom-center', 'In basso al centro'], ['bottom-right', 'In basso a destra'],
               ]} />
               <SelectField label="Testatina" value={selection.headerMode} onChange={(value) => set('headerMode', value)} options={[
-                ['none', 'Nessuna'], ['title', 'Titolo documento'], ['custom', 'Testo personalizzato'],
+                ['none', 'Nessuna'], ['title', 'Titolo documento'], ['chapter', 'Capitolo corrente'], ['custom', 'Testo personalizzato'],
               ]} />
               <SelectField label="Allineamento testatina" value={selection.headerAlign} onChange={(value) => set('headerAlign', value)} options={[
                 ['left', 'Sinistra'], ['center', 'Centro'], ['right', 'Destra'],
@@ -259,6 +259,23 @@ export default function RestylePanel({
               <NumberField label="Corpo didascalie" value={selection.captionSizePt} onChange={(value) => set('captionSizePt', value)} min={6} max={16} unit="pt" />
               <NumberField label="Corpo note" value={selection.footnoteSizePt} onChange={(value) => set('footnoteSizePt', value)} min={6} max={16} unit="pt" />
               <NumberField label="Spazio tra note" value={selection.footnoteGapEm} onChange={(value) => set('footnoteGapEm', value)} min={0} max={3} unit="em" />
+            </div>
+            <div className="layout-grid">
+              <ToggleField
+                label="Filetto sotto la testatina"
+                checked={!!selection.headerRule}
+                onChange={(value) => set('headerRule', value)}
+                hint="Lo stesso segno che separa il corpo dalle note, in cima alla pagina"
+              />
+              <ToggleField
+                label="Capitolo a pagina nuova"
+                checked={!!selection.chapterBreak}
+                onChange={(value) => set('chapterBreak', value)}
+                hint="Ogni titolo di primo livello apre una pagina"
+              />
+              <SelectField label="Apertura di capitolo" value={selection.chapterOpener} onChange={(value) => set('chapterOpener', value)} options={[
+                ['none', 'Nessuna'], ['smallcaps', 'Prime parole in maiuscoletto'], ['versal', 'Iniziale grande'],
+              ]} />
             </div>
             {selection.headerMode === 'custom' && (
               <label className="layout-text-field">

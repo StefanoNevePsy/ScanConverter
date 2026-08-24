@@ -8,6 +8,9 @@ export default function StrictReportPanel({
   onReviewIssue,
   issueBusy,
   onLocate,
+  verificationPending,
+  onVerify,
+  verifying,
 }) {
   const [open, setOpen] = useState(false);
   const [notices, setNotices] = useState({});
@@ -32,6 +35,25 @@ export default function StrictReportPanel({
     <section className={`overflow-hidden rounded-xl border ${
       report.pdf && !pdfOk ? 'border-danger/40 bg-danger-soft' : 'border-success/40 bg-success/10'
     }`}>
+      {/* Dopo una modifica manuale l'anteprima è nuova ma il confronto
+          testo↔PDF no: si dice, invece di lasciar credere che sia verificata. */}
+      {verificationPending && (
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-surface/70 px-4 py-2">
+          <span className="min-w-0 text-xs text-muted">
+            L’anteprima è aggiornata ma non ancora confrontata con il testo: la verifica
+            rilegge tutte le pagine, quindi non gira mentre scrivi.
+          </span>
+          <button
+            type="button"
+            onClick={onVerify}
+            disabled={!!verifying}
+            className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink transition-colors hover:bg-surface-2 disabled:opacity-50"
+          >
+            {verifying ? <IconSpinner width={13} height={13} /> : <IconCheck width={13} height={13} />}
+            {verifying ? 'Verifico…' : 'Verifica ora'}
+          </button>
+        </div>
+      )}
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"

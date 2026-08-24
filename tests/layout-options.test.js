@@ -88,3 +88,32 @@ test('usa la numerazione per ricostruire la gerarchia dei titoli OCR', () => {
   assert.match(normalized, /^## 2\.3 Sezione$/m);
   assert.match(normalized, /^### 2\.3\.1 Sottosezione$/m);
 });
+
+test('la testatina «capitolo» non compare sulla pagina che apre il capitolo', () => {
+  const preamble = buildPreamble({ headerMode: 'chapter', headerRule: true });
+  // La regola è esplicita nel preambolo: se un titolo di primo livello sta su
+  // questa pagina, niente testatina — è la consuetudine tipografica.
+  assert.match(preamble, /let apre = capitoli\.filter/);
+  assert.match(preamble, /if not apre and prima\.len\(\) > 0/);
+  assert.match(preamble, /stroke: \(bottom: 0\.5pt/);
+});
+
+test('il filetto si può avere anche con la testatina a testo fisso', () => {
+  const conFiletto = buildPreamble({ headerMode: 'custom', headerText: 'Collana', headerRule: true });
+  assert.match(conFiletto, /stroke: \(bottom: 0\.5pt/);
+  const senza = buildPreamble({ headerMode: 'custom', headerText: 'Collana' });
+  assert.doesNotMatch(senza, /stroke: \(bottom/);
+});
+
+test('il capitolo a pagina nuova usa un salto debole', () => {
+  // Debole: se il capitolo è già in cima alla pagina non lascia un foglio bianco.
+  assert.match(buildPreamble({ chapterBreak: true }), /pagebreak\(weak: true\)/);
+  assert.doesNotMatch(buildPreamble({}), /pagebreak/);
+});
+
+test('«#apertura» è definita sempre, anche senza apertura di capitolo', () => {
+  // Un corpo marcato da un giro precedente deve continuare a compilare.
+  assert.match(buildPreamble({}), /#let apertura\(corpo\) = corpo/);
+  assert.match(buildPreamble({ chapterOpener: 'smallcaps' }), /smallcaps\(parole\.slice\(0, 4\)/);
+  assert.match(buildPreamble({ chapterOpener: 'versal' }), /text\(size: 2\.4em, weight: 700, lettere\.first\(\)\)/);
+});

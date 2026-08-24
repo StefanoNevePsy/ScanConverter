@@ -79,6 +79,9 @@ export const DEFAULT_LAYOUT_OPTIONS = Object.freeze({
   headerText: '',
   headerAlign: 'center',
   headerSizePt: 8.5,
+  headerRule: false,
+  chapterBreak: false,
+  chapterOpener: 'none',
   figureAlign: 'center',
   captionPosition: 'bottom',
   captionSizePt: 9,
@@ -181,10 +184,15 @@ export function normalizeLayoutOptions(selection = {}) {
     pageNumberPosition: oneOf(selection.pageNumberPosition, ['bottom-left', 'bottom-center', 'bottom-right'], 'bottom-center'),
     headerMode: extras.has('runninghead')
       ? 'title'
-      : oneOf(selection.headerMode, ['none', 'title', 'custom'], 'none'),
+      : oneOf(selection.headerMode, ['none', 'title', 'chapter', 'custom'], 'none'),
     headerText: String(selection.headerText || '').slice(0, 180),
     headerAlign: oneOf(selection.headerAlign, ['left', 'center', 'right'], 'center'),
     headerSizePt: rounded(clamp(selection.headerSizePt, 8.5, 6, 16)),
+    // Filetto sotto la testatina: lo stesso segno che separa il corpo dalle
+    // note, in cima alla pagina.
+    headerRule: selection.headerRule === true,
+    chapterBreak: selection.chapterBreak === true,
+    chapterOpener: oneOf(selection.chapterOpener, ['none', 'smallcaps', 'versal'], 'none'),
     figureAlign: oneOf(selection.figureAlign, ['left', 'center', 'right'], 'center'),
     captionPosition: oneOf(selection.captionPosition, ['top', 'bottom'], 'bottom'),
     captionSizePt: rounded(clamp(selection.captionSizePt, 9, 6, 16)),
@@ -247,10 +255,34 @@ export function buildPreamble(selection = {}, opts = {}) {
     : options.headerMode === 'custom'
       ? options.headerText
       : '';
-  if (headerValue) {
-    pageParts.push(
-      `header: align(${options.headerAlign}, text("${esc(headerValue)}", size: ${options.headerSizePt}pt, style: "italic", fill: luma(35%)))`,
-    );
+  // Corpo della testatina: o un testo fisso, o — modalità «capitolo» — il
+  // titolo del capitolo in corso, che è quello che fa sembrare un libro un
+  // libro. Sulla pagina in cui il capitolo COMINCIA la testatina si toglie,
+  // come si è sempre fatto in tipografia: lì il titolo è già sotto.
+  const headerBody = options.headerMode === 'chapter'
+    ? 'capitolo'
+    : headerValue
+      ? `text("${esc(headerValue)}", size: ${options.headerSizePt}pt, style: "italic", fill: luma(35%))`
+      : '';
+  if (headerBody) {
+    const rule = options.headerRule
+      ? `block(width: 100%, above: 0pt, below: 0pt, inset: (bottom: 0.35em), stroke: (bottom: 0.5pt + luma(60%)), align(${options.headerAlign}, CONTENUTO))`
+      : `align(${options.headerAlign}, CONTENUTO)`;
+    if (options.headerMode === 'chapter') {
+      pageParts.push(
+        'header: context {\n' +
+        '  let capitoli = query(heading.where(level: 1))\n' +
+        '  let pagina = here().page()\n' +
+        '  let apre = capitoli.filter(h => h.location().page() == pagina).len() > 0\n' +
+        '  let prima = capitoli.filter(h => h.location().page() < pagina)\n' +
+        '  if not apre and prima.len() > 0 {\n' +
+        `    ${rule.replace('CONTENUTO', `text(size: ${options.headerSizePt}pt, style: "italic", fill: luma(35%), prima.last().body)`)}\n` +
+        '  }\n' +
+        '}',
+      );
+    } else {
+      pageParts.push(`header: ${rule.replace('CONTENUTO', headerBody)}`);
+    }
   }
 
   const indent = options.indentAll
@@ -280,11 +312,54 @@ export function buildPreamble(selection = {}, opts = {}) {
     `#show footnote.entry: set text(size: ${options.footnoteSizePt}pt)`,
     `#set footnote.entry(gap: ${options.footnoteGapEm}em)`,
   ];
+  if (options.chapterBreak) {
+    // `weak: true`: nessuna pagina bianca se il capitolo è già in cima.
+    lines.push('#show heading.where(level: 1): it => { pagebreak(weak: true); it }');
+  }
+  // `#apertura[…]` marca il primo paragrafo di un capitolo (vedi bookStyle.js).
+  // La definizione c'è SEMPRE, anche a stile spento: un corpo marcato da un
+  // giro precedente deve continuare a compilare.
+  lines.push(aperturaHelper(options.chapterOpener));
   if (headingNumbering) lines.push(`#set heading(numbering: "${headingNumbering}")`);
   if (options.enumNumbering && options.enumNumbering !== '1.') {
     lines.push(`#set enum(numbering: "${options.enumNumbering}")`);
   }
   return lines.join('\n');
+}
+
+/**
+ * Definizione di `#apertura`, il marcatore del primo paragrafo di un capitolo.
+ *
+ * Il testo arriva come contenuto: quando è prosa semplice si può prendere la
+ * prima lettera (o le prime parole) e trattarla; quando invece comincia con
+ * del corsivo o una nota, non lo si tocca — meglio nessun fregio che un
+ * fregio sbagliato.
+ */
+function aperturaHelper(mode) {
+  if (mode === 'smallcaps') {
+    return [
+      '#let apertura(corpo) = {',
+      '  if corpo.has("text") {',
+      '    let parole = corpo.text.split(" ")',
+      '    if parole.len() > 4 {',
+      '      smallcaps(parole.slice(0, 4).join(" ")) + " " + parole.slice(4).join(" ")',
+      '    } else { smallcaps(corpo) }',
+      '  } else { corpo }',
+      '}',
+    ].join('\n');
+  }
+  if (mode === 'versal') {
+    return [
+      '#let apertura(corpo) = {',
+      '  set par(first-line-indent: 0em)',
+      '  if corpo.has("text") and corpo.text.clusters().len() > 1 {',
+      '    let lettere = corpo.text.clusters()',
+      '    text(size: 2.4em, weight: 700, lettere.first()) + lettere.slice(1).join("")',
+      '  } else { corpo }',
+      '}',
+    ].join('\n');
+  }
+  return '#let apertura(corpo) = corpo';
 }
 
 /** Migra i vecchi documenti: se manca la scelta, disattiva la sillabazione. */

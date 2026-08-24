@@ -45,6 +45,7 @@ import {
   extractTitle,
   normalizeLayoutOptions,
 } from '../lib/preamble.js';
+import { setChapterOpeners } from '../lib/bookStyle.js';
 import {
   diagnosticProgress,
   repairTypstDeterministically,
@@ -278,6 +279,8 @@ export function usePipeline(settings) {
   // Avviso persistente sulla rilettura automatica: un guasto del modello non
   // deve passare per «documento pulito».
   const [proofNotice, setProofNotice] = useState('');
+  // L'anteprima è più recente dell'ultimo confronto testo↔PDF.
+  const [verificationPending, setVerificationPending] = useState(false);
   const [proofreadDetail, setProofreadDetail] = useState(''); // "3/12 paragrafi…"
   const [selectionAiBusy, setSelectionAiBusy] = useState(null); // 'proof' | 'translate' | null
   const [selectionAiDetail, setSelectionAiDetail] = useState('');
@@ -1722,9 +1725,10 @@ export function usePipeline(settings) {
 
   /** Compila localmente il codice Typst corrente in PDF. */
   const recompile = useCallback(
-    async (sourceOverride) => {
+    async (sourceOverride, options = {}) => {
       const source = sourceOverride ?? typstCode;
       if (!source.trim()) return;
+      const verify = options.verify !== false;
       setCompiling(true);
       setCompileError(null);
       try {
@@ -1732,7 +1736,16 @@ export function usePipeline(settings) {
         // invocare il processo desktop o, sul web, il compilatore WASM.
         await new Promise((resolve) => requestAnimationFrame(() => resolve()));
         const pdfBytes = await getCompiledPdf(source);
-        if (sessionRef.current?.workflow === 'strict') await verifyStrictPdf(source, pdfBytes);
+        // La verifica testuale rilegge TUTTE le pagine del PDF: su un libro
+        // sono minuti, e ripeterla a ogni pausa della digitazione rendeva
+        // l'anteprima live inservibile. Durante la scrittura si compila e
+        // basta; il confronto torna quando si chiede il PDF o lo si scarica.
+        if (verify && sessionRef.current?.workflow === 'strict') {
+          await verifyStrictPdf(source, pdfBytes);
+          setVerificationPending(false);
+        } else if (sessionRef.current?.workflow === 'strict') {
+          setVerificationPending(true);
+        }
         setPreviewPdf(pdfBytes);
         return true;
       } catch (e) {
@@ -1806,7 +1819,11 @@ export function usePipeline(settings) {
       // azzerato da una ristilizzazione che non lo riguarda.
       const normalized = normalizeLayoutOptions({ ...layoutOptions, ...sel });
       const preamble = buildPreamble(normalized, { title: extractTitle(body) });
-      const next = combineDocument(preamble, [body]);
+      // L'apertura di capitolo è l'unica resa che il preambolo non può
+      // raggiungere da solo (Typst non sa dire «il paragrafo dopo il titolo»):
+      // il corpo porta un marcatore, messo e tolto qui insieme allo stile.
+      const styledBody = setChapterOpeners(body, normalized.chapterOpener !== 'none');
+      const next = combineDocument(preamble, [styledBody]);
       setTypstCode(next);
       setLayoutOptions(normalized);
       // salva anche nel corpo della sessione (se attiva) per la persistenza
@@ -3481,6 +3498,8 @@ export function usePipeline(settings) {
     confirmPages,
     fidelityWarnings,
     strictReport,
+    verificationPending,
+    verifyNow: () => recompile(typstCode, { verify: true }),
     strictCorrectionBusy,
     reviewStrictCorrection,
     strictIssueBusy,
