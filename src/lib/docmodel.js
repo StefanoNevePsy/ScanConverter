@@ -441,3 +441,172 @@ export function structureFromBlocks(markdown, pages) {
   if (!inventory.levels.length) return { markdown, releveled: 0, demoted: 0, inventory };
   return { ...applyRolesToMarkdown(markdown, roles), inventory };
 }
+
+/*
+  --------------------------------------------------------- note a margine
+
+  Verificato sul codice attuale: una pagina con una nota stretta a sinistra e
+  il corpo a destra viene letta come DUE COLONNE, quindi la nota esce prima di
+  tutto il testo della pagina. Su un libro con note a margine ricorrenti ogni
+  pagina comincerebbe con la nota.
+
+  La causa è che l'XY-cut cerca il varco verticale più largo che nessun blocco
+  attraversa — e fra la nota e la gabbia del testo quel varco c'è. È l'analisi
+  corretta per due colonne e sbagliata per una colonna con apparato a fianco;
+  a distinguerle non è la geometria del varco ma la LARGHEZZA relativa dei due
+  lati: due colonne si somigliano, una nota a margine è molto più stretta.
+*/
+
+/** Quanto può essere larga una nota a margine rispetto alla gabbia. */
+const MARGINALIA_MAX_WIDTH = 0.45;
+
+/** Sovrapposizione orizzontale minima per considerare due blocchi allineati. */
+const COLUMN_OVERLAP = 0.15;
+
+/** Ampiezza orizzontale occupata dal grosso del testo della pagina. */
+export function mainTextSpan(blocks) {
+  const widths = (blocks || [])
+    .filter((b) => b?.bbox)
+    .map((b) => ({
+      width: (b.bbox.xmax ?? 0) - (b.bbox.xmin ?? 0),
+      xmin: b.bbox.xmin ?? 0,
+      xmax: b.bbox.xmax ?? 0,
+    }))
+    .filter((b) => b.width > 0);
+  if (!widths.length) return null;
+  const widest = widths.reduce((a, b) => (b.width > a.width ? b : a));
+  return { xmin: widest.xmin, xmax: widest.xmax, width: widest.width };
+}
+
+/**
+ * Il blocco sta nel margine, a fianco della gabbia invece che dentro.
+ *
+ * Due condizioni insieme: è molto più stretto della gabbia, e non la
+ * sovrappone. La seconda da sola marcherebbe come nota una colonna di un
+ * impaginato a due colonne; la prima da sola marcherebbe un titolo corto.
+ */
+export function isMarginalia(block, span) {
+  const bbox = block?.bbox;
+  if (!bbox || !span) return false;
+  const width = (bbox.xmax ?? 0) - (bbox.xmin ?? 0);
+  if (width <= 0 || width > span.width * MARGINALIA_MAX_WIDTH) return false;
+  const overlap = Math.min(bbox.xmax, span.xmax) - Math.max(bbox.xmin, span.xmin);
+  return overlap <= width * COLUMN_OVERLAP;
+}
+
+/**
+ * Separa le note a margine dal flusso principale della pagina.
+ *
+ * @returns {{flow:Array, margins:Array}} il corpo e ciò che gli sta a fianco
+ */
+export function splitMarginalia(blocks) {
+  const span = mainTextSpan(blocks);
+  if (!span) return { flow: blocks || [], margins: [] };
+  const flow = [];
+  const margins = [];
+  for (const block of blocks || []) {
+    (isMarginalia(block, span) ? margins : flow).push(block);
+  }
+  // Se «margine» risultasse metà pagina non è un margine: è un impaginato a
+  // due colonne, e va lasciato all'XY-cut che sa leggerlo.
+  if (margins.length >= flow.length) return { flow: blocks || [], margins: [] };
+  return { flow, margins };
+}
+
+/*
+  ------------------------------------------------------ figure e didascalie
+
+  L'aggancio attuale confronta i CENTRI di figura e didascalia e non guarda
+  l'asse orizzontale. Due conseguenze: su una pagina a due colonne una
+  didascalia di sinistra può essere assegnata a una figura di destra alla
+  stessa altezza; e su una figura alta la didascalia subito sotto il bordo
+  dista dal centro più della soglia, quindi viene persa proprio quando è più
+  ovvia.
+
+  Qui si misura la distanza fra i BORDI che si fronteggiano, e si richiede che
+  i due blocchi stiano sulla stessa colonna.
+*/
+
+/** Frazione di sovrapposizione orizzontale fra due riquadri. */
+export function horizontalOverlap(a, b) {
+  if (!a || !b) return 0;
+  const left = Math.max(a.xmin ?? 0, b.xmin ?? 0);
+  const right = Math.min(a.xmax ?? 0, b.xmax ?? 0);
+  const shared = right - left;
+  if (shared <= 0) return 0;
+  const narrower = Math.min((a.xmax ?? 0) - (a.xmin ?? 0), (b.xmax ?? 0) - (b.xmin ?? 0));
+  return narrower > 0 ? shared / narrower : 0;
+}
+
+/** Distanza verticale fra i bordi che si fronteggiano (0 se si toccano). */
+export function verticalGap(a, b) {
+  if (!a || !b) return Infinity;
+  if ((b.ymin ?? 0) >= (a.ymax ?? 0)) return (b.ymin ?? 0) - (a.ymax ?? 0);
+  if ((a.ymin ?? 0) >= (b.ymax ?? 0)) return (a.ymin ?? 0) - (b.ymax ?? 0);
+  return 0;
+}
+
+const CAPTION_MAX_GAP = 0.06;
+const CAPTION_MIN_OVERLAP = 0.35;
+
+/**
+ * Abbina ogni figura alla sua didascalia, sulla pagina.
+ *
+ * L'assegnazione è globale e non golosa: si ordinano tutte le coppie
+ * possibili per distanza e si prende la migliore disponibile. Con due figure
+ * vicine, la prima non ruba più la didascalia della seconda solo perché la
+ * incontra per prima nell'ordine di lettura.
+ *
+ * @returns {Map<object, object>} figura → didascalia
+ */
+export function pairCaptions(pictures, captions) {
+  const candidates = [];
+  for (const picture of pictures || []) {
+    for (const caption of captions || []) {
+      const overlap = horizontalOverlap(picture.bbox, caption.bbox);
+      if (overlap < CAPTION_MIN_OVERLAP) continue;
+      const gap = verticalGap(picture.bbox, caption.bbox);
+      if (gap > CAPTION_MAX_GAP) continue;
+      // A parità di distanza vince la didascalia SOTTO: è la posizione
+      // convenzionale, e sopra la figura si trova più spesso la fine del
+      // paragrafo precedente.
+      const below = (caption.bbox?.ymin ?? 0) >= (picture.bbox?.ymax ?? 0);
+      candidates.push({ picture, caption, score: gap + (below ? 0 : 0.005) });
+    }
+  }
+  candidates.sort((a, b) => a.score - b.score);
+
+  const pairs = new Map();
+  const takenCaptions = new Set();
+  for (const { picture, caption } of candidates) {
+    if (pairs.has(picture) || takenCaptions.has(caption)) continue;
+    pairs.set(picture, caption);
+    takenCaptions.add(caption);
+  }
+  return pairs;
+}
+
+/*
+  ------------------------------------------------------------- ornamenti
+
+  Nel libro reale tutte e sei le «figure» estratte erano decorazioni: il
+  numero di capitolo stampato grande in apertura di pagina, il marchio
+  dell'editore sul frontespizio. Nessuna aveva didascalia, e quattro
+  precedevano immediatamente un titolo di capitolo.
+
+  Non vengono buttate — un ritaglio scartato per errore è irrecuperabile — ma
+  marcate, così arrivano alla revisione figure già deselezionate.
+*/
+
+/** La figura è piccola, in cima alla pagina e senza didascalia. */
+export function isOrnament(picture, caption, pageBlocks) {
+  const bbox = picture?.bbox;
+  if (!bbox || caption) return false;
+  const w = (bbox.xmax ?? 0) - (bbox.xmin ?? 0);
+  const h = (bbox.ymax ?? 0) - (bbox.ymin ?? 0);
+  if (w * h > 0.06) return false;
+  const above = (pageBlocks || []).filter(
+    (b) => b !== picture && (b.bbox?.ymax ?? 1) <= (bbox.ymin ?? 0),
+  );
+  return above.length === 0;
+}

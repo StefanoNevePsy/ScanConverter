@@ -17,6 +17,21 @@ test('normalizza i blocchi del sidecar e scarta quelli vuoti', () => {
   assert.equal(blocks[1].bbox, null);
 });
 
+test('figure e tabelle sopravvivono, anche se non hanno testo', () => {
+  // Difetto trovato provando la pipeline vera: `if (!text) continue` buttava
+  // via ogni Picture e ogni Table, che per natura non hanno testo. Tutto il
+  // rilevamento di layout.py — righelli, colonne, inchiostro fuori dal testo —
+  // moriva qui sul client, in silenzio.
+  const blocks = normalizeLocalBlocks([
+    { type: 'Picture', text: '', bbox: { xmin: 0.1, ymin: 0.2, xmax: 0.9, ymax: 0.6 } },
+    { type: 'Table', text: '', bbox: { xmin: 0.1, ymin: 0.7, xmax: 0.9, ymax: 0.9 } },
+    { type: 'Text', text: '   ', bbox: { xmin: 0, ymin: 0, xmax: 1, ymax: 1 } },
+    { type: 'Picture', text: '', bbox: null },
+  ]);
+  assert.deepEqual(blocks.map((b) => b.type), ['Picture', 'Table']);
+  assert.equal(blocks[0].bbox.xmax, 0.9, 'il riquadro serve a ritagliare la figura');
+});
+
 test('riporta dentro 0–1 le coordinate fuori scala e usa Text come ripiego', () => {
   const [block] = normalizeLocalBlocks([
     { bbox: { xmin: -0.5, ymin: 0.2, xmax: 1.4, ymax: 0.6 }, text: 'x' },

@@ -169,6 +169,9 @@ export async function localOcrBlocks({
   return normalizeLocalBlocks(blocks);
 }
 
+/** Blocchi che esistono per la loro GEOMETRIA e non hanno testo per natura. */
+const VISUAL_TYPES = new Set(['Picture', 'Figure', 'Image', 'Table']);
+
 /**
  * Porta i blocchi del sidecar nella forma attesa dal resto della pipeline:
  * `type` fra quelli noti, `bbox` normalizzata 0–1, `text` stringa.
@@ -178,7 +181,13 @@ export function normalizeLocalBlocks(blocks) {
   const out = [];
   for (const b of blocks) {
     const text = typeof b?.text === 'string' ? b.text.trim() : '';
-    if (!text) continue;
+    const type = typeof b?.type === 'string' && b.type ? b.type : 'Text';
+    // Una figura NON ha testo: scartare i blocchi vuoti buttava via ogni
+    // immagine e ogni tabella trovate dal sidecar. Tutto il rilevamento di
+    // layout.py — righelli, colonne allineate, inchiostro fuori dal testo —
+    // moriva qui, sul client, senza che niente lo segnalasse.
+    const visual = VISUAL_TYPES.has(type) && b?.bbox;
+    if (!text && !visual) continue;
     const box = b.bbox;
     const bbox =
       box &&
@@ -190,7 +199,7 @@ export function normalizeLocalBlocks(blocks) {
             ymax: clamp01(Number(box.ymax)),
           }
         : null;
-    out.push({ type: typeof b.type === 'string' && b.type ? b.type : 'Text', bbox, text });
+    out.push({ type, bbox, text });
   }
   return out;
 }

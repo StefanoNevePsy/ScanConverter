@@ -6,6 +6,7 @@
 */
 
 import { loadImage, cropToPng } from './figures.js';
+import { isOrnament, pairCaptions, splitMarginalia } from './docmodel.js';
 
 const PICTURE_TYPES = new Set(['Picture', 'Figure', 'Image']);
 const CAPTION_TYPES = new Set(['Caption']);
@@ -188,21 +189,6 @@ export function applyFigureWidths(code, figures) {
   return s;
 }
 
-/** Trova la didascalia più vicina (in verticale) a una figura. */
-function nearestCaption(captions, picture) {
-  let best = null;
-  let bestDist = Infinity;
-  for (const c of captions) {
-    if (c._used) continue;
-    const d = Math.abs(cy(c) - cy(picture));
-    if (d < bestDist) {
-      bestDist = d;
-      best = c;
-    }
-  }
-  // Considera la didascalia associata solo se ragionevolmente vicina.
-  return best && bestDist < 0.12 ? best : null;
-}
 
 /**
  * ORDINE DI LETTURA per XY-cut ricorsivo (standard dell'analisi layout):
@@ -219,9 +205,37 @@ function nearestCaption(captions, picture) {
 export function orderBlocks(blocks) {
   const boxed = blocks.filter((b) => b?.bbox);
   const unboxed = blocks.filter((b) => !b?.bbox);
+
+  // Le note a margine vanno tolte PRIMA del taglio: fra la nota e la gabbia
+  // del testo c'è un varco verticale largo, quindi l'XY-cut le legge come una
+  // colonna e restituisce tutta la pagina dopo di esse. Verificato: una
+  // pagina con una nota a sinistra usciva con la nota davanti a ogni
+  // paragrafo del corpo.
+  const { flow, margins } = splitMarginalia(boxed);
   const out = [];
-  xyCut(boxed, out, 0);
+  xyCut(flow, out, 0);
+
+  // Ognuna rientra accanto al blocco che le sta fisicamente a fianco: è lì
+  // che il lettore la incontra sulla pagina di carta.
+  for (const note of margins) {
+    const at = nearestByHeight(out, note);
+    out.splice(at, 0, note);
+  }
   return [...out, ...unboxed];
+}
+
+/** Posizione d'inserimento subito dopo il blocco alla stessa altezza. */
+function nearestByHeight(ordered, note) {
+  let best = ordered.length;
+  let bestDist = Infinity;
+  ordered.forEach((block, i) => {
+    const d = Math.abs(cy(block) - cy(note));
+    if (d < bestDist) {
+      bestDist = d;
+      best = i + 1;
+    }
+  });
+  return best;
 }
 
 function xyCut(items, out, depth) {
@@ -308,6 +322,12 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
   const sorted = orderBlocks(blocks.filter((b) => !furniture.has(b)));
   const captions = sorted.filter((b) => CAPTION_TYPES.has(b.type));
   const hasPictures = sorted.some((b) => PICTURE_TYPES.has(b.type) && b.bbox);
+  // Abbinamento globale figura↔didascalia: si valuta tutta la pagina insieme
+  // invece di far scegliere a ogni figura la più vicina appena la incontra.
+  const captionFor = pairCaptions(
+    sorted.filter((b) => PICTURE_TYPES.has(b.type) && b.bbox),
+    captions,
+  );
   const img = hasPictures ? await loadImage(pageDataUrl) : null;
 
   const figures = [];
@@ -341,14 +361,17 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
       } catch {
         continue; // ritaglio fallito: salta la figura, non bloccare il testo
       }
-      const cap = nearestCaption(captions, b);
+      const cap = captionFor.get(b);
       if (cap) cap._used = true;
       const caption = (cap?.text || '').replace(/[[\]]/g, '');
       figures.push({
         path,
         bytes,
         widthPct: widthPctFromBbox(b.bbox),
-        junk: isLikelyArtifact(b.bbox),
+        // Gli ornamenti — numero di capitolo, marchio dell'editore — sono
+        // figure a tutti gli effetti per l'OCR. Non si scartano (un ritaglio
+        // perso non torna) ma arrivano alla revisione già deselezionati.
+        junk: isLikelyArtifact(b.bbox) || isOrnament(b, cap, blocks),
       });
       // Segnaposto Markdown che l'LLM convertirà in #figure(image(...)).
       lines.push(`![${caption}](${path})`);
