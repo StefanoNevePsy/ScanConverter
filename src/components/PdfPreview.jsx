@@ -6,7 +6,9 @@ import { hasPdfData } from '../lib/desktop.js';
 import {
   choosePdfSearchPage,
   countPdfTextOccurrences,
+  estimatePdfPage,
   normalizePdfSearchText,
+  pageSearchOrder,
 } from '../lib/pdfPreview.js';
 
 const MAX_PREVIEW_WIDTH = 768;
@@ -57,7 +59,7 @@ function highlightRects(items, viewport, query) {
  * centinaia di migliaia di nodi. Lo stesso artefatto (handle file desktop o
  * byte web) viene riusato dal download senza una seconda compilazione Typst.
  */
-export default function PdfPreview({ pdfBytes, compiling, downloading, onDownload, searchTarget, documentKey }) {
+export default function PdfPreview({ pdfBytes, compiling, downloading, onDownload, searchTarget, documentKey, cursorFocus }) {
   const native = isNativeApp();
   const viewportRef = useRef(null);
   const canvasRef = useRef(null);
@@ -103,11 +105,13 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
   // durante l'anteprima live si sta guardando una pagina precisa, e tornare
   // ogni volta all'inizio di un libro di quattrocento pagine è insostenibile.
   const lastDocumentKeyRef = useRef(documentKey);
+  const scaleRef = useRef(1);
   useEffect(() => {
     setPdfDocument(null);
     setPageCount(0);
     if (lastDocumentKeyRef.current !== documentKey) {
       lastDocumentKeyRef.current = documentKey;
+      scaleRef.current = 1;
       setPageNumber(1);
     }
     setHighlights([]);
@@ -138,6 +142,66 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
       loadingTask.destroy();
     };
   }, [pdfBytes]);
+
+  /*
+    Anteprima che segue il cursore.
+
+    Prima il salto approssimato — istantaneo, perché è solo una proporzione —
+    poi la conferma cercando la riga del cursore in un pugno di pagine attorno
+    alla stima. Cercarla in tutto il libro costerebbe come la verifica che
+    abbiamo appena tolto dal percorso della digitazione.
+  */
+  useEffect(() => {
+    if (!pdfDocument || !cursorFocus) return undefined;
+    const grezza = estimatePdfPage(cursorFocus.ratio, pdfDocument.numPages);
+    if (!grezza) return undefined;
+    const stima = Math.min(
+      pdfDocument.numPages,
+      Math.max(1, Math.round(grezza * scaleRef.current)),
+    );
+    setPageNumber(stima);
+    const cercato = normalizePdfSearchText(cursorFocus.text || '');
+    if (!cercato) return undefined;
+    let active = true;
+    (async () => {
+      // Prima volta su questo documento: si guarda largo, perché la
+      // proporzione non è ancora tarata. Dopo bastano poche pagine.
+      const raggio = scaleRef.current === 1 ? 20 : 8;
+      for (const numero of pageSearchOrder(stima, pdfDocument.numPages, raggio)) {
+        if (!active) return;
+        let text = textCacheRef.current.get(numero);
+        if (text == null) {
+          const page = await pdfDocument.getPage(numero);
+          try {
+            const content = await page.getTextContent();
+            text = content.items.map((item) => item.str || '').join(' ');
+            textCacheRef.current.set(numero, text);
+          } finally {
+            page.cleanup();
+          }
+        }
+        if (countPdfTextOccurrences(text, cercato)) {
+          if (!active) return;
+          setPageNumber(numero);
+          // Quanto la proporzione ha sbagliato, per sbagliare meno la
+          // prossima volta: la deriva fra sorgente e pagine è graduale e
+          // costante, quindi una correzione imparata vale per tutto il libro.
+          const corretto = numero / grezza;
+          if (Number.isFinite(corretto) && corretto > 0.5 && corretto < 2) {
+            scaleRef.current = scaleRef.current === 1
+              ? corretto
+              : (scaleRef.current + corretto) / 2;
+          }
+          return;
+        }
+      }
+    })().catch(() => {
+      // La stima resta comunque valida: nessun motivo di disturbare l'utente.
+    });
+    return () => {
+      active = false;
+    };
+  }, [pdfDocument, cursorFocus]);
 
   // La ricerca usa il layer testuale del PDF già aperto: nessuna nuova
   // compilazione e nessun SVG completo. L'indice dell'occorrenza nel sorgente

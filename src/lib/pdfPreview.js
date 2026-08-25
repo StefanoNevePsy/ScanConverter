@@ -58,3 +58,62 @@ export function createPdfSearchTarget(source, match) {
   const occurrence = countPdfTextOccurrences(text.slice(0, start), selected);
   return { id: match.id, text: selected, normalized, occurrence };
 }
+
+/*
+  Anteprima che segue il cursore.
+
+  Il PDF non sa da quale riga del sorgente viene ogni pagina, e chiederglielo
+  costerebbe rileggere il testo di tutte le pagine. Ma un libro è testo
+  continuo: la posizione del cursore nel sorgente dice, con buona
+  approssimazione, a che punto del PDF si è. Si salta subito lì — costo zero —
+  e poi si conferma cercando la riga del cursore in un pugno di pagine
+  attorno, invece che nelle quattrocento del libro.
+*/
+
+/** Pagina stimata (1-based) da quanto si è avanti nel sorgente. */
+export function estimatePdfPage(ratio, pageCount) {
+  const pages = Math.max(0, Math.floor(Number(pageCount) || 0));
+  if (!pages) return 0;
+  const clamped = Math.min(1, Math.max(0, Number(ratio) || 0));
+  return Math.min(pages, Math.max(1, Math.round(clamped * (pages - 1)) + 1));
+}
+
+/**
+ * Pagine da guardare, dalla stima verso l'esterno: prima quella stimata, poi
+ * la successiva e la precedente, e così via.
+ * @returns {number[]} numeri di pagina 1-based
+ */
+export function pageSearchOrder(estimate, pageCount, radius = 4) {
+  const pages = Math.max(0, Math.floor(Number(pageCount) || 0));
+  if (!pages) return [];
+  const start = Math.min(pages, Math.max(1, Math.round(Number(estimate) || 1)));
+  const order = [start];
+  for (let step = 1; step <= radius; step++) {
+    if (start + step <= pages) order.push(start + step);
+    if (start - step >= 1) order.push(start - step);
+  }
+  return order;
+}
+
+/**
+ * Frammento del sorgente attorno al cursore da cercare nel PDF.
+ *
+ * Serve una riga di prosa vera: la sintassi Typst nel PDF non c'è, e cercarla
+ * porterebbe solo a non trovare niente.
+ */
+export function cursorSearchText(source, offset, maxChars = 60) {
+  const text = String(source || '');
+  const at = Math.min(Math.max(0, Number(offset) || 0), text.length);
+  const from = text.lastIndexOf('\n', Math.max(0, at - 1)) + 1;
+  let to = text.indexOf('\n', at);
+  if (to === -1) to = text.length;
+  const line = text.slice(from, to).trim();
+  if (!line || /^[=#/<]/u.test(line)) return '';
+  // Solo parole: niente marcatura, niente numeri di riga, niente parentesi.
+  const words = line
+    .replace(/[*_`\[\]#]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (words.length < 12) return '';
+  return words.slice(0, maxChars).trim();
+}

@@ -3,6 +3,7 @@ import { loadSettings, saveSettings } from './lib/storage.js';
 import { requiredKeys } from './lib/phases.js';
 import { formatBytes } from './lib/files.js';
 import { findBestEditorLocation } from './lib/editorScroll.js';
+import { cursorSearchText } from './lib/pdfPreview.js';
 import { usePipeline } from './hooks/usePipeline.js';
 import { initNativeShell, onBackButton, setNativeTheme } from './lib/native.js';
 import { getSharedFile, onSharedFile } from './lib/incoming.js';
@@ -56,6 +57,7 @@ export default function App() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [livePreview, setLivePreview] = useState(false);
+  const [followCursor, setFollowCursor] = useState(false);
   const [projectNotice, setProjectNotice] = useState(null);
   const [theme, setTheme] = useState(initialTheme);
 
@@ -306,6 +308,8 @@ export default function App() {
             onLanguageChange={changeLanguages}
             onDocumentRenamed={renameDocument}
             livePreview={livePreview}
+            followCursor={followCursor}
+            onToggleFollow={() => setFollowCursor((v) => !v)}
             onToggleLive={() => setLivePreview((v) => !v)}
             onCompile={manualCompile}
             onDownload={download}
@@ -493,6 +497,8 @@ function Workspace({
   onLanguageChange,
   onDocumentRenamed,
   livePreview,
+  followCursor,
+  onToggleFollow,
   onToggleLive,
   onCompile,
   onDownload,
@@ -512,6 +518,7 @@ function Workspace({
   const [autofixMsg, setAutofixMsg] = useState(null);
   const [searchReq, setSearchReq] = useState(null); // ricerca pilotata nell'editor
   const [pdfSearchTarget, setPdfSearchTarget] = useState(null);
+  const [cursorFocus, setCursorFocus] = useState(null);
   const [reviewReturnLabel, setReviewReturnLabel] = useState('');
   // Parole che l'utente ha dichiarato buone per questo controllo: escluse
   // dall'invio all'AI e dalla revisione guidata, ma non ancora messe nel
@@ -585,6 +592,19 @@ function Workspace({
     requestAnimationFrame(() => origin.focus({ preventScroll: true }));
     setReviewReturnLabel('');
   }, []);
+
+  // L'anteprima segue il punto in cui si sta scrivendo: la posizione nel
+  // sorgente dà la pagina approssimata, la riga del cursore la conferma.
+  const handleCaretMove = useCallback((offset) => {
+    if (!followCursor) return;
+    const code = pipe.typstCode;
+    if (!code) return;
+    setCursorFocus({
+      ratio: offset / Math.max(1, code.length),
+      text: cursorSearchText(code, offset),
+      id: offset,
+    });
+  }, [followCursor, pipe.typstCode]);
 
   const handleSearchMatch = useCallback(async (match) => {
     const requestId = ++pdfSearchRequestRef.current;
@@ -784,6 +804,23 @@ function Workspace({
             {projectBusy === 'export' ? <span className="size-3.5 animate-spin rounded-full border border-current border-r-transparent" /> : <IconDownload width={15} height={15} />}
             <span className="hidden xl:inline">Esporta progetto</span>
           </button>
+          <label
+            className="mr-1 flex cursor-pointer items-center gap-2 text-xs text-muted"
+            title="L’anteprima mostra la pagina in cui sta il cursore, seguendoti mentre scrivi"
+          >
+            <span className="hidden sm:inline">Segui il cursore</span>
+            <span className="relative inline-flex">
+              <input
+                type="checkbox"
+                aria-label="L’anteprima segue il cursore"
+                checked={followCursor}
+                onChange={onToggleFollow}
+                className="peer sr-only"
+              />
+              <span className="h-5 w-9 rounded-full bg-surface-3 transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary peer-checked:bg-primary" />
+              <span className="absolute left-0.5 top-0.5 size-4 rounded-full bg-ink transition-transform peer-checked:translate-x-4" />
+            </span>
+          </label>
           <label className="mr-1 flex cursor-pointer items-center gap-2 text-xs text-muted">
             <span className="hidden sm:inline">Anteprima live</span>
             <span className="relative inline-flex">
@@ -1002,6 +1039,7 @@ function Workspace({
             onReturnToReview={returnToReviewOrigin}
             searchRequest={searchReq}
             onSearchMatch={handleSearchMatch}
+            onCaretMove={handleCaretMove}
             compiling={pipe.compiling}
             error={pipe.compileError}
             disabled={pipe.phase === 'running' && !pipe.typstCode}
@@ -1016,6 +1054,7 @@ function Workspace({
             onDownload={onDownload}
             searchTarget={pdfSearchTarget}
             documentKey={file.name}
+            cursorFocus={followCursor ? cursorFocus : null}
           />
         </div>
       </div>

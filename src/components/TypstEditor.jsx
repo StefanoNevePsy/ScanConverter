@@ -66,6 +66,7 @@ export default function TypstEditor({
   onReturnToReview,
   searchRequest,
   onSearchMatch,
+  onCaretMove,
   compiling,
   error,
   disabled,
@@ -405,9 +406,20 @@ export default function TypstEditor({
     }
   };
 
+  // Dove sta il cursore, con calma: serve all'anteprima per mostrare la pagina
+  // su cui si sta lavorando, non a ogni battuta di tasto.
+  const caretTimerRef = useRef(0);
+  const reportCaret = (offset) => {
+    if (!onCaretMove) return;
+    clearTimeout(caretTimerRef.current);
+    caretTimerRef.current = setTimeout(() => onCaretMove(offset), 500);
+  };
+  useEffect(() => () => clearTimeout(caretTimerRef.current), []);
+
   const captureEditorSelection = (event) => {
     const start = event.currentTarget.selectionStart;
     const end = event.currentTarget.selectionEnd;
+    reportCaret(start);
     // Durante la revisione la fermata corrente è già selezionata dall'app: la
     // barra della selezione ripeterebbe soltanto quello che dice la barra di
     // revisione, un piano di comandi in più senza niente in più da fare.
