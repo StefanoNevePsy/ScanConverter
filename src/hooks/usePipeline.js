@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractPageBlocks, toTypstNvidia } from '../lib/nvidia.js';
 import { toTypst, ocrImageGemini } from '../lib/gemini.js';
-import { compileToPdf, diagnoseTypst, initTypst, locateTypstError } from '../lib/typst.js';
+import { compileToPdf, diagnoseTypst, initTypst, locateTypstError,
+  lastTypstEngine,
+} from '../lib/typst.js';
 import { savePdf, saveProjectArchive, sharePdf } from '../lib/download.js';
 import { fileToDataUrl, isPdf } from '../lib/files.js';
 import { renderPdfToImages } from '../lib/pdf.js';
@@ -541,6 +543,7 @@ export function usePipeline(settings) {
         compareMs: Math.round(performance.now() - compareStart),
         pages: splitPdfPages(letto.text || '').length,
         incremental: letto.incremental,
+        engine: lastTypstEngine(),
       },
     };
     s.pdfVerification = {

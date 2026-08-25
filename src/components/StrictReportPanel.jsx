@@ -113,6 +113,8 @@ export default function StrictReportPanel({
                   Lettura del PDF {(report.pdf.timings.readMs / 1000).toFixed(1)}s
                   {report.pdf.timings.incremental ? ' (solo le pagine toccate)' : ` (${report.pdf.timings.pages} pagine)`}
                   {' · confronto '}{(report.pdf.timings.compareMs / 1000).toFixed(1)}s
+                  {report.pdf.timings.engine === 'native' && ' · compilato con Typst nativo'}
+                  {report.pdf.timings.engine === 'wasm' && ' · compilato con Typst WASM (nel browser)'}
                 </p>
               )}
               {report.pdf.reviewPending && (

@@ -407,3 +407,46 @@ test('il segno di pagina non spezza mai un capoverso', () => {
     '// pagina 7',
   ]);
 });
+
+test('senza parole mancanti il confronto per frase non fa nulla', () => {
+  // Un documento pulito pagava comunque il confronto di ogni frase con ogni
+  // frase: su un libro erano minuti per non dire niente.
+  const testo = Array.from({ length: 400 }, (_, i) => `Frase numero ${i} del documento.`).join(' ');
+  assert.deepEqual(buildDifferenceContexts(testo, testo, []), []);
+});
+
+test('mostra la frase giusta anche in un documento lungo', () => {
+  // Frasi con contenuto DIVERSO, come in un libro vero: se fossero tutte
+  // uguali il vicino somiglierebbe più dell'originale e la prova non
+  // direbbe niente.
+  const soggetti = ['terapeuta', 'madre', 'padre', 'figlia', 'nonna', 'fratello', 'analista', 'gruppo'];
+  const azioni = ['osserva', 'interrompe', 'ricorda', 'nomina', 'contesta', 'accoglie', 'misura', 'rimanda'];
+  const oggetti = ['la lealtà', 'il debito', 'la colpa', 'il merito', 'la delega', 'il conto', 'la promessa'];
+  const frasi = Array.from({ length: 900 }, (_, i) =>
+    `${soggetti[i % 8]} ${azioni[(i * 3) % 8]} ${oggetti[(i * 5) % 7]} nella seduta ${i}.`);
+  const fonte = frasi.join(' ');
+  const bersaglio = frasi[600];
+  // La perdita è a due terzi del documento, lontano dall'inizio.
+  const rovinato = fonte.replace(bersaglio, bersaglio.replace(' nella seduta 600.', '.'));
+  const mancanti = compareTokenInventory(fonte, rovinato).missing;
+  const issues = buildDifferenceContexts(fonte, rovinato, mancanti);
+  assert.equal(issues.length >= 1, true);
+  const primo = issues.find((issue) => /seduta 600/.test(issue.source));
+  assert.ok(primo, 'la frase incompleta deve comparire fra le differenze');
+  // Il passaggio accostato è quello corrispondente, non uno a caso.
+  assert.equal(primo.similarity > 0.7, true);
+  assert.equal(primo.missing.includes('600'), true);
+});
+
+test('trova il corrispondente anche se il documento è stato riordinato', () => {
+  // La ricerca guarda prima l'intorno; quando lì non somiglia niente si
+  // allarga a tutto il documento, che è il caso raro ma deve funzionare.
+  const frasi = Array.from({ length: 400 }, (_, i) => `Paragrafo ${i} con parole comuni e ordinarie.`);
+  const fonte = ['La zebrone marcia solitaria verso il tramonto viola.', ...frasi].join(' ');
+  const rovinato = [...frasi, 'La zebrone marcia solitaria verso il tramonto.'].join(' ');
+  const mancanti = compareTokenInventory(fonte, rovinato).missing;
+  const issues = buildDifferenceContexts(fonte, rovinato, mancanti);
+  const zebrone = issues.find((i) => /zebrone/.test(i.source));
+  assert.ok(zebrone, 'la frase spostata deve comparire fra le differenze');
+  assert.match(zebrone.rendered, /zebrone/);
+});

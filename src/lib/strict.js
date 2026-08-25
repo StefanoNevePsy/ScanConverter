@@ -42,6 +42,11 @@ export function compareTokenInventory(source, output, maxDetails = 20) {
   return { ok: !missing.length && !added.length, missing, added };
 }
 
+// Quante frasi guardare attorno alla posizione corrispondente prima di
+// allargare a tutto il documento. Larga: l'estrazione del PDF può spezzare o
+// unire qualche frase, ma non spostarla di centocinquanta.
+const LOCAL_WINDOW = 150;
+
 function comparisonUnits(text) {
   return String(text || '')
     .split(/(?<=[.!?…])\s+|\n{2,}/)
@@ -392,21 +397,52 @@ export function buildDifferenceContexts(source, output, missingTokens, maxIssues
   for (const token of missingTokens || []) {
     missingCounts.set(token, (missingCounts.get(token) || 0) + 1);
   }
+  // Niente da attribuire, niente da confrontare: senza questa uscita un
+  // documento PULITO pagava comunque il confronto di ogni frase con ogni
+  // frase — su un libro, minuti buoni per non dire nulla.
+  if (!missingCounts.size) return [];
+
   const sourceUnits = comparisonUnits(source);
   const outputUnits = comparisonUnits(output);
+  // Le frasi del PDF si tokenizzano UNA volta. Erano tokenizzate dentro il
+  // ciclo interno, cioè una volta per ogni coppia di frasi: su un libro di
+  // diecimila frasi sono cento milioni di tokenizzazioni.
+  const outputSets = outputUnits.map((unit) => new Set(canonicalTokens(unit)));
   const issues = [];
-  for (const sentence of sourceUnits) {
-    const sourceSet = new Set(canonicalTokens(sentence));
-    let best = '';
-    let bestScore = -1;
-    for (const candidate of outputUnits) {
-      const candidateSet = new Set(canonicalTokens(candidate));
-      let common = 0;
-      for (const token of sourceSet) if (candidateSet.has(token)) common++;
-      const score = common / Math.max(sourceSet.size, candidateSet.size, 1);
-      if (score > bestScore) {
-        bestScore = score;
-        best = candidate;
+  for (let sourceIndex = 0; sourceIndex < sourceUnits.length; sourceIndex++) {
+    const sentence = sourceUnits[sourceIndex];
+    const sourceTokens = canonicalTokens(sentence);
+    // Una frase può rivendicare soltanto una parola che CONTIENE: se non ne ha
+    // nessuna fra quelle mancanti, cercarle il passaggio più simile in tutto
+    // il documento non può produrre niente. Stesso esito, lavoro in meno.
+    if (!sourceTokens.some((token) => (missingCounts.get(token) || 0) > 0)) continue;
+    const sourceSet = new Set(sourceTokens);
+    const cerca = (da, a) => {
+      let migliore = '';
+      let punteggio = -1;
+      for (let index = Math.max(0, da); index < Math.min(outputUnits.length, a); index++) {
+        const candidateSet = outputSets[index];
+        let common = 0;
+        for (const token of sourceSet) if (candidateSet.has(token)) common++;
+        const score = common / Math.max(sourceSet.size, candidateSet.size, 1);
+        if (score > punteggio) {
+          punteggio = score;
+          migliore = outputUnits[index];
+        }
+      }
+      return { migliore, punteggio };
+    };
+    // I due testi sono lo stesso documento nello stesso ordine: la frase
+    // corrispondente sta lì attorno, non dall'altra parte del libro. Si guarda
+    // prima nell'intorno; solo se lì non si trova niente di somigliante si
+    // allarga a tutto il documento, che è il caso raro.
+    const centro = Math.round((sourceIndex / Math.max(1, sourceUnits.length - 1)) * (outputUnits.length - 1));
+    let { migliore: best, punteggio: bestScore } = cerca(centro - LOCAL_WINDOW, centro + LOCAL_WINDOW + 1);
+    if (bestScore < 0.3) {
+      const esteso = cerca(0, outputUnits.length);
+      if (esteso.punteggio > bestScore) {
+        best = esteso.migliore;
+        bestScore = esteso.punteggio;
       }
     }
     // Attribuisce un token comune («a», «e», «nel»…) alla frase corretta:

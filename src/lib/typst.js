@@ -89,6 +89,13 @@ function initWasmTypst() {
  * Typst viene inizializzato nel processo isolato alla prima richiesta. Web e
  * Android mantengono invece esattamente il backend precedente.
  */
+let lastEngine = '';
+
+/** Compilatore usato per l'ultimo PDF: 'native', 'wasm' o '' se nessuno. */
+export function lastTypstEngine() {
+  return lastEngine;
+}
+
 export async function initTypst() {
   if (await hasNativeTypstEngine()) return;
   await initWasmTypst();
@@ -186,6 +193,10 @@ export async function diagnoseTypst(source, figures = []) {
 export async function compileToPdf(source, figures = []) {
   const { artifact } = await serializedCompile(async () => {
     const native = await compileNativeArtifact(source, figures, false);
+    // Quale compilatore ha lavorato davvero: sul desktop il binario nativo, sul
+    // web il WASM. Il ripiego è silenzioso di proposito — ma se è silenzioso
+    // anche verso l'utente, non si può sapere se il nativo stia funzionando.
+    lastEngine = native ? 'native' : 'wasm';
     return native || compileWasmArtifact(source, figures, CompileFormatEnum.pdf);
   });
   if (!artifact || (!artifact.length && artifact.kind !== 'desktop-pdf')) {
