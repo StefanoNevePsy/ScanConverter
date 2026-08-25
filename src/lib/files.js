@@ -3,7 +3,22 @@
 */
 
 export const ACCEPTED = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
-export const MAX_BYTES = 20 * 1024 * 1024; // 20 MB
+
+/*
+  Due limiti diversi, perché i due casi hanno vincoli diversi.
+
+  Un'IMMAGINE singola viene spedita intera dentro una richiesta al motore OCR,
+  codificata in base64 (che la gonfia di un terzo): oltre una ventina di
+  megabyte le API la rifiutano, e il tetto è una cortesia, non un capriccio.
+
+  Un PDF invece non viene mai spedito: si rasterizza pagina per pagina e ogni
+  pagina va su disco appena pronta. Quello che conta non è quanto pesa il file,
+  ma quanto pesa UNA pagina — perciò qui il tetto può essere largo. Prima erano
+  venti megabyte per entrambi, e un libro scansionato bene li supera senza
+  essere in alcun modo problematico.
+*/
+export const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB
+export const MAX_PDF_BYTES = 500 * 1024 * 1024; // 500 MB
 
 /**
  * Legge un File come data URL base64 (`data:<mime>;base64,...`).
@@ -39,8 +54,13 @@ export function validateFile(file) {
   if (!ACCEPTED.includes(file.type)) {
     return 'Formato non supportato. Usa PNG, JPEG, WebP o PDF.';
   }
-  if (file.size > MAX_BYTES) {
-    return 'File troppo grande (massimo 20 MB).';
+  const limite = isPdf(file) ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
+  if (file.size > limite) {
+    const mb = Math.round(limite / (1024 * 1024));
+    return isPdf(file)
+      ? `PDF troppo grande (massimo ${mb} MB).`
+      : `Immagine troppo grande (massimo ${mb} MB): oltre questa dimensione i ` +
+        'motori OCR rifiutano la richiesta. Con un PDF il limite è molto più alto.';
   }
   return null;
 }

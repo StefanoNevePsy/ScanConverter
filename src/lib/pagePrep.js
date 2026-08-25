@@ -180,6 +180,35 @@ export async function makeThumbnail(dataUrl, maxSide = 320) {
  * @param {(done:number,total:number)=>void} [onProgress]
  * @returns {Promise<string[]>} elenco finale (gli spread contano doppio)
  */
+/**
+ * Dove finisce ogni pagina dopo rotazioni e divisioni.
+ *
+ * Una doppia pagina divisa diventa due immagini e sposta in avanti tutte
+ * quelle che seguono. Lavorando su disco (una pagina alla volta, per non
+ * tenere in memoria l'intero libro) bisogna sapere prima dove scrivere, e
+ * procedere DALL'ULTIMA verso la prima: così ciò che si sovrascrive è già
+ * stato letto.
+ *
+ * @param {number} count numero di pagine di partenza
+ * @param {{split?:boolean}[]} [edits]
+ * @returns {{total:number, plan:{index:number, targets:number[]}[]}}
+ *   `plan` è già nell'ordine in cui va eseguito (dall'ultima alla prima)
+ */
+export function pageTargets(count, edits) {
+  const pagine = Math.max(0, Math.floor(Number(count) || 0));
+  const quante = (index) => (edits?.[index]?.split ? 2 : 1);
+  let total = 0;
+  for (let index = 0; index < pagine; index++) total += quante(index);
+  const plan = [];
+  let cursore = total;
+  for (let index = pagine - 1; index >= 0; index--) {
+    const n = quante(index);
+    cursore -= n;
+    plan.push({ index, targets: Array.from({ length: n }, (_, k) => cursore + k) });
+  }
+  return { total, plan };
+}
+
 export async function preparePages(dataUrls, edits, onProgress) {
   const out = [];
   for (let i = 0; i < dataUrls.length; i++) {

@@ -31,7 +31,7 @@ import {
 import { typstDocumentPassages, typstPlainText } from '../lib/typstContent.js';
 import { extractPdfText } from '../lib/pdftext.js';
 import { hasPdfData, releaseDesktopPdf } from '../lib/desktop.js';
-import { isSpreadLike, preparePages, makeThumbnail } from '../lib/pagePrep.js';
+import { isSpreadLike, preparePages, makeThumbnail, pageTargets } from '../lib/pagePrep.js';
 import {
   chunkDocument,
   splitPreamble,
@@ -110,6 +110,7 @@ import {
   listSessions,
   deleteSession,
   savePages,
+  savePage,
   getPage,
   savePart,
   saveBlocks,
@@ -1494,32 +1495,33 @@ export function usePipeline(settings) {
    * Crea la sessione in FASE OCR: mette in cache le immagini di pagina (per
    * la ripresa) e avvia l'estrazione pagina per pagina.
    */
+  /**
+   * Apre la sessione OCR su pagine GIÀ SCRITTE su disco.
+   *
+   * Le immagini non passano più di qui: sono state salvate una a una mentre si
+   * rasterizzava, e l'OCR le rilegge una alla volta — l'unico modo in cui le
+   * usa. Così la memoria non deve mai contenere il libro intero.
+   *
+   * @param {{id:string, count:number}} pagine
+   */
   const beginOcrSession = useCallback(
-    async (pageImages, fileName, signal) => {
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    async (pagine, fileName, signal) => {
+      const { id, count } = pagine;
       sessionRef.current = {
         id,
         fileName,
         ocr: {
-          total: pageImages.length,
+          total: count,
           done: 0,
-          parts: new Array(pageImages.length).fill(null),
+          parts: new Array(count).fill(null),
           figCount: 0,
           source: 'ocr',
-          comparisons: new Array(pageImages.length).fill(null),
+          comparisons: new Array(count).fill(null),
         },
         styleHint: undefined,
         lastError: '',
       };
-      if (pageImages.length > 1) setDetail('Preparazione ripresa…');
-      await savePages(id, pageImages, (n, t) => {
-        if (t > 1) setDetail(`Preparazione ripresa… ${n}/${t}`);
-      });
       await persistOcr('ocr');
-      // Le pagine sono ora su IndexedDB: liberare l'array evita di tenere in
-      // RAM l'intero libro rasterizzato mentre l'OCR procede pagina per pagina
-      // (le rilegge una alla volta, che è l'unico modo in cui le usa).
-      pageImages.length = 0;
       await runOcrPhase(signal);
     },
     [persistOcr, runOcrPhase],
@@ -1544,11 +1546,29 @@ export function usePipeline(settings) {
       try {
         const hasEdits = edits?.some((e) => e.rotate || e.split);
         if (hasEdits) setDetail('Applico rotazioni e divisioni…');
-        const finalPages = await preparePages(pending.pageImages, edits, (n, t) => {
-          if (hasEdits) setDetail(`Preparo le pagine ${n}/${t}…`);
-        });
+        // Le pagine stanno su disco: si trasformano UNA alla volta. Si procede
+        // dall'ultima verso la prima perché una doppia pagina divisa produce
+        // due immagini e sposta in avanti tutte quelle che seguono: andando
+        // all'indietro, ciò che si sovrascrive è già stato letto.
+        const { total, plan } = pageTargets(pending.count, edits);
+        let fatte = 0;
+        for (const { index, targets } of plan) {
+          if (controller.signal.aborted) return;
+          fatte++;
+          if (hasEdits) setDetail(`Preparo le pagine ${fatte}/${pending.count}…`);
+          const originale = await getPage(pending.id, index);
+          if (!originale) continue;
+          const prodotte = await preparePages([originale], [edits?.[index] || {}]);
+          for (let k = 0; k < prodotte.length && k < targets.length; k++) {
+            await savePage(pending.id, targets[k], prodotte[k]);
+          }
+        }
         if (controller.signal.aborted) return;
-        await beginOcrSession(finalPages, pending.fileName, controller.signal);
+        await beginOcrSession(
+          { id: pending.id, count: total },
+          pending.fileName,
+          controller.signal,
+        );
       } catch (e) {
         if (controller.signal.aborted || e?.name === 'AbortError') return;
         setError(e.message || 'Errore nella preparazione delle pagine.');
@@ -3455,7 +3475,10 @@ export function usePipeline(settings) {
         setStatus((s) => ({ ...s, ocr: 'active' }));
         setDetail('');
 
-        let pageImages;
+        // L'identificativo nasce qui: le pagine vengono scritte su disco sotto
+        // questo nome mentre si rasterizza, prima ancora della sessione OCR.
+        const ingestId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const thumbs = [];
         let pdfBuffer = null;
         if (isPdf(file)) {
           pdfBuffer = await file.arrayBuffer();
@@ -3483,36 +3506,42 @@ export function usePipeline(settings) {
             setDetail(''); // niente testo digitale: si procede con l'OCR
           }
           setDetail('Rendering del PDF…');
-          pageImages = await renderPdfToImages(pdfBuffer, {
+          // Ogni pagina va su disco appena è pronta e in memoria resta solo la
+          // sua miniatura: è ciò che permette di aprire volumi grandi senza
+          // tenere in RAM l'intero libro rasterizzato.
+          await renderPdfToImages(pdfBuffer, {
             maxPages: settings.maxPages,
             longSide: settings.ocrLongSide,
             onProgress: (p, t) => setDetail(`Rendering pagina ${p}/${t}…`),
+            onPage: async (index, dataUrl) => {
+              await savePage(ingestId, index, dataUrl);
+              thumbs.push({
+                index,
+                url: await makeThumbnail(dataUrl),
+                rotate: 0,
+                split: isSpreadLike(dataUrl),
+              });
+            },
           });
+          pdfBuffer = null; // il buffer del file non serve più
         } else {
-          pageImages = [await fileToDataUrl(file)];
+          const dataUrl = await fileToDataUrl(file);
+          await savePage(ingestId, 0, dataUrl);
+          thumbs.push({
+            index: 0,
+            url: await makeThumbnail(dataUrl),
+            rotate: 0,
+            split: isSpreadLike(dataUrl),
+          });
         }
         if (signal.aborted) return;
-        if (!pageImages.length) throw new Error('Nessuna pagina da elaborare.');
+        if (!thumbs.length) throw new Error('Nessuna pagina da elaborare.');
 
         // ANTEPRIMA PAGINE prima dell'OCR: le doppie pagine (spread) vengono
         // rilevate dal rapporto d'aspetto e proposte per la divisione; le
         // pagine ruotate si raddrizzano col tasto ↻. La pipeline resta in
         // pausa finché l'utente non conferma.
-        pendingPagesRef.current = { pageImages, fileName: file.name };
-        // L'anteprima usa MINIATURE: un `<img>` per pagina a piena risoluzione
-        // riempirebbe il DOM di bitmap decodificate (centinaia di MB su un
-        // libro). Le immagini vere restano in pendingPagesRef per l'OCR.
-        setDetail('Preparazione anteprima…');
-        const thumbs = [];
-        for (let i = 0; i < pageImages.length; i++) {
-          thumbs.push({
-            index: i,
-            url: await makeThumbnail(pageImages[i]),
-            rotate: 0,
-            split: isSpreadLike(pageImages[i]),
-          });
-          if (signal.aborted) return;
-        }
+        pendingPagesRef.current = { id: ingestId, count: thumbs.length, fileName: file.name };
         setPageReview(thumbs);
         setActiveStep(null);
         setDetail('Controlla rotazione e doppie pagine, poi avvia l’estrazione.');

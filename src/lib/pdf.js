@@ -109,10 +109,13 @@ export function acquirePdfDocument(data) {
  *   Valori più alti = OCR più accurato su scansioni pessime, ma payload e
  *   tempi maggiori.
  * @param {(page:number,total:number)=>void} [opts.onProgress]
- * @returns {Promise<string[]>} data URL PNG, una per pagina
+ * @param {(index:number,dataUrl:string)=>Promise<void>} [opts.onPage] consegna
+ *   ogni pagina appena pronta invece di accumularle tutte (necessario per i
+ *   volumi grandi); in questo caso l'array restituito è vuoto.
+ * @returns {Promise<string[]>} data URL PNG, una per pagina (vuoto con onPage)
  */
 export async function renderPdfToImages(data, opts = {}) {
-  const { maxPages = MAX_PDF_PAGES, onProgress } = opts;
+  const { maxPages = MAX_PDF_PAGES, onProgress, onPage } = opts;
   // Limiti prudenti: sotto ~1000px l'OCR degrada, sopra ~5000px i payload
   // rischiano i limiti delle API (Gemini inline_data, NIM).
   const longSide = Math.min(5000, Math.max(1000, opts.longSide || TARGET_LONG_SIDE));
@@ -137,7 +140,12 @@ export async function renderPdfToImages(data, opts = {}) {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       await page.render({ canvasContext: ctx, viewport }).promise;
-      images.push(canvas.toDataURL('image/png'));
+      const dataUrl = canvas.toDataURL('image/png');
+      // Con `onPage` la pagina viene consegnata subito e NON accumulata: un
+      // libro di quattrocento pagine rasterizzate è quasi un gigabyte, e
+      // tenerlo tutto in memoria era il vero motivo del tetto sui file.
+      if (onPage) await onPage(i - 1, dataUrl);
+      else images.push(dataUrl);
       page.cleanup();
     }
     return images;

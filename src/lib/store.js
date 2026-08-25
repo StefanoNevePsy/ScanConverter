@@ -403,6 +403,22 @@ export async function savePages(id, dataUrls, onProgress) {
   }
 }
 
+/**
+ * Salva UNA pagina appena è pronta.
+ *
+ * È ciò che permette di aprire libri grandi: la rasterizzazione non accumula
+ * più l'intero volume in memoria prima di scriverlo, ma consegna una pagina
+ * per volta e se ne dimentica.
+ */
+export async function savePage(id, index, dataUrl) {
+  if (!dataUrl) return;
+  try {
+    await tx('page', 'readwrite', (s) => s.put({ key: `${id}::${index}`, id, index, dataUrl }));
+  } catch {
+    /* persistenza non disponibile: il chiamante resta comunque in memoria */
+  }
+}
+
 export async function saveTranslationGroup(id, jobKey, checkpoint) {
   try {
     const index = Number(checkpoint?.index);
