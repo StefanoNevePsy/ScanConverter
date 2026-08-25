@@ -46,6 +46,7 @@ import {
   normalizeLayoutOptions,
 } from '../lib/preamble.js';
 import { setChapterOpeners } from '../lib/bookStyle.js';
+import { verifyPdfText, splitPdfPages } from '../lib/verifyWindow.js';
 import {
   diagnosticProgress,
   repairTypstDeterministically,
@@ -281,6 +282,10 @@ export function usePipeline(settings) {
   const [proofNotice, setProofNotice] = useState('');
   // L'anteprima è più recente dell'ultimo confronto testo↔PDF.
   const [verificationPending, setVerificationPending] = useState(false);
+  // Ultima lettura completa del PDF, pagina per pagina: permette di riverificare
+  // solo le pagine toccate invece di rileggere tutto il libro. Vive in memoria e
+  // non nell'archivio: al riavvio la prima verifica torna a essere completa.
+  const pdfPagesRef = useRef(null);
   const [proofreadDetail, setProofreadDetail] = useState(''); // "3/12 paragrafi…"
   const [selectionAiBusy, setSelectionAiBusy] = useState(null); // 'proof' | 'translate' | null
   const [selectionAiDetail, setSelectionAiDetail] = useState('');
@@ -412,14 +417,21 @@ export function usePipeline(settings) {
     const pdfBytes = existingBytes || await compileToPdf(source, figuresRef.current);
     // Il PDF riformattato può avere più pagine dell'input: non applicare qui
     // il limite di ingestione configurato per i PDF sorgente.
-    const pdfText = await extractPdfText(pdfBytes, {
+    const leggiPagine = (pagine) => extractPdfText(pdfBytes, {
+      pages: pagine || null,
       onProgress: (page, total) => {
         if (page === 1 || page === total || page % 8 === 0) {
           setDetail(`Verifica testuale del PDF · pagina ${page}/${total}…`);
         }
       },
     });
-    if (!pdfText) {
+    const pdfText = await verifyPdfText({
+      source,
+      previous: pdfPagesRef.current,
+      read: leggiPagine,
+      onDetail: setDetail,
+    });
+    if (!pdfText.text) {
       const pdf = { contentOk: false, unverifiable: true, missing: [], added: [], missingInvariants: [] };
       s.pdfVerification = {
         key: verificationKey,
@@ -433,9 +445,21 @@ export function usePipeline(settings) {
       return pdfBytes;
     }
     const expected = sourcePlainText(authoritativeText);
-    const actual = sourcePlainText(pdfText);
+    let letto = pdfText;
+    let actual = sourcePlainText(letto.text);
+    let inventory = compareTokenInventory(expected, actual);
+    // Un'assenza vista su una lettura PARZIALE non basta ad accusare il
+    // documento: potrebbe stare nelle pagine riusate. Prima di dirlo si
+    // rilegge tutto, così un allarme è sempre un allarme vero.
+    if (letto.incremental && inventory.missing.length) {
+      letto = { text: await leggiPagine(null), incremental: false };
+      actual = sourcePlainText(letto.text);
+      inventory = compareTokenInventory(expected, actual);
+    }
+    if (!letto.incremental && letto.text) {
+      pdfPagesRef.current = { source, pages: splitPdfPages(letto.text) };
+    }
     const sequence = compareTokenSequences(expected, actual);
-    const inventory = compareTokenInventory(expected, actual);
     const invariants = missingInvariants(expected, actual);
     // La sequenza può differire perché PDF.js legge tabelle, note o colonne in
     // un ordine visivo diverso. Un'omissione è confermata solo se manca anche

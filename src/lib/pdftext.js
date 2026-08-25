@@ -83,7 +83,7 @@ function buildLevelMap(sizes, body) {
  * @returns {Promise<string|null>} Markdown, o null se non c'è testo utile
  */
 export async function extractPdfText(data, opts = {}) {
-  const { maxPages = 2000, onProgress, yieldEvery = 8 } = opts;
+  const { maxPages = 2000, onProgress, yieldEvery = 8, pages: only = null } = opts;
   // Sul desktop il PDF compilato resta su file ed è letto a intervalli. Per i
   // PDF caricati dall'utente conserva la copia che evita il detach del buffer.
   const loadingTask = isDesktopPdfArtifact(data)
@@ -92,12 +92,19 @@ export async function extractPdfText(data, opts = {}) {
   const pdf = await loadingTask.promise;
   try {
     const total = Math.min(pdf.numPages, maxPages);
-    const pages = []; // righe per pagina
+    // `pages`: legge SOLO le pagine chieste, conservandone il numero vero. Serve
+    // alla verifica incrementale, che riusa la lettura precedente per tutte le
+    // altre invece di rifare centinaia di pagine per una parola cambiata.
+    const wanted = Array.isArray(only) && only.length
+      ? [...new Set(only)].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b)
+      : null;
+    const numbers = wanted || Array.from({ length: total }, (_, index) => index + 1);
+    const pages = []; // righe per pagina, nell'ordine di `numbers`
     const allSizes = [];
     let totalChars = 0;
 
-    for (let i = 1; i <= total; i++) {
-      onProgress?.(i, total);
+    for (const [index, i] of numbers.entries()) {
+      onProgress?.(index + 1, numbers.length);
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
       const lines = groupLines(content.items);
@@ -105,18 +112,18 @@ export async function extractPdfText(data, opts = {}) {
         totalChars += l.text.length;
         if (l.text.length >= 4) allSizes.push(Math.round(l.size));
       }
-      pages.push(lines);
+      pages.push({ number: i, lines });
       page.cleanup();
       // Su libri di centinaia di pagine lascia periodicamente respirare il
       // renderer Electron/WebView. Il lavoro totale non cambia, ma menu,
       // avanzamento e annullamento non restano congelati fino all'ultima pagina.
-      if (yieldEvery > 0 && i < total && i % yieldEvery === 0) {
+      if (yieldEvery > 0 && index + 1 < numbers.length && (index + 1) % yieldEvery === 0) {
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
     }
 
     // Nessun layer testo utile (pura scansione): ~< 20 caratteri per pagina.
-    if (totalChars < Math.max(40, total * 20)) return null;
+    if (totalChars < Math.max(40, numbers.length * 20)) return null;
 
     // Dimensione del corpo = quella più frequente tra le righe di testo.
     const freq = new Map();
@@ -125,8 +132,8 @@ export async function extractPdfText(data, opts = {}) {
     const levelMap = buildLevelMap(allSizes, body);
 
     const out = [];
-    pages.forEach((lines, p) => {
-      if (total > 1) out.push(`<!-- pagina ${p + 1} -->`);
+    pages.forEach(({ number, lines }) => {
+      if (total > 1) out.push(`<!-- pagina ${number} -->`);
       let para = [];
       const flush = () => {
         if (para.length) {
