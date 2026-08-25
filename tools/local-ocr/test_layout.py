@@ -14,7 +14,14 @@ import sys
 
 import numpy as np
 
-from layout import find_figures, find_ruling_lines, find_tables, heading_levels
+from layout import (
+    estimate_skew,
+    find_figures,
+    find_ruling_lines,
+    find_tables,
+    heading_levels,
+    ink_mask,
+)
 
 PASSED: list[str] = []
 FAILED: list[str] = []
@@ -162,10 +169,89 @@ def test_borderless_table_by_alignment() -> None:
         check("riquadro tabella plausibile", x0 <= 100 and y1 >= 560, str(tables[0]))
 
 
+def test_shared_mask_gives_the_same_answers() -> None:
+    """
+    La maschera d'inchiostro si calcola una volta per pagina e si passa a
+    tabelle e figure. Deve dare gli stessi riquadri del calcolo separato — e
+    non deve restare sporcata da chi la usa: `find_figures` cancella il testo
+    dalla maschera, e se lo facesse su quella condivisa il chiamante dopo di
+    lui vedrebbe una pagina mezza vuota.
+    """
+    rng = np.random.default_rng(4)
+    page = blank_page()
+    for i in range(6):
+        _glyph_line(page, 80, 60 + i * 30, 720, 78 + i * 30, rng)
+    for y in (300, 360, 420, 480):
+        draw(page, 100, y, 700, y + 3)
+    for x in (100, 400, 700):
+        draw(page, x, 300, x + 3, 480)
+    draw(page, 120, 700, 400, 900, 40)
+    boxes = [(80, 60 + i * 30, 720, 78 + i * 30) for i in range(6)]
+
+    condivisa = ink_mask(page)
+    prima = condivisa.sum()
+    tabelle_sep = find_tables(page, boxes)
+    figure_sep = find_figures(page, boxes)
+    tabelle_cond = find_tables(page, boxes, mask=condivisa)
+    figure_cond = find_figures(page, boxes, mask=condivisa)
+
+    check("tabelle uguali con la maschera condivisa", tabelle_sep == tabelle_cond)
+    check("figure uguali con la maschera condivisa", figure_sep == figure_cond)
+    check("maschera condivisa non sporcata", condivisa.sum() == prima)
+
+
 def test_prose_is_not_a_table() -> None:
     """Righe di prosa a piena larghezza non sono una tabella."""
     text_boxes = [(80, 40 + i * 30, 720, 58 + i * 30) for i in range(15)]
     check("prosa non scambiata per tabella", find_tables(blank_page(), text_boxes) == [])
+
+
+# --------------------------------------------------------- inclinazione
+
+
+def _skewed_text_page(angle: float, rng) -> np.ndarray:
+    """Pagina di righe di testo, appoggiata storta sul vetro."""
+    from PIL import Image
+
+    page = blank_page(900, 1200)
+    for i in range(24):
+        y = 80 + i * 45
+        _glyph_line(page, 120, y, 780, y + 26, rng)
+    return np.asarray(
+        Image.fromarray(page).rotate(angle, resample=Image.BILINEAR, fillcolor=255),
+        dtype=np.uint8,
+    )
+
+
+def _exhaustive_skew(gray: np.ndarray, limit: float = 5.0, step: float = 0.25) -> float:
+    """La ricerca esaustiva, tenuta qui come metro di paragone."""
+    return estimate_skew(gray, limit=limit, step=step, _coarse=step)
+
+
+def test_skew_search_matches_exhaustive() -> None:
+    """
+    La ricerca in due tempi deve dare esattamente l'angolo della ricerca
+    esaustiva: è un'ottimizzazione, non un'approssimazione. Se un giorno il
+    punteggio cambiasse forma e i due passaggi divergessero, si scopre qui.
+    """
+    rng = np.random.default_rng(5)
+    diverse = []
+    for atteso in (-3.5, -2.0, -0.75, 0.0, 1.25, 2.5, 4.0):
+        page = _skewed_text_page(atteso, rng)
+        rapida, lenta = estimate_skew(page), _exhaustive_skew(page)
+        if abs(rapida - lenta) > 1e-9:
+            diverse.append(f"{atteso:+.2f}: {rapida:+.2f} invece di {lenta:+.2f}")
+        # E l'angolo trovato deve essere quello che RADDRIZZA la pagina, cioè
+        # l'opposto di quello con cui è stata storta.
+        if abs(rapida + atteso) > 0.5:
+            diverse.append(f"storta di {atteso:+.2f}: raddrizza di {rapida:+.2f}")
+    check("ricerca rapida uguale a esaustiva", not diverse, "; ".join(diverse))
+
+
+def test_skew_of_straight_page_is_zero() -> None:
+    """Una pagina dritta non va raddrizzata."""
+    rng = np.random.default_rng(9)
+    check("pagina dritta", abs(estimate_skew(_skewed_text_page(0.0, rng))) <= 0.25)
 
 
 # --------------------------------------------------- pagina completa
@@ -261,7 +347,10 @@ def main() -> int:
         test_scan_noise_is_ignored,
         test_bordered_table,
         test_borderless_table_by_alignment,
+        test_shared_mask_gives_the_same_answers,
         test_prose_is_not_a_table,
+        test_skew_search_matches_exhaustive,
+        test_skew_of_straight_page_is_zero,
         test_full_page_integration,
         test_official_v2_normalized_regions,
     ]:

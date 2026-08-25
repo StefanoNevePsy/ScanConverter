@@ -44,6 +44,7 @@ from layout import (
     estimate_skew,
     find_figures_excluding,
     find_tables,
+    ink_mask,
     heading_levels,
     rotate_box,
 )
@@ -137,13 +138,17 @@ def to_blocks(regions, width: int, height: int, page_gray=None) -> list[dict]:
     def back(box):
         return rotate_box(box, angle, width, height)
 
-    tables = find_tables(straight, straight_boxes)
+    # La maschera d'inchiostro è la parte cara dell'analisi e serve identica a
+    # tabelle e figure: si calcola una volta sola per pagina.
+    mask = ink_mask(straight)
+
+    tables = find_tables(straight, straight_boxes, mask=mask)
     for x0, y0, x1, y1 in (back(t) for t in tables):
         blocks.append({"type": "Table", "text": "", "bbox": _norm(x0, y0, x1, y1, width, height)})
     # Le tabelle sono già rese come tabelle: escluderle evita che tornino anche
     # come immagini ritagliate.
     for x0, y0, x1, y1 in (
-        back(f) for f in find_figures_excluding(straight, straight_boxes, tables)
+        back(f) for f in find_figures_excluding(straight, straight_boxes, tables, mask=mask)
     ):
         blocks.append({"type": "Picture", "text": "", "bbox": _norm(x0, y0, x1, y1, width, height)})
     return blocks

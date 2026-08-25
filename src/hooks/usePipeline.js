@@ -1254,11 +1254,18 @@ export function usePipeline(settings) {
       // di MB su un volume di 250 pagine) e fa uccidere la WebView.
       const pageAt = (i) =>
         pagesInMemory ? pagesInMemory.get(i) : getPage(s.id, i);
+      // La pagina DOPO si va a prendere mentre quella corrente è dall'OCR.
+      // Leggere un'immagine da IndexedDB non costa nulla al motore — che nel
+      // frattempo sta lavorando — ma costa al lettore se lo si fa aspettare.
+      // Due pagine in RAM invece di una: il libro intero resta fuori.
+      const prefetch = (i) => (i < total ? Promise.resolve(pageAt(i)).catch(() => null) : null);
+      let attesa = null;
       for (let i = s.ocr.done; i < total; i++) {
         setOcrProgress({ done: i, total });
         const label = total > 1 ? `OCR pagina ${i + 1}/${total}` : 'Estrazione testo';
         setDetail(total > 1 ? `${label}…` : '');
-        const dataUrl = await pageAt(i);
+        const dataUrl = (await (attesa || prefetch(i))) || (await pageAt(i));
+        attesa = prefetch(i + 1);
         if (!dataUrl) {
           s.lastError = `Immagine della pagina ${i + 1} non più disponibile.`;
           await persistOcr('ocr');
