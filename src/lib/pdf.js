@@ -61,6 +61,44 @@ export function loadPdfDocument(data) {
   return pdfjsLib.getDocument({ data: copyBytes(data), wasmUrl: WASM_URL });
 }
 
+/*
+  Un solo documento pdf.js per PDF, condiviso.
+
+  Dopo ogni compilazione gli stessi byte venivano aperti DUE volte: una dalla
+  verifica testuale, una dall'anteprima. Su un libro di quattrocento pagine
+  l'apertura da sola è quasi un secondo, pagato due volte per niente. Qui si
+  apre una volta e si conta chi lo sta usando: il documento si chiude quando
+  l'ultimo lo lascia, mai mentre l'altro ci sta lavorando.
+*/
+let sharedEntry = null;
+
+/**
+ * Prende in uso il documento pdf.js di questi byte, aprendolo se serve.
+ * @param {ArrayBuffer|Uint8Array|object} data
+ * @returns {{promise: Promise<any>, release: () => void}}
+ */
+export function acquirePdfDocument(data) {
+  if (!sharedEntry || sharedEntry.key !== data) {
+    const previous = sharedEntry;
+    sharedEntry = { key: data, task: loadPdfDocument(data), refs: 0 };
+    if (previous && previous.refs <= 0) previous.task.destroy();
+  }
+  const entry = sharedEntry;
+  entry.refs += 1;
+  let released = false;
+  return {
+    promise: entry.task.promise,
+    release() {
+      if (released) return;
+      released = true;
+      entry.refs -= 1;
+      // Si chiude solo ciò che non è più il documento corrente: quello in uso
+      // resta aperto anche a contatore zero, pronto per il prossimo giro.
+      if (entry.refs <= 0 && sharedEntry !== entry) entry.task.destroy();
+    },
+  };
+}
+
 /**
  * Renderizza le pagine di un PDF in data URL PNG.
  *

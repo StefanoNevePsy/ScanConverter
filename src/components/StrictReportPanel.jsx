@@ -108,6 +108,24 @@ export default function StrictReportPanel({
                   Il PDF non viene bloccato: confronta i termini indicati con il Typst, che resta la fonte del documento.
                 </p>
               )}
+              {report.pdf.timings && (
+                <p className="mt-1 text-xs text-faint">
+                  Lettura del PDF {(report.pdf.timings.readMs / 1000).toFixed(1)}s
+                  {report.pdf.timings.incremental ? ' (solo le pagine toccate)' : ` (${report.pdf.timings.pages} pagine)`}
+                  {' · confronto '}{(report.pdf.timings.compareMs / 1000).toFixed(1)}s
+                </p>
+              )}
+              {report.pdf.reviewPending && (
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                  <IconSpinner width={12} height={12} />
+                  Il modello sta classificando le frasi discordanti: il PDF è già pronto, l’etichetta arriva dopo.
+                </p>
+              )}
+              {report.pdf.reviewError && (
+                <p className="mt-1 text-xs text-muted">
+                  Classificazione AI non riuscita ({report.pdf.reviewError}). Il confronto locale resta valido.
+                </p>
+              )}
               {!!report.pdf.issues?.length && (
                 <div className="mt-4 space-y-3">
                   <div className="font-medium text-ink">Confronto automatico per frase</div>

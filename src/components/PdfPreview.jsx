@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { IconArrowLeft, IconDownload, IconSpinner, IconFile, IconShare } from './Icons.jsx';
 import { isNativeApp } from '../lib/download.js';
-import { loadPdfDocument } from '../lib/pdf.js';
+import { acquirePdfDocument } from '../lib/pdf.js';
 import { hasPdfData } from '../lib/desktop.js';
 import {
   choosePdfSearchPage,
@@ -121,9 +121,9 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
     if (!hasPdfData(pdfBytes)) return undefined;
 
     let active = true;
-    const loadingTask = loadPdfDocument(pdfBytes);
+    const handle = acquirePdfDocument(pdfBytes);
     setOpening(true);
-    loadingTask.promise
+    handle.promise
       .then((doc) => {
         if (!active) return;
         setPdfDocument(doc);
@@ -139,7 +139,7 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
 
     return () => {
       active = false;
-      loadingTask.destroy();
+      handle.release();
     };
   }, [pdfBytes]);
 

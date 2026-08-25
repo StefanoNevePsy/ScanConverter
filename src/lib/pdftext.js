@@ -15,7 +15,7 @@
 
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
-import { copyBytes } from './pdf.js';
+import { acquirePdfDocument } from './pdf.js';
 import { isDesktopPdfArtifact } from './desktop.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -86,10 +86,10 @@ export async function extractPdfText(data, opts = {}) {
   const { maxPages = 2000, onProgress, yieldEvery = 8, pages: only = null } = opts;
   // Sul desktop il PDF compilato resta su file ed è letto a intervalli. Per i
   // PDF caricati dall'utente conserva la copia che evita il detach del buffer.
-  const loadingTask = isDesktopPdfArtifact(data)
-    ? pdfjsLib.getDocument({ url: data.url, wasmUrl: WASM_URL })
-    : pdfjsLib.getDocument({ data: copyBytes(data), wasmUrl: WASM_URL });
-  const pdf = await loadingTask.promise;
+  // Documento condiviso con l'anteprima: gli stessi byte non vanno aperti due
+  // volte (su un libro è quasi un secondo ogni volta).
+  const handle = acquirePdfDocument(data);
+  const pdf = await handle.promise;
   try {
     const total = Math.min(pdf.numPages, maxPages);
     // `pages`: legge SOLO le pagine chieste, conservandone il numero vero. Serve
@@ -164,6 +164,6 @@ export async function extractPdfText(data, opts = {}) {
     const text = out.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
     return text || null;
   } finally {
-    loadingTask.destroy();
+    handle.release();
   }
 }

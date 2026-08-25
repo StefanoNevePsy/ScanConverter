@@ -382,6 +382,44 @@ export function usePipeline(settings) {
     return bytes;
   }, [getCompiledPdf]);
 
+  /**
+   * Classificazione delle discordanze, in sottofondo.
+   *
+   * Chiede al modello se una parola assente dal PDF sia un'omissione vera o un
+   * artefatto di lettura. È un'ETICHETTA sul referto, non un verdetto: il
+   * documento è già pronto e verificato localmente quando questa parte.
+   */
+  const differenceReviewRef = useRef('');
+  const classifyDifferences = useCallback(async (session, pdf, reviewKey) => {
+    if (!session || !reviewKey || differenceReviewRef.current === reviewKey) return;
+    differenceReviewRef.current = reviewKey;
+    try {
+      const aiReview = await withRetry(
+        () => requestStrictDifferenceReview({ settings, issues: pdf.issues, signal: abortRef.current?.signal }),
+        abortRef.current?.signal,
+        () => {},
+        { max: 2, start: 5000, cap: 20000 },
+      );
+      if (sessionRef.current !== session) return;
+      session.strictReviewKey = reviewKey;
+      session.strictReview = aiReview;
+      const updated = { ...pdf, aiReview, reviewPending: false };
+      if (session.pdfVerification?.pdf === pdf) session.pdfVerification.pdf = updated;
+      setStrictReport(strictReportFromPdf(session, updated));
+    } catch (e) {
+      if (e?.name === 'AbortError' || sessionRef.current !== session) return;
+      const updated = {
+        ...pdf,
+        reviewPending: false,
+        reviewError: e.message || 'Classificazione AI non disponibile.',
+      };
+      if (session.pdfVerification?.pdf === pdf) session.pdfVerification.pdf = updated;
+      setStrictReport(strictReportFromPdf(session, updated));
+    } finally {
+      if (differenceReviewRef.current === reviewKey) differenceReviewRef.current = '';
+    }
+  }, [settings]);
+
   /** Compila e confronta il layer testuale del PDF con il Typst autorevole. */
   const verifyStrictPdf = useCallback(async (source, existingBytes = null) => {
     const s = sessionRef.current;
@@ -425,6 +463,7 @@ export function usePipeline(settings) {
         }
       },
     });
+    const readStart = performance.now();
     const pdfText = await verifyPdfText({
       source,
       previous: pdfPagesRef.current,
@@ -444,6 +483,8 @@ export function usePipeline(settings) {
       s.verifiedPdfArtifact = pdfBytes;
       return pdfBytes;
     }
+    const readMs = performance.now() - readStart;
+    const compareStart = performance.now();
     const expected = sourcePlainText(authoritativeText);
     let letto = pdfText;
     let actual = sourcePlainText(letto.text);
@@ -473,29 +514,17 @@ export function usePipeline(settings) {
       issues.every((issue) => issueResolutions[issue.key]?.status === 'artifact');
     const contentOk = invariants.length === 0 &&
       (inventory.missing.length === 0 || allCoveredAsArtifacts);
-    let aiReview = [];
-    let reviewError = '';
-    if (issues.length) {
-      const reviewKey = JSON.stringify(issues.map((i) => [i.missing, i.source, i.rendered]));
-      if (s.strictReviewKey === reviewKey && Array.isArray(s.strictReview)) {
-        aiReview = s.strictReview;
-      } else {
-        try {
-          setDetail('Il modello controlla le frasi discordanti…');
-          aiReview = await withRetry(
-            () => requestStrictDifferenceReview({ settings, issues, signal: abortRef.current?.signal }),
-            abortRef.current?.signal,
-            (secs) => setDetail(`Revisione differenze · nuovo tentativo tra ${secs}s…`),
-            { max: 2, start: 5000, cap: 20000 },
-          );
-          s.strictReviewKey = reviewKey;
-          s.strictReview = aiReview;
-        } catch (e) {
-          if (e?.name === 'AbortError') throw e;
-          reviewError = e.message || 'Revisione AI non disponibile.';
-        }
-      }
-    }
+    // La classificazione AI delle discordanze NON decide niente: dice soltanto
+    // se una parola che manca nel PDF è un'omissione vera o un artefatto di
+    // lettura. Teneva però in ostaggio la generazione — una chiamata al
+    // modello, con due tentativi a 5-20 secondi, prima di poter vedere il PDF.
+    // Ora il documento arriva subito e l'etichetta si aggiunge dopo.
+    const reviewKey = issues.length
+      ? JSON.stringify(issues.map((i) => [i.missing, i.source, i.rendered]))
+      : '';
+    const cachedReview = reviewKey && s.strictReviewKey === reviewKey && Array.isArray(s.strictReview)
+      ? s.strictReview
+      : null;
     const pdf = {
       ...sequence,
       exactOrder: sequence.ok,
@@ -504,8 +533,15 @@ export function usePipeline(settings) {
       added: inventory.added,
       missingInvariants: invariants,
       issues,
-      aiReview,
-      reviewError,
+      aiReview: cachedReview || [],
+      reviewError: '',
+      reviewPending: Boolean(reviewKey && !cachedReview),
+      timings: {
+        readMs: Math.round(readMs),
+        compareMs: Math.round(performance.now() - compareStart),
+        pages: splitPdfPages(letto.text || '').length,
+        incremental: letto.incremental,
+      },
     };
     s.pdfVerification = {
       key: verificationKey,
@@ -517,8 +553,9 @@ export function usePipeline(settings) {
     s.verified = contentOk;
     s.verifiedPdfSource = source;
     s.verifiedPdfArtifact = pdfBytes;
+    if (pdf.reviewPending) classifyDifferences(s, pdf, reviewKey);
     return pdfBytes;
-  }, [settings]);
+  }, [settings, classifyDifferences]);
 
   // Chiude la revisione figure revocando gli object URL delle miniature.
   const clearReview = useCallback(() => {
