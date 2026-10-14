@@ -375,7 +375,10 @@ function startPaddleServer(root, onLine) {
   if (!fs.existsSync(python)) {
     return { ok: false, detail: `PaddleOCR non risulta installato in ${dir}: premi prima «Scarica e installa».` };
   }
-  paddleProcess = spawn(python, [path.join(dir, 'server.py'), '--host', '127.0.0.1', '--port', '8001'], {
+  rememberPaddleRoot(root);
+  // Si spegne da solo dopo 10 minuti senza pagine: la memoria torna libera,
+  // e `ensurePaddleServer` lo riaccende alla pagina successiva.
+  paddleProcess = spawn(python, [path.join(dir, 'server.py'), '--host', '127.0.0.1', '--port', '8001', '--idle-exit', '600'], {
     cwd: dir,
     windowsHide: true,
     env: { ...process.env, PADDLE_PDX_CACHE_HOME: path.join(root, 'paddle-cache') },
@@ -384,6 +387,54 @@ function startPaddleServer(root, onLine) {
   paddleProcess.stderr.on('data', (chunk) => onLine(chunk.toString()));
   paddleProcess.on('exit', (code) => onLine(`\nServer PaddleOCR terminato (codice ${code}).\n`));
   return { ok: true, detail: 'Server avviato: il primo caricamento del modello richiede qualche secondo.' };
+}
+
+function paddleRootFile() {
+  return path.join(app.getPath('userData'), 'paddle-root.json');
+}
+
+function rememberPaddleRoot(root) {
+  try {
+    fs.writeFileSync(paddleRootFile(), JSON.stringify({ root }));
+  } catch {
+    /* non essenziale */
+  }
+}
+
+function knownPaddleRoot() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(paddleRootFile(), 'utf8'));
+    if (saved?.root) return String(saved.root);
+  } catch {
+    /* si prova l'esito del setup */
+  }
+  const setup = readLocalSetup();
+  return setup.found && setup.root ? setup.root : '';
+}
+
+async function paddleHealthy() {
+  try {
+    const res = await fetch('http://127.0.0.1:8001/health', { signal: AbortSignal.timeout(2000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Riaccende il server se serve e aspetta che risponda (max 2 minuti). */
+async function ensurePaddleServer(onLine) {
+  if (await paddleHealthy()) return { ok: true, detail: 'Già in esecuzione.' };
+  const root = knownPaddleRoot();
+  if (!root) return { ok: false, detail: 'PaddleOCR locale non risulta installato.' };
+  const started = startPaddleServer(root, onLine);
+  if (!started.ok) return started;
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1500));
+    if (await paddleHealthy()) return { ok: true, detail: 'Server riavviato.' };
+    if (!paddleProcess || paddleProcess.exitCode !== null) break;
+  }
+  return { ok: false, detail: 'Il server PaddleOCR non è ripartito: avvialo dalle impostazioni.' };
 }
 
 function stopPaddleServer() {
@@ -400,6 +451,10 @@ function registerDesktopIpc() {
     const root = String(request?.root || '').trim();
     if (!root || !path.isAbsolute(root)) return { ok: false, error: 'Scegli una cartella con percorso completo.' };
     return runPaddleInstall(root, sendPaddleLog(event));
+  });
+  ipcMain.handle('desktop:paddle:ensure', async (event) => {
+    assertTrustedRenderer(event);
+    return ensurePaddleServer(sendPaddleLog(event));
   });
   ipcMain.handle('desktop:paddle:start', async (event, request) => {
     assertTrustedRenderer(event);

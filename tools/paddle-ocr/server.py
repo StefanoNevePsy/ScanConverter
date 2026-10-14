@@ -19,7 +19,9 @@ import base64
 import io
 import json
 import logging
+import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -30,6 +32,24 @@ _PIPELINE: Any = None
 # Il modello non è rientrante: una pagina alla volta.
 _LOCK = threading.Lock()
 _LOAD_LOCK = threading.Lock()
+# Ultima attività e richieste in corso: servono allo spegnimento per inattività.
+_LAST_ACTIVITY = time.monotonic()
+_BUSY = 0
+_BUSY_LOCK = threading.Lock()
+
+
+def idle_watchdog(seconds: int) -> None:
+    """Spegne il server dopo `seconds` senza pagine: libera la memoria.
+
+    L'app desktop lo riaccende da sola alla pagina successiva.
+    """
+    while True:
+        time.sleep(15)
+        with _BUSY_LOCK:
+            idle = _BUSY == 0 and time.monotonic() - _LAST_ACTIVITY > seconds
+        if idle:
+            log.info("Nessuna pagina da %d minuti: mi spengo per liberare memoria.", seconds // 60)
+            os._exit(0)
 
 
 def load_pipeline():
@@ -147,6 +167,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.rstrip("/") != "/layout-parsing":
             self._send(404, {"errorCode": 404, "errorMsg": "usa POST /layout-parsing"})
             return
+        global _LAST_ACTIVITY, _BUSY
+        with _BUSY_LOCK:
+            _BUSY += 1
         try:
             length = int(self.headers.get("Content-Length") or 0)
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -158,6 +181,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001 — l'errore va restituito all'app
             log.exception("Errore durante l'OCR")
             self._send(500, {"errorCode": 500, "errorMsg": str(exc)})
+        finally:
+            with _BUSY_LOCK:
+                _BUSY -= 1
+                _LAST_ACTIVITY = time.monotonic()
 
     def log_message(self, *args) -> None:
         """Silenzia il log per richiesta."""
@@ -168,6 +195,12 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--warmup", action="store_true", help="scarica il modello e termina")
+    parser.add_argument(
+        "--idle-exit",
+        type=int,
+        default=0,
+        help="secondi senza pagine dopo cui il server si spegne (0 = mai)",
+    )
     args = parser.parse_args()
 
     if args.warmup:
@@ -178,6 +211,8 @@ def main() -> None:
     log.info("In ascolto su http://%s:%d/layout-parsing", args.host, args.port)
     # Il modello si carica subito in un thread: la prima pagina non aspetta.
     threading.Thread(target=load_pipeline, daemon=True).start()
+    if args.idle_exit > 0:
+        threading.Thread(target=idle_watchdog, args=(args.idle_exit,), daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

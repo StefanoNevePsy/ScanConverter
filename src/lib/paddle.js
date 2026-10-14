@@ -181,9 +181,8 @@ export async function paddleOcrBlocks({ mode = 'online', url, token, endpoint, i
   if (!local) headers.Authorization = `token ${String(token).trim()}`;
   const file = String(imageDataUrl).replace(/^data:[^;]+;base64,/, '');
 
-  let res;
-  try {
-    res = await fetch(target, {
+  const send = () =>
+    fetch(target, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -194,6 +193,19 @@ export async function paddleOcrBlocks({ mode = 'online', url, token, endpoint, i
       }),
       signal,
     });
+  let res;
+  try {
+    try {
+      res = await send();
+    } catch (first) {
+      // Il server locale si spegne da solo quando non serve: sul desktop lo
+      // si riaccende e si riprova una volta.
+      const ensure = globalThis.window?.scanConverterDesktop?.paddleEnsure;
+      if (!local || first?.name === 'AbortError' || typeof ensure !== 'function') throw first;
+      const started = await ensure();
+      if (!started?.ok) throw new Error(started?.detail || first.message);
+      res = await send();
+    }
   } catch (e) {
     if (e?.name === 'AbortError') throw e;
     throw new Error(

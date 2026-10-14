@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('scanConverterDesktop', Object.freeze({
   chooseFolder: () => ipcRenderer.invoke('desktop:choose-folder'),
   paddleInstall: (request) => ipcRenderer.invoke('desktop:paddle:install', request),
   paddleStart: (request) => ipcRenderer.invoke('desktop:paddle:start', request),
+  paddleEnsure: () => ipcRenderer.invoke('desktop:paddle:ensure'),
   onPaddleLog: (callback) => {
     const listener = (_event, line) => callback(String(line));
     ipcRenderer.on('desktop:paddle:log', listener);
