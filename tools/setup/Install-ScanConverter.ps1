@@ -312,6 +312,11 @@ function Install-Paddle {
     Copy-Item -LiteralPath (Join-Path $src 'server.py'), (Join-Path $src 'requirements.txt') -Destination $dir -Force
     Set-UserEnv 'PADDLE_PDX_CACHE_HOME' $cache
     $env:PADDLE_PDX_CACHE_HOME = $cache
+    # Anche Python, i pacchetti scaricati e gli eventuali pesi da Hugging Face
+    # vanno nella cartella scelta, non sul disco C:.
+    $env:UV_PYTHON_INSTALL_DIR = Join-Path $Root 'python'
+    $env:UV_CACHE_DIR = Join-Path $Root 'uv-cache'
+    $env:HF_HOME = Join-Path $Root 'hf-cache'
 
     # Con StrictMode, leggere .Source da un comando non trovato ($null) è un
     # errore: si controlla prima che il comando esista.
@@ -346,6 +351,7 @@ function Install-Paddle {
     @(
         '@echo off',
         "set PADDLE_PDX_CACHE_HOME=$cache",
+        "set HF_HOME=$(Join-Path $Root 'hf-cache')",
         "`"$py`" `"$(Join-Path $dir 'server.py')`" --host 127.0.0.1 --port 8001"
     ) | Set-Content -LiteralPath $launcher -Encoding ASCII
     Write-Ok "Avvio: $launcher"

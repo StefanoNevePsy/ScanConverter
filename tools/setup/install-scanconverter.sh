@@ -153,6 +153,7 @@ install_paddle() {
   mkdir -p "$dir" "$ROOT/paddle-cache"
   cp "$src/server.py" "$src/requirements.txt" "$dir/"
   set_env PADDLE_PDX_CACHE_HOME "$ROOT/paddle-cache"
+  export UV_PYTHON_INSTALL_DIR="$ROOT/python" UV_CACHE_DIR="$ROOT/uv-cache" HF_HOME="$ROOT/hf-cache"
 
   # uv scarica da sé un Python compatibile: non serve quello di sistema.
   if ! has uv && [ ! -x "$HOME/.local/bin/uv" ]; then

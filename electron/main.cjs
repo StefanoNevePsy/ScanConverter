@@ -392,7 +392,7 @@ function startPaddleServer(root, onLine) {
   paddleProcess = spawn(python, [path.join(dir, 'server.py'), '--host', '127.0.0.1', '--port', '8001', '--idle-exit', '600'], {
     cwd: dir,
     windowsHide: true,
-    env: { ...process.env, PADDLE_PDX_CACHE_HOME: path.join(root, 'paddle-cache') },
+    env: { ...process.env, PADDLE_PDX_CACHE_HOME: path.join(root, 'paddle-cache'), HF_HOME: path.join(root, 'hf-cache') },
   });
   paddleProcess.stdout.on('data', (chunk) => onLine(chunk.toString()));
   paddleProcess.stderr.on('data', (chunk) => onLine(chunk.toString()));
