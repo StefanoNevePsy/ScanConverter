@@ -29,7 +29,7 @@ export const PHASE_META = {
   ocr: {
     label: 'Lettura (OCR)',
     hint: 'Dall’immagine di pagina al testo. È l’unica fase che vede la scansione.',
-    engines: ['nvidia', 'gemini', 'local'],
+    engines: ['nvidia', 'gemini', 'paddle', 'local'],
     vision: true,
     localModel: false,
   },
@@ -66,7 +66,7 @@ export const PHASE_META = {
 export const PHASE_DEFAULTS = {
   ocr: {
     engine: 'nvidia',
-    models: { nvidia: 'nvidia/nemotron-parse', gemini: 'gemini-flash-latest', local: '' },
+    models: { nvidia: 'nvidia/nemotron-parse', gemini: 'gemini-flash-latest', paddle: '', local: '' },
   },
   typst: {
     engine: 'gemini',
@@ -87,11 +87,12 @@ export const PHASE_DEFAULTS = {
 };
 
 /** Motori validi in assoluto (una fase può però ammetterne un sottoinsieme). */
-export const ENGINES = ['gemini', 'nvidia', 'local'];
+export const ENGINES = ['gemini', 'nvidia', 'paddle', 'local'];
 
 export const ENGINE_LABELS = {
   gemini: 'Gemini',
   nvidia: 'NVIDIA',
+  paddle: 'PaddleOCR',
   local: 'Locale',
 };
 

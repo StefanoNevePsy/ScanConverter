@@ -10,6 +10,7 @@ import { renderPdfToImages } from '../lib/pdf.js';
 import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assemble.js';
 import { refinePageTables } from '../lib/segments.js';
 import { localOcrBlocks } from '../lib/local.js';
+import { paddleOcrBlocks } from '../lib/paddle.js';
 import { toTypstLocal } from '../lib/engines.js';
 import { ENGINE_LABELS, phaseConfig } from '../lib/phases.js';
 import { structureFromBlocks } from '../lib/docmodel.js';
@@ -1286,6 +1287,20 @@ export function usePipeline(settings) {
                   () =>
                     localOcrBlocks({
                       endpoint: settings.localOcrEndpoint,
+                      imageDataUrl: dataUrl,
+                      signal,
+                    }),
+                  signal,
+                  onWait,
+                )
+              : ocr.engine === 'paddle'
+              ? await withRetry(
+                  () =>
+                    paddleOcrBlocks({
+                      mode: settings.paddleMode,
+                      url: settings.paddleUrl,
+                      token: settings.paddleToken,
+                      endpoint: settings.paddleLocalEndpoint,
                       imageDataUrl: dataUrl,
                       signal,
                     }),

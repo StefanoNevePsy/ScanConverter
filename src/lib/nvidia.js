@@ -39,6 +39,7 @@ export async function extractPageBlocks({ apiKey, endpoint, model, imageDataUrl,
   if (!imageDataUrl) throw new Error('Nessuna immagine da analizzare.');
 
   const data = await callNemotron({ apiKey, endpoint, model, imageDataUrl, tool: 'markdown_bbox', signal });
+  if (isParseV2(model)) return parseV2Blocks(data, await imageDims(imageDataUrl));
   const args = parseToolArguments(data);
   // markdown_bbox può annidare i blocchi: [[{...}]] oppure [{...}]
   const blocks = Array.isArray(args?.[0]) ? args[0] : args;
@@ -61,11 +62,96 @@ export async function extractPageText({ apiKey, endpoint, model, imageDataUrl, s
   return text.trim();
 }
 
+/** Nemotron-Parse 2.x: protocollo a prompt invece che a «tools». */
+export function isParseV2(model) {
+  return /nemotron-parse-(?:v)?2/i.test(String(model || ''));
+}
+
+const PARSE_V2_PROMPT = '</s><s><predict_bbox><predict_classes><output_markdown><predict_no_text_in_pic>';
+
+// Il modello lavora su una tela fissa: la pagina è rimpicciolita per starci
+// dentro e il resto è riempito a destra e in basso. Le coordinate escono in
+// frazioni della TELA, non della pagina.
+const PARSE_V2_CANVAS = { width: 1664, height: 2048 };
+
+async function imageDims(dataUrl) {
+  if (typeof Image === 'undefined') return null;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * Testo di Parse 2.0 → blocchi della pipeline.
+ * Forma: `<x_0.1><y_0.2>testo<x_0.9><y_0.3><class_Text>` ripetuto.
+ * Pura ed esportata per i test.
+ */
+export function parseV2Blocks(data, dims) {
+  const raw = pickExtractedText(data) || '';
+  const re = /<x_([\d.]+)><y_([\d.]+)>([\s\S]*?)<x_([\d.]+)><y_([\d.]+)><class_([^>]+)>/g;
+  // Fattore tela→pagina: la pagina occupa solo una parte della tela.
+  let fx = 1;
+  let fy = 1;
+  if (dims?.width && dims?.height) {
+    const scale = Math.min(PARSE_V2_CANVAS.width / dims.width, PARSE_V2_CANVAS.height / dims.height);
+    fx = PARSE_V2_CANVAS.width / (dims.width * scale);
+    fy = PARSE_V2_CANVAS.height / (dims.height * scale);
+  }
+  const clamp = (n) => Math.min(1, Math.max(0, n));
+  const blocks = [];
+  for (const m of raw.matchAll(re)) {
+    const type = m[6].trim();
+    const text = m[3].replace(/<\/?s>/g, '').trim();
+    const bbox = {
+      xmin: clamp(Number(m[1]) * fx),
+      ymin: clamp(Number(m[2]) * fy),
+      xmax: clamp(Number(m[4]) * fx),
+      ymax: clamp(Number(m[5]) * fy),
+    };
+    if (!text && !/Picture|Figure|Image|Chart|Table/i.test(type)) continue;
+    blocks.push({ type: type === 'Chart' ? 'Picture' : type, bbox, text });
+  }
+  if (blocks.length) return blocks;
+  const plain = raw.replace(/<[^>]+>/g, ' ').replace(/[ \t]+/g, ' ').trim();
+  if (!plain) {
+    throw new Error(
+      'Nemotron-Parse 2.0 ha risposto senza testo. Il servizio online di questo ' +
+        'modello a volte restituisce risposte vuote: riprova, oppure torna a ' +
+        '«nvidia/nemotron-parse» o usa PaddleOCR.',
+    );
+  }
+  return [{ type: 'Text', bbox: null, text: plain }];
+}
+
 async function callNemotron({ apiKey, endpoint, model, imageDataUrl, tool, signal }) {
   if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
   if (!imageDataUrl) throw new Error('Nessuna immagine da analizzare.');
 
-  const body = {
+  // Parse 2.0 non usa i «tools» delle versioni 1.x: il compito si chiede con
+  // un prompt di token di controllo. Mandargli `tools` fa rispondere al NIM
+  // 400 «auto tool choice requires --enable-auto-tool-choice».
+  const body = isParseV2(model)
+    ? {
+        model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: PARSE_V2_PROMPT },
+              { type: 'image_url', image_url: { url: imageDataUrl } },
+            ],
+          },
+        ],
+        max_tokens: 8192,
+        temperature: 0.0,
+        top_k: 1,
+        repetition_penalty: 1.1,
+        skip_special_tokens: false,
+      }
+    : {
     model: model || 'nvidia/nemotron-parse',
     tools: [{ type: 'function', function: { name: tool } }],
     messages: [

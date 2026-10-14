@@ -83,6 +83,18 @@
           "typst-engine.cjs",
           "typst-runner.cjs"
         ]
+      },
+      {
+        "from": "tools/setup",
+        "to": "tools/setup"
+      },
+      {
+        "from": "tools/paddle-ocr",
+        "to": "tools/paddle-ocr",
+        "filter": [
+          "server.py",
+          "requirements.txt"
+        ]
       }
     ],
     "mac": {

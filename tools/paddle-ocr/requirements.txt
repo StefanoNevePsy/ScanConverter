@@ -1,0 +1,6 @@
+# Server PaddleOCR-VL per ScanConverter.
+# PaddlePaddle va installato PRIMA, dalla build giusta per la macchina
+# (CPU o CUDA): lo fa lo script tools/setup/install-scanconverter.*
+paddleocr[doc-parser]>=3.3
+numpy>=1.26
+pillow>=10.0

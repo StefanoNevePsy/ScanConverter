@@ -5,6 +5,13 @@ contextBridge.exposeInMainWorld('scanConverterDesktop', Object.freeze({
   capabilities: () => ipcRenderer.invoke('desktop:capabilities'),
   localSetup: () => ipcRenderer.invoke('desktop:local-setup'),
   chooseFolder: () => ipcRenderer.invoke('desktop:choose-folder'),
+  paddleInstall: (request) => ipcRenderer.invoke('desktop:paddle:install', request),
+  paddleStart: (request) => ipcRenderer.invoke('desktop:paddle:start', request),
+  onPaddleLog: (callback) => {
+    const listener = (_event, line) => callback(String(line));
+    ipcRenderer.on('desktop:paddle:log', listener);
+    return () => ipcRenderer.removeListener('desktop:paddle:log', listener);
+  },
   prepareTypstFigureSet: (request) => ipcRenderer.invoke('desktop:typst:prepare-figures', request),
   compileTypst: (request) => ipcRenderer.invoke('desktop:typst:compile', request),
   savePdf: (request) => ipcRenderer.invoke('desktop:pdf:save', request),

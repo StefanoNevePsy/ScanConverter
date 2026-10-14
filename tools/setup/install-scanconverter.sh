@@ -141,6 +141,54 @@ install_typst() {
   set_env SCANCONVERTER_TYPST_PATH "$dir/typst"
 }
 
+install_paddle() {
+  cyan 'PaddleOCR-VL locale'
+  dir="$ROOT/paddle-ocr"
+  src="$(cd "$(dirname "$0")/../paddle-ocr" && pwd)"
+  mkdir -p "$dir" "$ROOT/paddle-cache"
+  cp "$src/server.py" "$src/requirements.txt" "$dir/"
+  set_env PADDLE_PDX_CACHE_HOME "$ROOT/paddle-cache"
+
+  # uv scarica da sé un Python compatibile: non serve quello di sistema.
+  if ! has uv && [ ! -x "$HOME/.local/bin/uv" ]; then
+    printf '       installo uv (gestore Python)…\n'
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  uv_bin="$(command -v uv || printf '%s' "$HOME/.local/bin/uv")"
+  [ -d "$dir/venv" ] || "$uv_bin" venv --python 3.12 "$dir/venv"
+  py="$dir/venv/bin/python"
+
+  if [ "$(uname -s)" = 'Darwin' ]; then
+    "$uv_bin" pip install --python "$py" paddlepaddle
+  elif has nvidia-smi; then
+    printf '       GPU NVIDIA trovata: PaddlePaddle con CUDA\n'
+    "$uv_bin" pip install --python "$py" paddlepaddle-gpu \
+      --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ \
+      --index-strategy unsafe-best-match
+  else
+    "$uv_bin" pip install --python "$py" paddlepaddle \
+      --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/ \
+      --index-strategy unsafe-best-match
+  fi
+  "$uv_bin" pip install --python "$py" -r "$dir/requirements.txt"
+  ok 'Pacchetti installati'
+
+  printf '       scarico il modello (una volta sola)…\n'
+  if PADDLE_PDX_CACHE_HOME="$ROOT/paddle-cache" "$py" "$dir/server.py" --warmup; then
+    ok "Modello in $ROOT/paddle-cache"
+  else
+    warn 'Download del modello non riuscito: verrà riprovato al primo avvio.'
+  fi
+
+  cat > "$dir/start-paddle-ocr.sh" <<SH
+#!/usr/bin/env sh
+export PADDLE_PDX_CACHE_HOME="$ROOT/paddle-cache"
+exec "$py" "$dir/server.py" --host 127.0.0.1 --port 8001
+SH
+  chmod 755 "$dir/start-paddle-ocr.sh"
+  ok "Avvio: $dir/start-paddle-ocr.sh"
+}
+
 install_sidecar() {
   cyan 'Sidecar OCR (Nemotron OCR v2)'
   mkdir -p "$ROOT/sidecar" "$ROOT/hf-cache"
@@ -189,6 +237,7 @@ write_manifest() {
   "translationModel": "$translation_model",
   "localEndpoint": "http://localhost:11434/v1/chat/completions",
   "localOcrEndpoint": "http://localhost:8000/ocr",
+  "paddleEndpoint": "http://localhost:8001/layout-parsing",
   "typstPath": "$typst_path"
 }
 JSON
@@ -199,6 +248,7 @@ printf 'ScanConverter — installazione locale in %s\n' "$ROOT"
 wants ollama  && install_ollama
 wants typst   && install_typst
 wants sidecar && install_sidecar
+wants paddle  && install_paddle
 write_manifest
 
 cyan 'Fatto'

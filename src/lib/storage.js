@@ -23,6 +23,10 @@ const KEYS = {
   localEndpoint: 'sc.localEndpoint',
   localModel: 'sc.localModel',
   localOcrEndpoint: 'sc.localOcrEndpoint',
+  paddleMode: 'sc.paddleMode',
+  paddleUrl: 'sc.paddleUrl',
+  paddleToken: 'sc.paddleToken',
+  paddleLocalEndpoint: 'sc.paddleLocalEndpoint',
   docContext: 'sc.docContext',
   sourceLang: 'sc.sourceLang',
   targetLang: 'sc.targetLang',
@@ -78,6 +82,11 @@ export const DEFAULTS = {
   // Nemotron OCR v2 per la fase immagine → testo. Nessuna chiave richiesta.
   localEndpoint: 'http://localhost:11434/v1/chat/completions',
   localOcrEndpoint: 'http://localhost:8000/ocr',
+  // PaddleOCR-VL: 'online' usa il servizio gratuito di Baidu AI Studio
+  // (indirizzo e token personali), 'local' il server in tools/paddle-ocr.
+  paddleMode: 'online',
+  paddleUrl: '',
+  paddleLocalEndpoint: 'http://localhost:8001/layout-parsing',
   // Traduzione (fase separata, mai in sovrascrittura dell'originale).
   sourceLang: 'auto',
   targetLang: 'en',
@@ -240,6 +249,10 @@ export function loadSettings() {
     refineTables: readBool(KEYS.refineTables, DEFAULTS.refineTables),
     localEndpoint: read(KEYS.localEndpoint, DEFAULTS.localEndpoint),
     localOcrEndpoint: read(KEYS.localOcrEndpoint, DEFAULTS.localOcrEndpoint),
+    paddleMode: read(KEYS.paddleMode, DEFAULTS.paddleMode) === 'local' ? 'local' : 'online',
+    paddleUrl: read(KEYS.paddleUrl, DEFAULTS.paddleUrl),
+    paddleToken: read(KEYS.paddleToken),
+    paddleLocalEndpoint: read(KEYS.paddleLocalEndpoint, DEFAULTS.paddleLocalEndpoint),
     docContext: read(KEYS.docContext, DEFAULTS.docContext),
     sourceLang: read(KEYS.sourceLang, DEFAULTS.sourceLang),
     targetLang: read(KEYS.targetLang, DEFAULTS.targetLang),
@@ -360,6 +373,10 @@ export function saveSettings(s) {
   write(KEYS.refineTables, s.refineTables ? '1' : '0');
   write(KEYS.localEndpoint, s.localEndpoint?.trim() || DEFAULTS.localEndpoint);
   write(KEYS.localOcrEndpoint, s.localOcrEndpoint?.trim() || DEFAULTS.localOcrEndpoint);
+  write(KEYS.paddleMode, s.paddleMode === 'local' ? 'local' : 'online');
+  write(KEYS.paddleUrl, s.paddleUrl?.trim() || '');
+  write(KEYS.paddleToken, s.paddleToken?.trim() || '');
+  write(KEYS.paddleLocalEndpoint, s.paddleLocalEndpoint?.trim() || DEFAULTS.paddleLocalEndpoint);
   write(KEYS.docContext, s.docContext?.trim() || '');
   write(KEYS.sourceLang, s.sourceLang?.trim() || DEFAULTS.sourceLang);
   write(KEYS.targetLang, s.targetLang?.trim() || DEFAULTS.targetLang);

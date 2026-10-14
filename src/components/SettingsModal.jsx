@@ -5,6 +5,7 @@ import { listGeminiModels } from '../lib/gemini.js';
 import { listNvidiaModels } from '../lib/nvidia.js';
 import { listLocalModels } from '../lib/local.js';
 import LocalSetupPanel from './LocalSetupPanel.jsx';
+import PaddleSetupPanel from './PaddleSetupPanel.jsx';
 import { IconX, IconEye, IconEyeOff, IconKey, IconSpinner, IconRefresh } from './Icons.jsx';
 
 /**
@@ -354,6 +355,16 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
           </div>
           </Section>
 
+          {ocrEngine === 'paddle' && (
+            <Section title="PaddleOCR" note="Stesso modello, online o sul tuo computer.">
+              <PaddleSetupPanel
+                form={form}
+                setForm={setForm}
+                defaults={DEFAULTS}
+              />
+            </Section>
+          )}
+
           {/* Pipeline locale: compare solo se almeno una fase la usa, così non
               ingombra chi lavora solo con le API. I MODELLI ora stanno nelle
               righe di fase; qui restano i due indirizzi, che sono di macchina
@@ -533,7 +544,7 @@ function PhaseRow({ phase, form, providers, onEngine, onModel }) {
   const provider = providers[engine];
   // L'OCR locale è un sidecar che sceglie da sé il proprio modello: qui non
   // c'è niente da scegliere, e fingere il contrario confonderebbe.
-  const pickable = engine !== 'local' || meta.localModel !== false;
+  const pickable = engine !== 'paddle' && (engine !== 'local' || meta.localModel !== false);
 
   return (
     <div className="rounded-lg border border-border bg-surface-2/40 p-3">
@@ -541,7 +552,7 @@ function PhaseRow({ phase, form, providers, onEngine, onModel }) {
       <span className="mb-2.5 block text-xs text-faint">{meta.hint}</span>
       {/* Classe statica: Tailwind non vede le stringhe costruite a runtime,
           e una `grid-cols-${n}` dinamica non finirebbe nel CSS generato. */}
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className={`grid gap-2 ${meta.engines.length > 3 ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
         {meta.engines.map((option) => (
           <EngineButton
             key={option}
@@ -569,7 +580,9 @@ function PhaseRow({ phase, form, providers, onEngine, onModel }) {
       )}
       {!pickable && (
         <p className="mt-2.5 text-xs text-faint">
-          Il modello lo sceglie il sidecar: qui basta il suo indirizzo, più sotto.
+          {engine === 'paddle'
+            ? 'Modello PaddleOCR-VL: scegli online o locale nella sezione «PaddleOCR», più sotto.'
+            : 'Il modello lo sceglie il sidecar: qui basta il suo indirizzo, più sotto.'}
         </p>
       )}
     </div>
@@ -579,6 +592,7 @@ function PhaseRow({ phase, form, providers, onEngine, onModel }) {
 const ENGINE_TITLES = {
   gemini: 'Google Gemini',
   nvidia: 'NVIDIA',
+  paddle: 'PaddleOCR-VL',
   local: 'Locale',
 };
 
@@ -588,11 +602,13 @@ const ENGINE_SUBS = {
   default: {
     gemini: 'in rete, chiave Google',
     nvidia: 'in rete, chiave NVIDIA',
+    paddle: 'online gratuito o sul tuo computer',
     local: 'sulla tua macchina',
   },
   ocr: {
     nvidia: 'estrae figure e tabelle',
     gemini: 'regge le scansioni peggiori',
+    paddle: 'molto preciso, online o locale',
     local: 'sidecar sulla tua GPU',
   },
   typst: {

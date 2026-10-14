@@ -328,7 +328,86 @@ function readLocalSetup() {
   return { found: false };
 }
 
+/*
+  PaddleOCR-VL locale: installazione e avvio da un pulsante.
+
+  Il renderer non può eseguire programmi; il processo principale sì. Si
+  lancia lo stesso script di setup che l'utente userebbe a mano (una sola
+  verità su cosa installare e dove) e se ne inoltra l'output alla finestra.
+*/
+let paddleProcess = null;
+
+function setupScriptsDir() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'tools', 'setup')
+    : path.join(__dirname, '..', 'tools', 'setup');
+}
+
+function runPaddleInstall(root, onLine) {
+  const { spawn } = require('child_process');
+  const dir = setupScriptsDir();
+  const child = process.platform === 'win32'
+    ? spawn('powershell.exe', [
+      '-NoProfile', '-ExecutionPolicy', 'Bypass',
+      '-File', path.join(dir, 'Install-ScanConverter.ps1'),
+      '-Root', root, '-Components', 'paddle',
+    ], { cwd: dir, windowsHide: true })
+    : spawn('/bin/sh', [path.join(dir, 'install-scanconverter.sh'), '--root', root, '--components', 'paddle'], { cwd: dir });
+  child.stdout.on('data', (chunk) => onLine(chunk.toString()));
+  child.stderr.on('data', (chunk) => onLine(chunk.toString()));
+  return new Promise((resolve) => {
+    child.on('error', (error) => resolve({ ok: false, error: error.message }));
+    child.on('close', (code) => resolve(code === 0
+      ? { ok: true }
+      : { ok: false, error: `Lo script è terminato con codice ${code}.` }));
+  });
+}
+
+function startPaddleServer(root, onLine) {
+  if (paddleProcess && paddleProcess.exitCode === null) {
+    return { ok: true, detail: 'Il server PaddleOCR è già in esecuzione.' };
+  }
+  const { spawn } = require('child_process');
+  const dir = path.join(root, 'paddle-ocr');
+  const python = process.platform === 'win32'
+    ? path.join(dir, 'venv', 'Scripts', 'python.exe')
+    : path.join(dir, 'venv', 'bin', 'python');
+  if (!fs.existsSync(python)) {
+    return { ok: false, detail: `PaddleOCR non risulta installato in ${dir}: premi prima «Scarica e installa».` };
+  }
+  paddleProcess = spawn(python, [path.join(dir, 'server.py'), '--host', '127.0.0.1', '--port', '8001'], {
+    cwd: dir,
+    windowsHide: true,
+    env: { ...process.env, PADDLE_PDX_CACHE_HOME: path.join(root, 'paddle-cache') },
+  });
+  paddleProcess.stdout.on('data', (chunk) => onLine(chunk.toString()));
+  paddleProcess.stderr.on('data', (chunk) => onLine(chunk.toString()));
+  paddleProcess.on('exit', (code) => onLine(`\nServer PaddleOCR terminato (codice ${code}).\n`));
+  return { ok: true, detail: 'Server avviato: il primo caricamento del modello richiede qualche secondo.' };
+}
+
+function stopPaddleServer() {
+  if (paddleProcess && paddleProcess.exitCode === null) paddleProcess.kill();
+  paddleProcess = null;
+}
+
 function registerDesktopIpc() {
+  const sendPaddleLog = (event) => (line) => {
+    if (!event.sender.isDestroyed()) event.sender.send('desktop:paddle:log', line);
+  };
+  ipcMain.handle('desktop:paddle:install', async (event, request) => {
+    assertTrustedRenderer(event);
+    const root = String(request?.root || '').trim();
+    if (!root || !path.isAbsolute(root)) return { ok: false, error: 'Scegli una cartella con percorso completo.' };
+    return runPaddleInstall(root, sendPaddleLog(event));
+  });
+  ipcMain.handle('desktop:paddle:start', async (event, request) => {
+    assertTrustedRenderer(event);
+    const root = String(request?.root || '').trim();
+    if (!root || !path.isAbsolute(root)) return { ok: false, detail: 'Cartella di installazione non valida.' };
+    return startPaddleServer(root, sendPaddleLog(event));
+  });
+
   ipcMain.handle('desktop:local-setup', async (event) => {
     assertTrustedRenderer(event);
     return readLocalSetup();
@@ -595,4 +674,5 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('will-quit', shutdownTypstEngine);
+  app.on('will-quit', stopPaddleServer);
 }

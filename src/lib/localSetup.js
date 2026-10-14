@@ -37,6 +37,12 @@ export const COMPONENTS = [
     note: 'Richiede GPU NVIDIA con CUDA, e su Windows anche WSL2.',
     default: false,
   },
+  {
+    id: 'paddle',
+    label: 'PaddleOCR-VL locale',
+    note: 'OCR molto preciso. Funziona anche senza GPU (più lento). ~2–3 GB.',
+    default: false,
+  },
 ];
 
 /** Piattaforma su cui gira l'app: decide quale comando mostrare. */

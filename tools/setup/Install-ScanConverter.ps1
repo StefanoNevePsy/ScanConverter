@@ -36,7 +36,7 @@
     (~3,3 GB), addestrato per tradurre brani completi in 55 lingue.
 
 .PARAMETER Components
-    Cosa installare: ollama, typst, sidecar. Default: ollama e typst — cioè
+    Cosa installare: ollama, typst, sidecar, paddle (PaddleOCR-VL locale). Default: ollama e typst — cioè
     tutto quello che non richiede WSL2.
 
 .PARAMETER SkipModel
@@ -59,7 +59,7 @@ param(
 
     [string] $TranslationModel = 'translategemma:4b',
 
-    [ValidateSet('ollama', 'typst', 'sidecar')]
+    [ValidateSet('ollama', 'typst', 'sidecar', 'paddle')]
     [string[]] $Components = @('ollama', 'typst'),
 
     [switch] $SkipModel
@@ -294,6 +294,60 @@ function Install-Sidecar {
     Write-Host '    python server.py' -ForegroundColor White
 }
 
+# ------------------------------------------------------------------ paddle
+
+<#
+    PaddleOCR-VL gira nativo su Windows (niente WSL2): uv scarica un Python
+    compatibile, PaddlePaddle va in versione CUDA se c'è una GPU NVIDIA.
+#>
+function Install-Paddle {
+    param([string] $Root)
+
+    Write-Step 'PaddleOCR-VL locale'
+    $dir   = Join-Path $Root 'paddle-ocr'
+    $cache = Join-Path $Root 'paddle-cache'
+    $src   = Join-Path (Split-Path -Parent $PSCommandPath) '..\paddle-ocr'
+    New-Dir $dir
+    New-Dir $cache
+    Copy-Item -LiteralPath (Join-Path $src 'server.py'), (Join-Path $src 'requirements.txt') -Destination $dir -Force
+    Set-UserEnv 'PADDLE_PDX_CACHE_HOME' $cache
+    $env:PADDLE_PDX_CACHE_HOME = $cache
+
+    $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source
+    if (-not $uv) {
+        Write-Host '       installo uv (gestore Python)…'
+        powershell -NoProfile -ExecutionPolicy Bypass -Command 'irm https://astral.sh/uv/install.ps1 | iex'
+        $uv = Join-Path $env:USERPROFILE '.local\bin\uv.exe'
+    }
+    $venv = Join-Path $dir 'venv'
+    if (-not (Test-Path -LiteralPath $venv)) { & $uv venv --python 3.12 $venv }
+    $py = Join-Path $venv 'Scripts\python.exe'
+
+    if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
+        Write-Host '       GPU NVIDIA trovata: PaddlePaddle con CUDA'
+        & $uv pip install --python $py paddlepaddle-gpu --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ --index-strategy unsafe-best-match
+    } else {
+        & $uv pip install --python $py paddlepaddle --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/ --index-strategy unsafe-best-match
+    }
+    if ($LASTEXITCODE -ne 0) { throw 'Installazione di PaddlePaddle non riuscita.' }
+    & $uv pip install --python $py -r (Join-Path $dir 'requirements.txt')
+    if ($LASTEXITCODE -ne 0) { throw 'Installazione di PaddleOCR non riuscita.' }
+    Write-Ok 'Pacchetti installati'
+
+    Write-Host '       scarico il modello (una volta sola)…'
+    & $py (Join-Path $dir 'server.py') --warmup
+    if ($LASTEXITCODE -eq 0) { Write-Ok "Modello in $cache" }
+    else { Write-Warn2 'Download del modello non riuscito: verrà riprovato al primo avvio.' }
+
+    $launcher = Join-Path $dir 'start-paddle-ocr.cmd'
+    @(
+        '@echo off',
+        "set PADDLE_PDX_CACHE_HOME=$cache",
+        "`"$py`" `"$(Join-Path $dir 'server.py')`" --host 127.0.0.1 --port 8001"
+    ) | Set-Content -LiteralPath $launcher -Encoding ASCII
+    Write-Ok "Avvio: $launcher"
+}
+
 # ------------------------------------------------------------------- esito
 
 <#
@@ -315,6 +369,7 @@ function Write-Manifest {
         translationModel = if ($SkipModel) { '' } else { $TranslationModel }
         localEndpoint    = 'http://localhost:11434/v1/chat/completions'
         localOcrEndpoint = 'http://localhost:8000/ocr'
+        paddleEndpoint   = 'http://localhost:8001/layout-parsing'
         typstPath        = if ($Installed -contains 'typst') { Join-Path $Root 'typst\typst.exe' } else { '' }
     }
     $path = Join-Path $appData 'local-setup.json'
@@ -333,6 +388,7 @@ New-Dir $Root
 if ($Components -contains 'ollama')  { Install-Ollama  -Root $Root }
 if ($Components -contains 'typst')   { Install-Typst   -Root $Root }
 if ($Components -contains 'sidecar') { Install-Sidecar -Root $Root }
+if ($Components -contains 'paddle')  { Install-Paddle  -Root $Root }
 
 Write-Manifest -Root $Root -Installed $Components
 
