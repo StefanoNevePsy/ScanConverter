@@ -39,7 +39,17 @@ export async function extractPageBlocks({ apiKey, endpoint, model, imageDataUrl,
   if (!imageDataUrl) throw new Error('Nessuna immagine da analizzare.');
 
   const data = await callNemotron({ apiKey, endpoint, model, imageDataUrl, tool: 'markdown_bbox', signal });
-  if (isParseV2(model)) return parseV2Blocks(data, await imageDims(imageDataUrl));
+  if (isParseV2(model)) {
+    try {
+      return parseV2Blocks(data, await imageDims(imageDataUrl));
+    } catch (error) {
+      // Il servizio ospitato di Parse 2.0 risponde spesso vuoto (solo token
+      // <s> ripetuti). Invece di fermare il libro, la pagina passa alla
+      // versione 1, che sullo stesso endpoint funziona.
+      console.warn('Nemotron-Parse 2.0 senza testo, ripiego su nemotron-parse:', error.message);
+      return extractPageBlocks({ apiKey, endpoint, model: 'nvidia/nemotron-parse', imageDataUrl, signal });
+    }
+  }
   const args = parseToolArguments(data);
   // markdown_bbox può annidare i blocchi: [[{...}]] oppure [{...}]
   const blocks = Array.isArray(args?.[0]) ? args[0] : args;
