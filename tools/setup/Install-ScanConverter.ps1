@@ -313,8 +313,11 @@ function Install-Paddle {
     Set-UserEnv 'PADDLE_PDX_CACHE_HOME' $cache
     $env:PADDLE_PDX_CACHE_HOME = $cache
 
-    $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source
-    if (-not $uv) {
+    # Con StrictMode, leggere .Source da un comando non trovato ($null) è un
+    # errore: si controlla prima che il comando esista.
+    $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+    $uv = if ($uvCommand) { $uvCommand.Source } else { Join-Path $env:USERPROFILE '.local\bin\uv.exe' }
+    if (-not (Test-Path -LiteralPath $uv)) {
         Write-Host '       installo uv (gestore Python)…'
         powershell -NoProfile -ExecutionPolicy Bypass -Command 'irm https://astral.sh/uv/install.ps1 | iex'
         $uv = Join-Path $env:USERPROFILE '.local\bin\uv.exe'
