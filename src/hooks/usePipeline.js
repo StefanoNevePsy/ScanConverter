@@ -12,6 +12,7 @@ import { refinePageTables } from '../lib/segments.js';
 import { localOcrBlocks } from '../lib/local.js';
 import { paddleOcrBlocks } from '../lib/paddle.js';
 import { fixTypstBullets, normalizeOcrBullets } from '../lib/bullets.js';
+import { italianTypography } from '../lib/typography.js';
 import { toTypstLocal } from '../lib/engines.js';
 import { ENGINE_LABELS, phaseConfig } from '../lib/phases.js';
 import { structureFromBlocks } from '../lib/docmodel.js';
@@ -1118,6 +1119,11 @@ export function usePipeline(settings) {
         // Pallini LaTeX dell'OCR (`\(\bullet\)`) → voci d'elenco: anche per
         // le sessioni estratte prima della correzione in assemble.js.
         let canonicalText = normalizeOcrBullets(boundaryRepair.text);
+        // Tipografia italiana a regole fisse (E' → È, perche' → perché,
+        // apostrofi, spazi): istantanea e senza quota, prima della rilettura.
+        if (!settings.sourceLang || ['auto', 'it'].includes(settings.sourceLang)) {
+          canonicalText = italianTypography(canonicalText).text;
+        }
         let corrections = [...intraWordCorrections, ...boundaryRepair.changes];
         if (settings.fixTypos) {
           const proofEngine = phaseEngineLabel(settings, 'proof');

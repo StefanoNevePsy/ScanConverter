@@ -71,7 +71,9 @@ export const DEFAULTS = {
   ocrLongSide: 2600,
   // 'legacy': conversione completa tramite LLM; 'strict': testo immutabile,
   // renderer Typst deterministico e verifiche bloccanti.
-  formatWorkflow: 'legacy',
+  // «Fedeltà massima» è il flusso predefinito: il Typst lo scrive l'app con
+  // regole fisse, il modello sceglie solo lo stile.
+  formatWorkflow: 'strict',
   compareOcr: false,
   // Riparsing delle tabelle ritagliandole e rimandandole al modello vision:
   // la struttura righe/colonne si recupera solo dall'immagine. Richiede bbox
