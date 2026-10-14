@@ -1,3 +1,4 @@
+import { fixTypstBullets } from './bullets.js';
 /*
   Correzione automatica degli errori Typst più comuni prodotti dagli LLM
   (specie da chat esterne). Applica solo trasformazioni ad alta confidenza e
@@ -778,6 +779,13 @@ export async function repairTypstDeterministically({
 export function autofixTypst(source) {
   let s = source;
   const changes = [];
+
+  // Pallini d'elenco rimasti in LaTeX (`\(\bullet\)`): stampati alla lettera.
+  const bullets = fixTypstBullets(s);
+  if (bullets.count) {
+    s = bullets.code;
+    changes.push(`${bullets.count} pallino/i LaTeX → elenco Typst`);
+  }
   const count = (re) => (s.match(re) || []).length;
 
   // Tabelle OCR/LaTeX: `multirow` porta spesso con sé l'argomento `{*}`.

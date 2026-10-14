@@ -11,6 +11,7 @@ import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assem
 import { refinePageTables } from '../lib/segments.js';
 import { localOcrBlocks } from '../lib/local.js';
 import { paddleOcrBlocks } from '../lib/paddle.js';
+import { fixTypstBullets } from '../lib/bullets.js';
 import { toTypstLocal } from '../lib/engines.js';
 import { ENGINE_LABELS, phaseConfig } from '../lib/phases.js';
 import { structureFromBlocks } from '../lib/docmodel.js';
@@ -944,7 +945,7 @@ export function usePipeline(settings) {
             // Impone in modo deterministico i livelli di titolo del sorgente
             // e la larghezza delle figure dal bbox reale.
             body = enforceHeadingLevels(body, ch.text);
-            body = applyFigureWidths(body, figuresRef.current);
+            body = fixTypstBullets(applyFigureWidths(body, figuresRef.current)).code;
             return { preamble, body, fid: checkFidelity(ch.text, body) };
           };
 

@@ -5,6 +5,7 @@
   vengono ritagliate dalla pagina sorgente e incorporate nel Typst.
 */
 
+import { normalizeOcrBullets } from './bullets.js';
 import { loadImage, cropToPng } from './figures.js';
 import { isOrnament, pairCaptions, splitMarginalia } from './docmodel.js';
 
@@ -378,7 +379,7 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
     } else if (CAPTION_TYPES.has(b.type)) {
       if (!b._used && b.text) lines.push(b.text);
     } else if (b.text) {
-      lines.push(normalizeDialogue(headingMarkdown(b)));
+      lines.push(normalizeOcrBullets(normalizeDialogue(headingMarkdown(b))));
       if (!HEADING_LEVELS.has(b.type)) lastProseIndex = lines.length - 1;
     }
   }
