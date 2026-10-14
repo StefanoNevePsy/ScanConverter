@@ -681,6 +681,10 @@ function EngineButton({ active, onClick, title, sub, disabled = false }) {
 function ModelSelect({ label, hint, value, onChange, options, loading, error, onRefresh, placeholder }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  // Si filtra solo su quello che l'utente sta digitando: col nome già salvato
+  // come filtro la tendina mostrava soltanto il modello attuale, e gli altri
+  // sembravano non esistere.
+  const [typed, setTyped] = useState(false);
   const boxRef = useRef(null);
   const listRef = useRef(null);
 
@@ -694,13 +698,14 @@ function ModelSelect({ label, hint, value, onChange, options, loading, error, on
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
-  const q = (value || '').trim().toLowerCase();
+  const q = typed ? (value || '').trim().toLowerCase() : '';
   const filtered = q ? options.filter((m) => m.toLowerCase().includes(q)) : options;
   const list = filtered.length ? filtered : options; // filtro a vuoto → mostra tutto
 
   const commit = (m) => {
     onChange({ target: { value: m } });
     setOpen(false);
+    setTyped(false);
   };
 
   const onKeyDown = (e) => {
@@ -747,9 +752,13 @@ function ModelSelect({ label, hint, value, onChange, options, loading, error, on
           onChange={(e) => {
             onChange(e);
             setOpen(true);
+            setTyped(true);
             setActive(0);
           }}
-          onFocus={() => setOpen(true)}
+          onFocus={() => {
+            setOpen(true);
+            setTyped(false);
+          }}
           onKeyDown={onKeyDown}
           placeholder={placeholder}
           className="w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 pr-9 font-mono text-[13px] text-ink placeholder:text-faint transition-colors focus:border-primary focus:outline-none"
@@ -761,7 +770,10 @@ function ModelSelect({ label, hint, value, onChange, options, loading, error, on
         <button
           type="button"
           tabIndex={-1}
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => {
+            setOpen((v) => !v);
+            setTyped(false);
+          }}
           aria-label={open ? 'Nascondi elenco' : 'Mostra elenco'}
           className="absolute inset-y-0 right-0 grid w-9 place-items-center text-muted hover:text-ink transition-colors"
         >
