@@ -78,3 +78,16 @@ jobs:
             release/*.dmg
             release/*.zip
             release/*.exe
+
+      - name: Mirror temporaneo (Litterbox, 72h)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          echo "## Download veloce (valido 72 ore)" >> "$GITHUB_STEP_SUMMARY"
+          for f in release/*.dmg; do
+            [ -f "$f" ] || continue
+            url=$(curl -sS --retry 3 -F reqtype=fileupload -F time=72h \
+              -F "fileToUpload=@$f" https://litterbox.catbox.moe/resources/internals/api.php)
+            echo "LINK $(basename "$f"): $url"
+            echo "- [$(basename "$f")]($url)" >> "$GITHUB_STEP_SUMMARY"
+          done
