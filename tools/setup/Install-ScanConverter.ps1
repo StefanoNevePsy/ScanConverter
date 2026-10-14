@@ -304,6 +304,10 @@ function Install-Paddle {
     param([string] $Root)
 
     Write-Step 'PaddleOCR-VL locale'
+    # uv scrive i suoi messaggi informativi su stderr («Using Python…»): con
+    # 'Stop' Windows PowerShell li tratta come errori e interrompe tutto. Qui
+    # si giudica dal codice di uscita di ogni comando, non da stderr.
+    $ErrorActionPreference = 'Continue'
     $dir   = Join-Path $Root 'paddle-ocr'
     $cache = Join-Path $Root 'paddle-cache'
     $src   = Join-Path (Split-Path -Parent $PSCommandPath) '..\paddle-ocr'
@@ -344,7 +348,7 @@ function Install-Paddle {
     $paddleVersion = '3.2.1'
     if ($hasNvidia) {
         Write-Host "       GPU NVIDIA trovata: PaddlePaddle $paddleVersion con CUDA 12.6"
-        & $uv pip uninstall --python $py paddlepaddle 2>$null
+        & $uv pip uninstall --python $py paddlepaddle 2>&1 | Out-Null
         & $uv pip install --python $py "paddlepaddle-gpu==$paddleVersion" --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match --reinstall-package paddlepaddle-gpu
     } else {
         Write-Warn2 'Nessuna GPU NVIDIA: PaddleOCR-VL sul solo processore è molto lento e spesso non funziona.'
