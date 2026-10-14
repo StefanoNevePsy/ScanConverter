@@ -3502,6 +3502,37 @@ export function usePipeline(settings) {
   /** Esegue l'intera pipeline a partire dal file caricato. */
   const runPipeline = useCallback(
     async (file) => {
+      // Documento riaperto dall'elenco: il file originale non c'è più (resta
+      // solo il nome). «Rielabora» riparte dal testo già estratto, senza
+      // rifare l'OCR — che sarebbe comunque impossibile senza le pagine.
+      if (!(file instanceof Blob)) {
+        const saved = sessionRef.current;
+        const text = saved?.rawText || saved?.canonicalText || '';
+        if (!text.trim()) {
+          setError(
+            'Il file originale non è più disponibile: per rifare l’estrazione caricalo di nuovo con «Nuovo».',
+          );
+          setPhase('error');
+          return;
+        }
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+        setPhase('running');
+        setError(null);
+        setCompileError(null);
+        setStatus({ ocr: 'done', format: 'active', compile: 'pending' });
+        setActiveStep('format');
+        setRawText(text);
+        try {
+          await startFormat(text, saved.fileName || file?.name || 'documento', controller.signal);
+        } catch (e) {
+          if (controller.signal.aborted || e?.name === 'AbortError') return;
+          setError(e.message || String(e));
+          setPhase('error');
+        }
+        return;
+      }
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
