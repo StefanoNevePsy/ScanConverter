@@ -111,8 +111,19 @@ function looksLikeRunningHeader(text) {
  */
 export function pageFurnitureBlocks(blocks) {
   const furniture = new Set((blocks || []).filter(isPageFurniture));
+  // «CAPITOLO» con sotto un «3» (spesso in un cerchio): quel numero è il
+  // numero del capitolo, non della pagina, anche se sta nella fascia alta.
+  for (const word of blocks || []) {
+    if (!word?.bbox || !/^(?:capitolo|chapter|parte|part)$/i.test(String(word.text || '').trim())) continue;
+    for (const b of furniture) {
+      if (b.type === 'Page-footer' || b.type === 'Page-header') continue;
+      if (!b.bbox || !isPageNumberText(String(b.text || '').trim())) continue;
+      const gap = b.bbox.ymin - word.bbox.ymax;
+      if (gap > -0.01 && gap < 0.12) furniture.delete(b);
+    }
+  }
   const topNumbers = (blocks || []).filter((b) =>
-    b?.bbox && isPageNumberText((b.text || '').trim()) && (b.bbox.ymax ?? 1) < 0.22);
+    furniture.has(b) && b?.bbox && isPageNumberText((b.text || '').trim()) && (b.bbox.ymax ?? 1) < 0.22);
   if (!topNumbers.length) return furniture;
   for (const b of blocks || []) {
     if (

@@ -13,6 +13,7 @@ import { localOcrBlocks } from '../lib/local.js';
 import { paddleOcrBlocks } from '../lib/paddle.js';
 import { fixTypstBullets, normalizeOcrBullets } from '../lib/bullets.js';
 import { italianTypography } from '../lib/typography.js';
+import { cleanupBook } from '../lib/bookCleanup.js';
 import { cleanPageImage } from '../lib/dewarp.js';
 import { mergeHeadingSizes } from '../lib/headingSize.js';
 import { toTypstLocal } from '../lib/engines.js';
@@ -1113,8 +1114,12 @@ export function usePipeline(settings) {
             return { type: 'ocr_word_split', before, after, overlap: '' };
           }));
         }
+        // Testatine ripetute e aperture di capitolo spezzate si vedono solo sul
+        // libro intero. Vanno tolte PRIMA di ricucire i paragrafi fra pagine:
+        // una testatina in cima alla pagina impedisce di riconoscere che il
+        // paragrafo continua («ne-» / «cessari»).
         const boundaryRepair = repairBoundaryOverlaps(
-          preparedExtracted,
+          cleanupBook(normalizeOcrBullets(preparedExtracted)).text,
           10,
           speller ? (word) => speller.correct(word) : null,
         );

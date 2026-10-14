@@ -763,6 +763,11 @@ export function headingShape(text, markdownLevel = 2) {
   else if ((m = t.match(/^(\d+(?:\.\d+){0,4})\.?[)]?\s+\S/))) {
     kind = 'dec';
     depth = m[1].split('.').length;
+  } else if (/^[\p{L}]{3,}\s+\d{1,3}\s*[:.–—-]\s*\S/u.test(t)) {
+    // «ABILITÀ 1: IL SALUTO», «INCONTRO 3 – …», «Lezione 2. …»: etichetta
+    // numerata. La parola fa parte della forma: «ABILITÀ» e «INCONTRO»
+    // possono essere livelli diversi.
+    kind = `label-${t.match(/^[\p{L}]+/u)[0].toLowerCase()}`;
   } else if (/^[IVXLC]{1,6}[.)]?\s*[–—-]?\s+\S/.test(t)) kind = 'roman';
   else if (/^[A-Z][.)]\s+\S/.test(t)) kind = 'letter';
   const signature = kind === 'none' ? `none:${markdownLevel}:${caps ? 'C' : 'c'}` : `${kind}:${depth}`;
@@ -831,6 +836,31 @@ export function resolveHeadingLevels(blocks, levels, sizes = null) {
       const level = groupLevel.get(nearest.sig).level;
       groupLevel.get(g.sig).level = level;
       for (const it of groups.get(g.sig)) it.level = level;
+    }
+  }
+
+  // Annidamento: titoli senza numero che compaiono DENTRO una serie di
+  // titoli numerati («ABILITÀ 1: …» → «Definire l’abilità», «La voce del
+  // gruppo») sono loro sottosezioni, anche se hanno lo stesso corpo. Vale
+  // solo se il modello non ha già detto qualcosa di diverso.
+  const order = new Map(items.map((it, i) => [it, i]));
+  const numberedGroups = [...groups.entries()].filter(
+    ([sig]) => !sig.startsWith('none') && !/^(?:part|chapter):/.test(sig),
+  );
+  // Una serie: almeno due titoli numerati in tutto (anche di tipo diverso,
+  // come «INCONTRO 1» e «ABILITÀ 1»).
+  if (numberedGroups.reduce((n, [, list]) => n + list.length, 0) >= 2) {
+    const firstNumbered = Math.min(...numberedGroups.map(([, list]) => order.get(list[0])));
+    const parentLevel = Math.max(...numberedGroups.map(([sig]) => groupLevel.get(sig).level));
+    for (const [sig, list] of groups) {
+      if (!sig.startsWith('none')) continue;
+      const inside = list.filter((it) => order.get(it) > firstNumbered).length / list.length;
+      const g = groupLevel.get(sig);
+      const modelSaysDeeper = list.some((it) => it.model && it.model > parentLevel);
+      if (inside >= 0.7 && g.level <= parentLevel && !modelSaysDeeper && !list.some((it) => it.model)) {
+        g.level = parentLevel + 1;
+        for (const it of list) it.level = g.level;
+      }
     }
   }
 
@@ -903,6 +933,10 @@ export function markdownToStrictTypst(markdown, plan = {}) {
   if (Array.isArray(plan.headings)) resolveHeadingLevels(blocks, headingLevelMap, plan.headingSizes);
   const nestedBlocks = planListNesting(blocks);
   const out = [];
+  // Voci d'elenco che l'OCR restituisce come blocchi separati: unite con un
+  // solo a capo diventano un elenco compatto, come nel libro, invece di voci
+  // distanziate come paragrafi.
+  const listOut = new Set();
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
     const original = blocks[blockIndex];
     const blockId = `b-${blockIndex + 1}`;
@@ -962,6 +996,7 @@ export function markdownToStrictTypst(markdown, plan = {}) {
         .map((l) => `- ${inlineMarkdownToTypst(l.replace(/^\s*[-*+]\s+/, ''))}`)
         .join('\n');
       out.push(nestedBlocks.has(blockIndex) ? indentUnderItem(body) : body);
+      listOut.add(out.length - 1);
       continue;
     }
     if (lines.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
@@ -978,6 +1013,7 @@ export function markdownToStrictTypst(markdown, plan = {}) {
         })
         .join('\n');
       out.push(nestedBlocks.has(blockIndex) ? indentUnderItem(body) : body);
+      listOut.add(out.length - 1);
       continue;
     }
     // Il paragrafo esce come UNA riga sola. Gli a capo dell'OCR per Typst sono
@@ -1005,7 +1041,15 @@ export function markdownToStrictTypst(markdown, plan = {}) {
     if (prose) emitProse(prose);
     out.push(...pageMarks);
   }
-  return out.join('\n\n');
+  return out
+    .map((chunk, i) => {
+      if (i === 0) return chunk;
+      const tight = listOut.has(i) && listOut.has(i - 1) && /^\s*(?:-|\d+\.)\s/.test(chunk)
+        && /^\s*(?:-|\d+\.)\s/.test(out[i - 1])
+        && (/^\s*-/.test(chunk) === /^\s*-/.test(out[i - 1]));
+      return `${tight ? '\n' : '\n\n'}${chunk}`;
+    })
+    .join('');
 }
 
 export function describeStrictBlocks(markdown) {
