@@ -1296,6 +1296,9 @@ export function usePipeline(settings) {
         if (dataUrl && settings.cleanPages !== false) {
           setDetail(total > 1 ? `${label} · raddrizzo la pagina…` : 'Raddrizzo la pagina…');
           dataUrl = await cleanPageImage(dataUrl);
+          // Il raddrizzamento dura un secondo; il messaggio deve poi dire che
+          // si sta aspettando l'OCR, non restare su «raddrizzo» per minuti.
+          setDetail(total > 1 ? `${label} · lettura del testo…` : 'Lettura del testo…');
         }
         if (!dataUrl) {
           s.lastError = `Immagine della pagina ${i + 1} non più disponibile.`;
