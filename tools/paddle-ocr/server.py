@@ -65,8 +65,27 @@ def _load():
     log.info("Carico PaddleOCR-VL (al primo avvio scarica il modello)…")
     from paddleocr import PaddleOCRVL  # type: ignore
 
-    _PIPELINE = PaddleOCRVL()
+    device = detect_device()
+    log.info("Dispositivo: %s", device)
+    _PIPELINE = PaddleOCRVL(device=device)
     log.info("Modello pronto.")
+
+
+def detect_device() -> str:
+    """GPU se PaddlePaddle è compilato con CUDA e la vede, altrimenti CPU."""
+    try:
+        import paddle  # type: ignore
+
+        if paddle.device.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
+            return "gpu:0"
+        log.warning(
+            "PaddlePaddle non usa la GPU (compilato con CUDA: %s). Sul solo processore "
+            "PaddleOCR-VL è lentissimo e spesso fallisce: reinstalla da ScanConverter.",
+            paddle.device.is_compiled_with_cuda(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Impossibile verificare la GPU: %s", exc)
+    return "cpu"
 
 
 def decode_image(payload: str):
@@ -159,7 +178,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path.rstrip("/") == "/health":
-            self._send(200, {"status": "ok", "model": "PaddleOCR-VL", "loaded": _PIPELINE is not None})
+            self._send(200, {"status": "ok", "model": "PaddleOCR-VL", "loaded": _PIPELINE is not None, "device": detect_device()})
         else:
             self._send(404, {"errorCode": 404, "errorMsg": "usa POST /layout-parsing"})
 

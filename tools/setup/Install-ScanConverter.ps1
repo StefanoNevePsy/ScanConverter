@@ -331,11 +331,24 @@ function Install-Paddle {
     if (-not (Test-Path -LiteralPath $venv)) { & $uv venv --python 3.12 $venv }
     $py = Join-Path $venv 'Scripts\python.exe'
 
-    if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
-        Write-Host '       GPU NVIDIA trovata: PaddlePaddle con CUDA'
-        & $uv pip install --python $py paddlepaddle-gpu --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ --index-strategy unsafe-best-match
+    # La scheda NVIDIA si riconosce dal driver, non solo da nvidia-smi (che
+    # non sempre è nel PATH). Senza GPU PaddleOCR-VL è troppo lento e su molti
+    # sistemi non funziona affatto.
+    $hasNvidia = [bool](Get-Command nvidia-smi -ErrorAction SilentlyContinue)
+    if (-not $hasNvidia) {
+        $gpus = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue
+        $hasNvidia = [bool]($gpus | Where-Object { $_.Name -match 'NVIDIA' })
+    }
+    # Versione esatta indicata dalla guida ufficiale, dall'indice di Paddle:
+    # una versione presa a caso da PyPI può non andare d'accordo con PaddleOCR-VL.
+    $paddleVersion = '3.2.1'
+    if ($hasNvidia) {
+        Write-Host "       GPU NVIDIA trovata: PaddlePaddle $paddleVersion con CUDA 12.6"
+        & $uv pip uninstall --python $py paddlepaddle 2>$null
+        & $uv pip install --python $py "paddlepaddle-gpu==$paddleVersion" --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match --reinstall-package paddlepaddle-gpu
     } else {
-        & $uv pip install --python $py paddlepaddle --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/ --index-strategy unsafe-best-match
+        Write-Warn2 'Nessuna GPU NVIDIA: PaddleOCR-VL sul solo processore è molto lento e spesso non funziona.'
+        & $uv pip install --python $py "paddlepaddle==$paddleVersion" --index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/ --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match
     }
     if ($LASTEXITCODE -ne 0) { throw 'Installazione di PaddlePaddle non riuscita.' }
     & $uv pip install --python $py -r (Join-Path $dir 'requirements.txt')

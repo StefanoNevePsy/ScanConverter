@@ -149,7 +149,20 @@ function LocalInstall({ form, set, setForm, defaults }) {
 
   const verify = useCallback(async () => {
     setCheck(null);
-    setCheck(await probe(paddleHealthUrl(form.paddleLocalEndpoint)));
+    const url = paddleHealthUrl(form.paddleLocalEndpoint);
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+      const info = await res.json();
+      const gpu = String(info?.device || '').startsWith('gpu');
+      setCheck({
+        ok: res.ok && gpu,
+        detail: gpu
+          ? 'Il server risponde e usa la scheda video NVIDIA.'
+          : 'Il server risponde ma usa il PROCESSORE, non la scheda video: sarà lentissimo e può fallire. Rilancia «Scarica e installa».',
+      });
+    } catch {
+      setCheck(await probe(url));
+    }
   }, [form.paddleLocalEndpoint]);
 
   const install = async () => {
@@ -281,7 +294,7 @@ function LocalInstall({ form, set, setForm, defaults }) {
         </button>
         {check && (
           <span className={check.ok ? 'text-success' : 'text-warning'}>
-            {check.ok ? '● Il server risponde.' : `○ ${check.detail}`}
+            {check.ok ? `● ${check.detail}` : `○ ${check.detail}`}
           </span>
         )}
       </div>

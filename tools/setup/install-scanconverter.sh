@@ -168,12 +168,12 @@ install_paddle() {
     "$uv_bin" pip install --python "$py" paddlepaddle
   elif has nvidia-smi; then
     printf '       GPU NVIDIA trovata: PaddlePaddle con CUDA\n'
-    "$uv_bin" pip install --python "$py" paddlepaddle-gpu \
-      --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ \
+    "$uv_bin" pip install --python "$py" "paddlepaddle-gpu==3.2.1" \
+      --index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/ --extra-index-url https://pypi.org/simple \
       --index-strategy unsafe-best-match
   else
-    "$uv_bin" pip install --python "$py" paddlepaddle \
-      --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/ \
+    "$uv_bin" pip install --python "$py" "paddlepaddle==3.2.1" \
+      --index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/ --extra-index-url https://pypi.org/simple \
       --index-strategy unsafe-best-match
   fi
   "$uv_bin" pip install --python "$py" -r "$dir/requirements.txt"
