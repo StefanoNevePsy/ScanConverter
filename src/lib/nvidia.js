@@ -377,6 +377,41 @@ export async function listNvidiaModels({ apiKey, endpoint, signal }) {
   return [...new Set(ids)].sort();
 }
 
+/**
+ * L'elenco /v1/models è il CATALOGO intero: molti modelli rispondono poi
+ * «Not found for account» perché il servizio gratuito non li offre a tutti
+ * gli account. L'unico modo di saperlo è provarli con una richiesta minima.
+ */
+const NOT_CHAT = /embed|rerank|parse|ocr|guard|safety|reward|clip|vila|vision|vl\b|-vl-|paligemma|kosmos|deplot|neva|fuyu|nemoretriever|retriever|asr|tts|whisper|riva|audio|stable-diffusion|flux|sdxl|cosmos|bge|nv-embed|arctic-embed|detector|segment|grounding|pii|translate|code-?gemma|starcoder|codellama|granite-.*code/i;
+
+export function chatCandidates(ids) {
+  return ids.filter((id) => !NOT_CHAT.test(id));
+}
+
+export async function probeNvidiaModel({ apiKey, endpoint, model, signal }) {
+  try {
+    const res = await fetch(resolveEndpoint(endpoint), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'Rispondi solo: ok' }],
+        max_tokens: 4,
+        temperature: 0,
+      }),
+      signal,
+    });
+    return { ok: res.ok, status: res.status };
+  } catch (e) {
+    if (e?.name === 'AbortError') throw e;
+    return { ok: false, status: 0 };
+  }
+}
+
 /** Deriva l'URL `/v1/models` dall'endpoint chat/completions configurato. */
 function modelsUrlFromEndpoint(endpoint) {
   const fallback = 'https://integrate.api.nvidia.com/v1/models';

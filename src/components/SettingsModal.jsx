@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, forwardRef } from 'react';
 import { DEFAULTS } from '../lib/storage.js';
 import { PHASES, PHASE_META, PHASE_DEFAULTS, phaseConfig, withPhase } from '../lib/phases.js';
 import { listGeminiModels } from '../lib/gemini.js';
-import { listNvidiaModels } from '../lib/nvidia.js';
+import { listNvidiaModels, chatCandidates, probeNvidiaModel } from '../lib/nvidia.js';
 import { listLocalModels } from '../lib/local.js';
 import LocalSetupPanel from './LocalSetupPanel.jsx';
 import PaddleSetupPanel from './PaddleSetupPanel.jsx';
@@ -25,6 +25,16 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
   // Elenchi modelli auto-aggiornanti. `{ list, loading, error }` per fornitore.
   const [gemini, setGemini] = useState({ list: [], loading: false, error: '' });
   const [nvidia, setNvidia] = useState({ list: [], loading: false, error: '' });
+  // Modelli NVIDIA provati davvero su questo account (salvati fra un'apertura e l'altra).
+  const [nvidiaWorking, setNvidiaWorking] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('sc.nvidiaWorking') || 'null');
+    } catch {
+      return null;
+    }
+  });
+  const [probe, setProbe] = useState(null);
+  const probeAbort = useRef(null);
   const [local, setLocal] = useState({ list: [], loading: false, error: '' });
 
   useEffect(() => {
@@ -74,6 +84,56 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
     }
   }, []);
 
+  // Prova i modelli di testo del catalogo uno alla volta, con calma: il
+  // servizio gratuito ammette circa 40 richieste al minuto.
+  const verifyNvidia = async () => {
+    if (probeAbort.current) {
+      probeAbort.current.abort();
+      return;
+    }
+    const apiKey = form.nvidiaApiKey?.trim();
+    const endpoint = form.nvidiaEndpoint?.trim() || DEFAULTS.nvidiaEndpoint;
+    if (!apiKey) {
+      setProbe({ message: 'Inserisci prima la chiave NVIDIA.' });
+      return;
+    }
+    const controller = new AbortController();
+    probeAbort.current = controller;
+    const working = [];
+    try {
+      const all = nvidia.list.length ? nvidia.list : await listNvidiaModels({ apiKey, endpoint });
+      const candidates = chatCandidates(all);
+      for (let i = 0; i < candidates.length; i++) {
+        setProbe({ running: true, message: `Provo ${i + 1}/${candidates.length}: ${candidates[i]} · ${working.length} funzionanti finora` });
+        let res = await probeNvidiaModel({ apiKey, endpoint, model: candidates[i], signal: controller.signal });
+        if (res.status === 429) {
+          setProbe({ running: true, message: 'Limite di velocità raggiunto: attendo 30 secondi…' });
+          await new Promise((r) => setTimeout(r, 30000));
+          res = await probeNvidiaModel({ apiKey, endpoint, model: candidates[i], signal: controller.signal });
+        }
+        if (res.ok) working.push(candidates[i]);
+        await new Promise((r) => setTimeout(r, 1600));
+      }
+      setProbe({ message: `${working.length} modelli funzionano con il tuo account: ora l’elenco mostra solo quelli.` });
+    } catch (e) {
+      setProbe({
+        message: e?.name === 'AbortError'
+          ? `Interrotto: ${working.length} modelli funzionanti trovati finora.`
+          : e.message,
+      });
+    } finally {
+      probeAbort.current = null;
+      if (working.length) {
+        setNvidiaWorking(working);
+        try {
+          localStorage.setItem('sc.nvidiaWorking', JSON.stringify(working));
+        } catch {
+          /* solo in memoria */
+        }
+      }
+    }
+  };
+
   // I modelli locali si elencano dallo stesso endpoint della chat: nessuna
   // chiave, e l'utente sceglie fra quelli che ha davvero scaricato invece di
   // ricordarsi a memoria tag come «qwen3:8b».
@@ -118,6 +178,10 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
     nvidia: {
       ...nvidia,
       refresh: () => fetchNvidia(form.nvidiaApiKey, form.nvidiaEndpoint),
+      // Se i modelli sono stati provati, si mostrano solo quelli che funzionano.
+      list: nvidiaWorking?.length ? nvidiaWorking : nvidia.list,
+      // L'OCR usa modelli che la prova (solo testo) non copre: catalogo intero.
+      fullList: nvidia.list,
     },
     local: { ...local, refresh: () => fetchLocal(form.localEndpoint) },
   };
@@ -230,6 +294,23 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             title="Motori per fase"
             note="Ogni fase è indipendente: locale dove conviene, in rete dove serve."
           >
+            <div className="rounded-lg border border-border bg-surface-2/40 p-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-faint">
+                  L’elenco NVIDIA è il catalogo intero: molti modelli non sono disponibili per il tuo
+                  account. Provali una volta e l’elenco mostrerà solo quelli che funzionano (2–4 minuti).
+                </span>
+                <button type="button" onClick={verifyNvidia} className="button-secondary shrink-0">
+                  {probe?.running ? 'Interrompi' : 'Trova i modelli NVIDIA funzionanti'}
+                </button>
+              </div>
+              {probe?.message && <p className="mt-2 text-ink">{probe.message}</p>}
+              {nvidiaWorking?.length > 0 && !probe?.running && (
+                <p className="mt-1 text-faint">
+                  Funzionanti: {nvidiaWorking.join(', ')}
+                </p>
+              )}
+            </div>
             {PHASES.map((phase) => (
               <PhaseRow
                 key={phase}
@@ -569,7 +650,7 @@ function PhaseRow({ phase, form, providers, onEngine, onModel }) {
             label={`Modello (${ENGINE_TITLES[engine]})`}
             value={model}
             onChange={(e) => onModel(phase, engine, e.target.value)}
-            options={provider.list}
+            options={phase === 'ocr' && provider.fullList ? provider.fullList : provider.list}
             loading={provider.loading}
             error={provider.error}
             onRefresh={provider.refresh}
