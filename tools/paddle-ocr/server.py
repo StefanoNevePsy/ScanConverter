@@ -203,6 +203,22 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Pacchetti mancanti = installazione rimasta a metà: lo si dice subito,
+    # invece di fallire alla prima pagina con un errore incomprensibile.
+    missing = []
+    for module in ("PIL", "numpy", "paddleocr", "paddle"):
+        try:
+            __import__(module)
+        except Exception:  # noqa: BLE001
+            missing.append(module)
+    if missing:
+        log.error(
+            "Installazione incompleta, mancano: %s. Rilancia «Scarica e installa PaddleOCR» "
+            "dalle impostazioni e controlla nel registro il primo errore.",
+            ", ".join(missing),
+        )
+        raise SystemExit(3)
+
     if args.warmup:
         load_pipeline()
         return
