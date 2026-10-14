@@ -736,6 +736,100 @@ function indentUnderItem(rendered) {
     .join('\n');
 }
 
+/*
+  GERARCHIA DEI TITOLI senza indice.
+
+  Il modello assegna i livelli guardando un campione del documento, e su un
+  libro lungo succede che due titoli dello stesso tipo finiscano a livelli
+  diversi, o che un titolo fuori dal campione resti col livello grezzo
+  dell'OCR. Qui si ragiona come un tipografo: titoli con la STESSA FORMA
+  (stessa numerazione, stesso maiuscolo, stesso tipo di blocco OCR) hanno lo
+  stesso livello in tutto il libro. Poi si impongono le regole che la
+  numerazione rende certe (1.2 sta sotto 1; Parte sopra Capitolo) e si
+  eliminano i salti di livello.
+*/
+
+/** Forma di un titolo: ciò che lo rende riconoscibile come «dello stesso tipo». */
+export function headingShape(text, markdownLevel = 2) {
+  const t = String(text || '').replace(/[*_`]/g, '').trim();
+  const letters = t.replace(/[^\p{L}]/gu, '');
+  const caps = letters.length >= 4 && letters === letters.toUpperCase();
+  let kind = 'none';
+  let depth = 0;
+  let m;
+  if (/^(?:parte|part|libro|book)\b/i.test(t)) kind = 'part';
+  else if (/^(?:capitolo|chapter|cap\.)\s/i.test(t)) kind = 'chapter';
+  else if ((m = t.match(/^(\d+(?:\.\d+){0,4})\.?[)]?\s+\S/))) {
+    kind = 'dec';
+    depth = m[1].split('.').length;
+  } else if (/^[IVXLC]{1,6}[.)]?\s*[–—-]?\s+\S/.test(t)) kind = 'roman';
+  else if (/^[A-Z][.)]\s+\S/.test(t)) kind = 'letter';
+  const signature = kind === 'none' ? `none:${markdownLevel}:${caps ? 'C' : 'c'}` : `${kind}:${depth}`;
+  return { kind, depth, caps, signature };
+}
+
+/**
+ * Rende coerenti i livelli dei titoli in tutto il documento.
+ * Modifica `levels` (Map id → livello) e lo restituisce.
+ */
+export function resolveHeadingLevels(blocks, levels) {
+  const items = [];
+  blocks.forEach((raw, i) => {
+    const block = String(raw || '').trim().replace(/^<!--\s*pagina\s+\d+\s*-->\s*/i, '');
+    const m = block.match(/^(#{1,6})\s+([^\n]+)$/);
+    if (!m) return;
+    const id = `b-${i + 1}`;
+    items.push({ id, md: m[1].length, model: levels.get(id), ...headingShape(m[2], m[1].length) });
+  });
+  if (!items.length) return levels;
+
+  // 1. Stessa forma → stesso livello (voto di maggioranza del modello).
+  const groups = new Map();
+  for (const it of items) {
+    if (!groups.has(it.signature)) groups.set(it.signature, []);
+    groups.get(it.signature).push(it);
+  }
+  const groupLevel = new Map();
+  for (const [sig, list] of groups) {
+    const votes = new Map();
+    for (const it of list) if (it.model) votes.set(it.model, (votes.get(it.model) || 0) + 1);
+    const total = [...votes.values()].reduce((a, b) => a + b, 0);
+    const [winner, count] = [...votes.entries()].sort((a, b) => b[1] - a[1])[0] || [list[0].md, 0];
+    const numbered = !sig.startsWith('none');
+    // I titoli numerati si allineano sempre; quelli senza numero solo se il
+    // modello è già quasi d'accordo (altrimenti stava distinguendo davvero).
+    const agree = total ? count / total : 1;
+    groupLevel.set(sig, { level: winner, force: numbered || agree >= 0.6 });
+  }
+  for (const it of items) {
+    const g = groupLevel.get(it.signature);
+    it.level = g.force || !it.model ? g.level : it.model;
+  }
+
+  // 2. Vincoli certi della numerazione.
+  const levelOf = (sig) => groupLevel.get(sig)?.level;
+  for (let d = 2; d <= 5; d++) {
+    const upper = levelOf(`dec:${d - 1}`);
+    const lower = levelOf(`dec:${d}`);
+    if (upper && lower && lower <= upper) {
+      for (const it of items) if (it.signature === `dec:${d}`) it.level = upper + 1;
+      groupLevel.get(`dec:${d}`).level = upper + 1;
+    }
+  }
+  const part = levelOf('part:0');
+  const chapter = levelOf('chapter:0');
+  if (part && chapter && chapter <= part) {
+    for (const it of items) if (it.signature === 'chapter:0') it.level = part + 1;
+  }
+
+  // 3. Niente buchi: i livelli usati diventano consecutivi, a partire dal
+  // più alto già scelto (un documento tutto di «sezioni» resta di sezioni).
+  const used = [...new Set(items.map((it) => it.level))].sort((a, b) => a - b);
+  const rank = new Map(used.map((lvl, i) => [lvl, Math.min(6, used[0] + i)]));
+  for (const it of items) levels.set(it.id, rank.get(it.level));
+  return levels;
+}
+
 /**
  * Il piano di layout sceglie lo stile blocco per blocco, e su una serie di
  * citazioni consecutive dello stesso tipo capita che ne metta metà in
@@ -776,6 +870,7 @@ export function markdownToStrictTypst(markdown, plan = {}) {
     if (Number.isInteger(item?.level)) headingLevelMap.set(item.id, Math.max(1, Math.min(6, item.level)));
   }
   harmonizeQuoteStyles(blocks, styleMap);
+  resolveHeadingLevels(blocks, headingLevelMap);
   const nestedBlocks = planListNesting(blocks);
   const out = [];
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
