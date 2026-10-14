@@ -444,47 +444,39 @@ export default function TypstEditor({
     setSelectionNotice(result?.message || 'Operazione completata.');
   };
 
-  const runFixSelection = async () => {
-    if (!editorSelection || fixBusy || !onFixSelection) return;
-    const { start, end } = editorSelection;
+  const [fixProgress, setFixProgress] = useState('');
+
+  // Con una selezione: la selezione è un ESEMPIO dell'errore, che si corregge
+  // in tutto il documento. Senza: si sistema il documento intero.
+  const runFix = async () => {
+    if (fixBusy || !onFixSelection) return;
     const original = value;
-    const lineStart = (pos, n) => {
-      let i = pos;
-      for (let k = 0; k <= n && i > 0; k++) i = original.lastIndexOf('\n', i - 2) + 1;
-      return Math.max(0, i);
-    };
-    const lineEnd = (pos, n) => {
-      let i = pos;
-      for (let k = 0; k < n && i < original.length; k++) {
-        const next = original.indexOf('\n', i + 1);
-        i = next === -1 ? original.length : next;
-      }
-      return i;
-    };
+    const example = editorSelection ? original.slice(editorSelection.start, editorSelection.end) : '';
     setFixBusy(true);
     setSelectionNotice('');
+    setFixProgress(example ? 'Cerco la regola di correzione…' : 'Sistemo il documento…');
     try {
       const result = await onFixSelection({
-        code: original.slice(start, end),
-        before: original.slice(lineStart(start, 2), start),
-        after: original.slice(end, lineEnd(end, 2)),
+        mode: example.trim() ? 'everywhere' : 'whole',
+        example,
+        document: original,
+        onProgress: (n, tot) => setFixProgress(`Sistemo il documento: pezzo ${n} di ${tot}…`),
       });
       if (result?.ok && result.code != null) {
         // Il testo potrebbe essere cambiato mentre il modello lavorava.
-        if (value !== original && taRef.current?.value !== original) {
-          setSelectionNotice('Il testo è cambiato nel frattempo: proposta non applicata.');
+        if (taRef.current && taRef.current.value !== original) {
+          setSelectionNotice('Il testo è cambiato nel frattempo: correzione non applicata.');
           return;
         }
-        const next = original.slice(0, start) + result.code + original.slice(end);
-        setBeforeFix({ original, next });
-        pendingSelectionRef.current = { start, end: start + result.code.length };
-        onChange(next);
+        setBeforeFix({ original, next: result.code });
+        onChange(result.code);
       }
       setSelectionNotice(result?.message || 'Operazione completata.');
     } catch (error) {
-      setSelectionNotice(error?.message || 'Sistemazione non riuscita.');
+      setSelectionNotice(error?.message || 'Correzione non riuscita.');
     } finally {
       setFixBusy(false);
+      setFixProgress('');
     }
   };
 
@@ -530,6 +522,18 @@ export default function TypstEditor({
           )}
         </div>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          {onFixSelection && value.trim() && (
+            <button
+              type="button"
+              onClick={runFix}
+              disabled={fixBusy || disabled}
+              title={`Fa sistemare all’IA (${fixModelLabel || 'modello di riparazione'}) la formattazione di tutto il documento: elenchi, titoli, corsivi. Le parole non vengono toccate. Per correggere un solo tipo di errore ovunque, selezionane un esempio.`}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-50"
+            >
+              {fixBusy ? <IconSpinner width={13} height={13} /> : <IconWand width={13} height={13} />}
+              {fixBusy ? 'Sistemo…' : 'Sistema formattazione'}
+            </button>
+          )}
           {reviewOpen && (
             <button
               onClick={() => setMarksOn((on) => !on)}
@@ -886,13 +890,13 @@ export default function TypstEditor({
               <button
                 type="button"
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={runFixSelection}
+                onClick={runFix}
                 disabled={fixBusy || !!selectionBusy || disabled}
-                title={`Fa sistemare all’IA la marcatura Typst selezionata (elenchi, titoli, corsivi) con ${fixModelLabel || 'il modello di riparazione'}. Le parole non vengono toccate.`}
+                title={`La selezione è un esempio di formattazione sbagliata: l’IA (${fixModelLabel || 'modello di riparazione'}) la corregge in tutto il documento. Le parole non vengono toccate.`}
                 className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-primary/40 bg-surface px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-surface-2 disabled:opacity-50"
               >
                 {fixBusy ? <IconSpinner width={13} height={13} /> : <IconWand width={13} height={13} />}
-                {fixBusy ? 'Sistemo…' : 'Sistema codice'}
+                {fixBusy ? 'Correggo…' : 'Correggi ovunque'}
               </button>
             )}
             {onReviseSelection && (
@@ -937,6 +941,12 @@ export default function TypstEditor({
             </button>
           </div>
         </div>
+      )}
+
+      {fixProgress && (
+        <p role="status" className="border-b border-border bg-surface-2 px-3 py-2 text-xs text-ink">
+          {fixProgress}
+        </p>
       )}
 
       {selectionNotice && !selectionBusy && (

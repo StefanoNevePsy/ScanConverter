@@ -96,3 +96,167 @@ export async function fixTypstSelection({ settings, code, before = '', after = '
   }
   return { ok: true, code: fixed, message: 'Codice sistemato. «Annulla» lo riporta com’era.' };
 }
+
+/*
+  CORREZIONE OVUNQUE a partire da un esempio.
+
+  La selezione è un CAMPIONE di marcatura sbagliata. Invece di mandare tutto
+  il libro al modello, gli si chiede una REGOLA (espressione regolare +
+  sostituzione) che trasformi il campione nella forma giusta; la regola poi
+  si applica localmente a tutto il documento, in un istante e senza quota.
+  Il guard delle parole vale sul documento intero.
+*/
+
+const RULE_SYSTEM =
+  'Sei un esperto di Typst e di espressioni regolari JavaScript. L’utente ti ' +
+  'mostra un ESEMPIO di marcatura Typst sbagliata presa da un documento lungo: ' +
+  'lo stesso errore si ripete altrove. Scrivi UNA regola che lo corregga ovunque. ' +
+  'Rispondi SOLO con JSON: {"find": "<regex JavaScript, senza barre>", ' +
+  '"replace": "<sostituzione, con $1 $2 per i gruppi>", "explanation": "<una frase in italiano>"}. ' +
+  'La regex viene applicata con i flag g e m (^ e $ valgono per riga). ' +
+  'Deve essere specifica: colpire solo la marcatura sbagliata, mai il testo normale. ' +
+  'La sostituzione non deve aggiungere né togliere parole. Forme corrette Typst: ' +
+  'elenco puntato «- voce», numerato «+ voce», sottolivello rientrato di due spazi, ' +
+  'titoli «= », «== », corsivo _x_, grassetto *x*.';
+
+function parseRule(raw) {
+  const text = String(raw || '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+  const json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+  if (typeof json?.find !== 'string' || typeof json?.replace !== 'string' || !json.find) {
+    throw new Error('regola incompleta');
+  }
+  if (json.find.length > 400) throw new Error('regola troppo lunga');
+  return { find: json.find, replace: json.replace, explanation: String(json.explanation || '') };
+}
+
+/** Applica una regola a un testo. Pura: si prova senza rete. */
+export function applyRule(text, rule) {
+  const re = new RegExp(rule.find, 'gmu');
+  let count = 0;
+  const out = String(text).replace(re, (...args) => {
+    count++;
+    const groups = args.slice(1, -2);
+    return rule.replace.replace(/\$(\d)/g, (_, n) => groups[Number(n) - 1] ?? '');
+  });
+  return { text: out, count };
+}
+
+/**
+ * @returns {Promise<{ok:boolean, code?:string, count?:number, message:string}>}
+ */
+export async function fixEverywhereLike({ settings, document, example, request = '', signal }) {
+  const sample = String(example || '');
+  if (!sample.trim()) return { ok: false, message: 'Seleziona un esempio dell’errore.' };
+  const user = [
+    request.trim() ? `PROBLEMA SEGNALATO: ${request.trim()}` : '',
+    `ESEMPIO SBAGLIATO:\n${sample.slice(0, 3000)}`,
+  ].filter(Boolean).join('\n\n');
+
+  let lastError = '';
+  // Due tentativi: al secondo il modello sa cosa non andava.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const raw = await engineChat({
+      settings,
+      phase: 'fix',
+      system: RULE_SYSTEM,
+      user: lastError ? `${user}\n\nLA REGOLA PRECEDENTE NON ANDAVA: ${lastError}` : user,
+      temperature: 0,
+      maxTokens: 800,
+      json: true,
+      signal,
+    });
+    let rule;
+    try {
+      rule = parseRule(raw);
+      new RegExp(rule.find, 'gmu');
+    } catch (e) {
+      lastError = `risposta non valida (${e.message})`;
+      continue;
+    }
+    const onSample = applyRule(sample, rule);
+    if (!onSample.count || onSample.text === sample) {
+      lastError = 'non modifica l’esempio';
+      continue;
+    }
+    const whole = applyRule(document, rule);
+    if (!sameWords(document, whole.text)) {
+      lastError = 'cambia delle parole del testo, non solo la marcatura';
+      continue;
+    }
+    return {
+      ok: true,
+      code: whole.text,
+      count: whole.count,
+      message:
+        `Corretti ${whole.count} punti nel documento` +
+        (rule.explanation ? ` (${rule.explanation})` : '') +
+        '. «Annulla» riporta tutto com’era.',
+    };
+  }
+  return {
+    ok: false,
+    message: `Non sono riuscito a ricavare una correzione sicura: ${lastError}. Prova con un esempio più piccolo o più tipico.`,
+  };
+}
+
+/**
+ * Sistema la marcatura dell'INTERO documento, a pezzi. Ogni pezzo passa dal
+ * guard delle parole: un pezzo scartato resta com'era, gli altri vengono
+ * applicati.
+ */
+export async function fixWholeTypst({ settings, document, onProgress, signal }) {
+  const text = String(document || '');
+  if (!text.trim()) return { ok: false, message: 'Il documento è vuoto.' };
+  // Si taglia sulle righe vuote, così un elenco non finisce spezzato a metà.
+  const parts = text.split(/(\n\s*\n)/);
+  const chunks = [];
+  let buf = '';
+  for (const part of parts) {
+    if (buf.length + part.length > 5000 && buf.trim()) {
+      chunks.push(buf);
+      buf = '';
+    }
+    buf += part;
+  }
+  if (buf) chunks.push(buf);
+
+  let changed = 0;
+  let rejected = 0;
+  const out = [];
+  for (let i = 0; i < chunks.length; i++) {
+    if (signal?.aborted) throw new DOMException('Annullato', 'AbortError');
+    onProgress?.(i + 1, chunks.length);
+    const chunk = chunks[i];
+    // Il preambolo (#set, #show, #let) non è testo da impaginare: si lascia.
+    if (!chunk.trim() || !/[\p{L}]{3}/u.test(chunk.replace(/^#.*$/gm, ''))) {
+      out.push(chunk);
+      continue;
+    }
+    try {
+      const res = await fixTypstSelection({ settings, code: chunk, signal });
+      if (res.ok) {
+        out.push(res.code);
+        changed++;
+      } else {
+        if (/scartata/.test(res.message)) rejected++;
+        out.push(chunk);
+      }
+    } catch (e) {
+      if (e?.name === 'AbortError') throw e;
+      rejected++;
+      out.push(chunk);
+    }
+  }
+  const code = out.join('');
+  if (code === text) {
+    return { ok: false, message: `Nessuna modifica${rejected ? ` (${rejected} pezzi scartati perché cambiavano parole)` : ''}.` };
+  }
+  return {
+    ok: true,
+    code,
+    message:
+      `Sistemati ${changed} pezzi su ${chunks.length}` +
+      (rejected ? `, ${rejected} lasciati com’erano` : '') +
+      '. «Annulla» riporta tutto com’era.',
+  };
+}

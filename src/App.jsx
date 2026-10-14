@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadSettings, saveSettings } from './lib/storage.js';
 import { requiredKeys, phaseConfig, ENGINE_LABELS } from './lib/phases.js';
-import { fixTypstSelection } from './lib/typstSelectionFix.js';
+import { fixEverywhereLike, fixWholeTypst } from './lib/typstSelectionFix.js';
 import { formatBytes } from './lib/files.js';
 import { findBestEditorLocation } from './lib/editorScroll.js';
 import { cursorSearchText } from './lib/pdfPreview.js';
@@ -630,9 +630,12 @@ function Workspace({
     setTimeout(() => setAutofixMsg(null), 7000);
   }, [pipe]);
 
-  // «Sistema codice» sulla selezione Typst: modello della fase Riparazione.
+  // Correzione della formattazione Typst (selezione = esempio; nulla = tutto).
   const handleFixSelection = useCallback(
-    (request) => fixTypstSelection({ settings, ...request }),
+    ({ mode, example, document, onProgress }) =>
+      mode === 'everywhere'
+        ? fixEverywhereLike({ settings, document, example })
+        : fixWholeTypst({ settings, document, onProgress }),
     [settings],
   );
 
