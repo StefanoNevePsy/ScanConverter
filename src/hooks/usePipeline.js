@@ -13,6 +13,7 @@ import { localOcrBlocks } from '../lib/local.js';
 import { paddleOcrBlocks } from '../lib/paddle.js';
 import { fixTypstBullets, normalizeOcrBullets } from '../lib/bullets.js';
 import { italianTypography } from '../lib/typography.js';
+import { cleanPageImage } from '../lib/dewarp.js';
 import { toTypstLocal } from '../lib/engines.js';
 import { ENGINE_LABELS, phaseConfig } from '../lib/phases.js';
 import { structureFromBlocks } from '../lib/docmodel.js';
@@ -1274,8 +1275,14 @@ export function usePipeline(settings) {
         setOcrProgress({ done: i, total });
         const label = total > 1 ? `OCR pagina ${i + 1}/${total}` : 'Estrazione testo';
         setDetail(total > 1 ? `${label}…` : '');
-        const dataUrl = (await (attesa || prefetch(i))) || (await pageAt(i));
+        let dataUrl = (await (attesa || prefetch(i))) || (await pageAt(i));
         attesa = prefetch(i + 1);
+        // Raddrizzamento (curvatura vicino alla rilegatura) e fondo schiarito:
+        // l'OCR e i ritagli delle figure usano la pagina corretta.
+        if (dataUrl && settings.cleanPages !== false) {
+          setDetail(total > 1 ? `${label} · raddrizzo la pagina…` : 'Raddrizzo la pagina…');
+          dataUrl = await cleanPageImage(dataUrl);
+        }
         if (!dataUrl) {
           s.lastError = `Immagine della pagina ${i + 1} non più disponibile.`;
           await persistOcr('ocr');

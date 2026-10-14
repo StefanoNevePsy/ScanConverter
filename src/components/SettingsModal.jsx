@@ -373,6 +373,26 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 </label>
               </div>
             )}
+            <div className="mt-3">
+              <label className="flex cursor-pointer items-start gap-3 py-0.5">
+                <input
+                  type="checkbox"
+                  checked={form.cleanPages !== false}
+                  onChange={(e) => setForm((f) => ({ ...f, cleanPages: e.target.checked }))}
+                  className="mt-0.5 accent-primary"
+                />
+                <span>
+                  <span className="block text-sm font-medium text-ink">
+                    Raddrizza le pagine prima della lettura
+                  </span>
+                  <span className="block text-xs text-faint">
+                    Corregge l’inclinazione e l’«onda» delle righe vicino alla rilegatura, e
+                    schiarisce il fondo grigio delle fotocopie. Le pagine già dritte restano
+                    intatte.
+                  </span>
+                </span>
+              </label>
+            </div>
             {ocrEngine !== 'gemini' && (
               <div className="mt-3">
                 <label className="flex cursor-pointer items-start gap-3 py-0.5">

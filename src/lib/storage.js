@@ -20,6 +20,7 @@ const KEYS = {
   formatWorkflow: 'sc.formatWorkflow',
   compareOcr: 'sc.compareOcr',
   refineTables: 'sc.refineTables',
+  cleanPages: 'sc.cleanPages',
   localEndpoint: 'sc.localEndpoint',
   localModel: 'sc.localModel',
   localOcrEndpoint: 'sc.localOcrEndpoint',
@@ -79,6 +80,9 @@ export const DEFAULTS = {
   // la struttura righe/colonne si recupera solo dall'immagine. Richiede bbox
   // (motore OCR NVIDIA) e la chiave Google.
   refineTables: false,
+  // Raddrizza le pagine (inclinazione e curvatura vicino alla rilegatura) e
+  // schiarisce il fondo grigio prima dell'OCR. Le pagine dritte restano intatte.
+  cleanPages: true,
   // Pipeline LOCALE (branch sperimentale): un server OpenAI-compatibile sulla
   // macchina dell'utente per le fasi testuali, e un sidecar che incapsula
   // Nemotron OCR v2 per la fase immagine → testo. Nessuna chiave richiesta.
@@ -253,6 +257,7 @@ export function loadSettings() {
       : DEFAULTS.formatWorkflow,
     compareOcr: readBool(KEYS.compareOcr, DEFAULTS.compareOcr),
     refineTables: readBool(KEYS.refineTables, DEFAULTS.refineTables),
+    cleanPages: readBool(KEYS.cleanPages, DEFAULTS.cleanPages),
     localEndpoint: read(KEYS.localEndpoint, DEFAULTS.localEndpoint),
     localOcrEndpoint: read(KEYS.localOcrEndpoint, DEFAULTS.localOcrEndpoint),
     paddleMode: read(KEYS.paddleMode, DEFAULTS.paddleMode) === 'local' ? 'local' : 'online',
@@ -377,6 +382,7 @@ export function saveSettings(s) {
   );
   write(KEYS.compareOcr, s.compareOcr ? '1' : '0');
   write(KEYS.refineTables, s.refineTables ? '1' : '0');
+  write(KEYS.cleanPages, s.cleanPages ? '1' : '0');
   write(KEYS.localEndpoint, s.localEndpoint?.trim() || DEFAULTS.localEndpoint);
   write(KEYS.localOcrEndpoint, s.localOcrEndpoint?.trim() || DEFAULTS.localOcrEndpoint);
   write(KEYS.paddleMode, s.paddleMode === 'local' ? 'local' : 'online');
