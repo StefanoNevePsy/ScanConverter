@@ -376,6 +376,17 @@ function startPaddleServer(root, onLine) {
     return { ok: false, detail: `PaddleOCR non risulta installato in ${dir}: premi prima «Scarica e installa».` };
   }
   rememberPaddleRoot(root);
+  // Il server installato è una COPIA fatta al momento dell'installazione:
+  // dopo un aggiornamento dell'app sarebbe vecchio (e non conoscerebbe, per
+  // esempio, --idle-exit). Si sostituisce con quello incluso nell'app.
+  const bundled = app.isPackaged
+    ? path.join(process.resourcesPath, 'tools', 'paddle-ocr', 'server.py')
+    : path.join(__dirname, '..', 'tools', 'paddle-ocr', 'server.py');
+  try {
+    if (fs.existsSync(bundled)) fs.copyFileSync(bundled, path.join(dir, 'server.py'));
+  } catch (error) {
+    onLine(`Impossibile aggiornare server.py: ${error.message}\n`);
+  }
   // Si spegne da solo dopo 10 minuti senza pagine: la memoria torna libera,
   // e `ensurePaddleServer` lo riaccende alla pagina successiva.
   paddleProcess = spawn(python, [path.join(dir, 'server.py'), '--host', '127.0.0.1', '--port', '8001', '--idle-exit', '600'], {
