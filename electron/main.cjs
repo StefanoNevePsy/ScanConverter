@@ -363,9 +363,12 @@ function runPaddleInstall(root, onLine) {
   });
 }
 
-function startPaddleServer(root, onLine) {
+function startPaddleServer(root, onLine, { restart = false } = {}) {
   if (paddleProcess && paddleProcess.exitCode === null) {
-    return { ok: true, detail: 'Il server PaddleOCR è già in esecuzione.' };
+    if (!restart) return { ok: true, detail: 'Il server PaddleOCR è già in esecuzione.' };
+    // «Avvia» dopo una reinstallazione deve usare i pacchetti nuovi: un server
+    // rimasto acceso dall'installazione precedente continuerebbe con quelli vecchi.
+    stopPaddleServer();
   }
   const { spawn } = require('child_process');
   const dir = path.join(root, 'paddle-ocr');
@@ -461,6 +464,9 @@ function registerDesktopIpc() {
     assertTrustedRenderer(event);
     const root = String(request?.root || '').trim();
     if (!root || !path.isAbsolute(root)) return { ok: false, error: 'Scegli una cartella con percorso completo.' };
+    // Su Windows i file in uso non si possono sostituire: il server va spento
+    // prima di reinstallare.
+    stopPaddleServer();
     return runPaddleInstall(root, sendPaddleLog(event));
   });
   ipcMain.handle('desktop:paddle:ensure', async (event) => {
@@ -471,7 +477,7 @@ function registerDesktopIpc() {
     assertTrustedRenderer(event);
     const root = String(request?.root || '').trim();
     if (!root || !path.isAbsolute(root)) return { ok: false, detail: 'Cartella di installazione non valida.' };
-    return startPaddleServer(root, sendPaddleLog(event));
+    return startPaddleServer(root, sendPaddleLog(event), { restart: true });
   });
 
   ipcMain.handle('desktop:local-setup', async (event) => {

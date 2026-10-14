@@ -102,7 +102,23 @@ function LocalInstall({ form, set, setForm, defaults }) {
   const bridge = globalThis.window?.scanConverterDesktop;
   const canInstall = typeof bridge?.paddleInstall === 'function';
   const platform = detectPlatform();
-  const [root, setRoot] = useState(() => suggestedRoot(platform));
+  // La cartella scelta si ricorda: prima ripartiva sempre dal suggerimento
+  // (D:\…) anche dopo aver installato altrove.
+  const [root, setRootState] = useState(() => {
+    try {
+      return localStorage.getItem('sc.paddleRoot') || suggestedRoot(platform);
+    } catch {
+      return suggestedRoot(platform);
+    }
+  });
+  const setRoot = (value) => {
+    setRootState(value);
+    try {
+      localStorage.setItem('sc.paddleRoot', value);
+    } catch {
+      /* solo in memoria */
+    }
+  };
   const [log, setLog] = useState('');
   const [busy, setBusy] = useState('');
   const [check, setCheck] = useState(null);
@@ -112,7 +128,13 @@ function LocalInstall({ form, set, setForm, defaults }) {
   useEffect(() => {
     let alive = true;
     readLocalSetup().then((found) => {
-      if (alive && found?.found && found.root) setRoot(found.root);
+      let saved = null;
+      try {
+        saved = localStorage.getItem('sc.paddleRoot');
+      } catch {
+        /* niente */
+      }
+      if (alive && !saved && found?.found && found.root) setRoot(found.root);
     });
     const off = bridge?.onPaddleLog?.((line) => setLog((prev) => (prev + line).slice(-20000)));
     return () => {
