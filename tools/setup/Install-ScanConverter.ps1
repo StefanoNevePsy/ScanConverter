@@ -355,6 +355,13 @@ function Install-Paddle {
         & $uv pip install --python $py "paddlepaddle==$paddleVersion" --index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/ --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match
     }
     if ($LASTEXITCODE -ne 0) { throw 'Installazione di PaddlePaddle non riuscita.' }
+    if ($hasNvidia) {
+        # Paddle cerca cuDNN fra le librerie di sistema: se un altro programma
+        # ne ha installata una versione diversa, la usa e il modello si blocca.
+        # Si installa quella giusta DENTRO l'ambiente; server.py la mette per prima.
+        & $uv pip install --python $py "nvidia-cudnn-cu12==9.9.*"
+        if ($LASTEXITCODE -ne 0) { Write-Warn2 'cuDNN 9.9 non installato: possibili blocchi sulla GPU.' }
+    }
     & $uv pip install --python $py -r (Join-Path $dir 'requirements.txt')
     if ($LASTEXITCODE -ne 0) { throw 'Installazione di PaddleOCR non riuscita.' }
     Write-Ok 'Pacchetti installati'

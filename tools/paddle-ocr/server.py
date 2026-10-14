@@ -25,6 +25,28 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+def _prefer_bundled_cuda_libs() -> None:
+    """Usa cuDNN installato nell'ambiente prima di quello di sistema.
+
+    Su Windows Paddle carica cuDNN dal PATH: se un altro programma ha messo
+    una versione diversa (es. 9.5 invece di 9.9), il modello può bloccarsi.
+    """
+    import site
+    import sys
+
+    roots = [*site.getsitepackages(), site.getusersitepackages()]
+    for root in roots:
+        for sub in ("cudnn", "cublas", "cuda_runtime"):
+            for folder in ("bin", "lib"):
+                path = os.path.join(root, "nvidia", sub, folder)
+                if os.path.isdir(path):
+                    os.environ["PATH"] = path + os.pathsep + os.environ.get("PATH", "")
+                    if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+                        os.add_dll_directory(path)
+
+
+_prefer_bundled_cuda_libs()
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
 log = logging.getLogger("paddle-ocr")
 
