@@ -143,6 +143,11 @@ install_typst() {
 
 install_paddle() {
   cyan 'PaddleOCR-VL locale'
+  if [ "$(uname -s)" = 'Darwin' ] && [ "$(uname -m)" = 'arm64' ]; then
+    warn 'Attenzione: PaddleOCR-VL non supporta ufficialmente i Mac Apple Silicon.'
+    warn 'Il server si installa, ma la lettura delle pagine può fallire.'
+    warn 'Su Mac usa PaddleOCR online (Impostazioni → PaddleOCR → Online).'
+  fi
   dir="$ROOT/paddle-ocr"
   src="$(cd "$(dirname "$0")/../paddle-ocr" && pwd)"
   mkdir -p "$dir" "$ROOT/paddle-cache"

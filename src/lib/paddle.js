@@ -228,6 +228,22 @@ export async function paddleOcrBlocks({ mode = 'online', url, token, endpoint, i
   }
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
+    if (local) {
+      // Il server locale non è mai «occupato»: un errore è un errore vero
+      // (modello non caricato, memoria, libreria). Va mostrato subito, non
+      // riprovato all'infinito come se fosse un limite di quota.
+      let reason = detail;
+      try {
+        reason = JSON.parse(detail)?.errorMsg || detail;
+      } catch {
+        /* testo semplice */
+      }
+      const err = new Error(
+        `Il server PaddleOCR locale ha avuto un problema leggendo la pagina: ${String(reason).slice(0, 400)}`,
+      );
+      err.local = true;
+      throw err;
+    }
     const err = new Error(`PaddleOCR ha risposto ${res.status}. ${detail.slice(0, 200)}`.trim());
     err.status = res.status;
     throw err;

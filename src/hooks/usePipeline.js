@@ -174,7 +174,8 @@ async function withRetry(fn, signal, onWait, { max = 6, start = 15000, cap = 120
       return await fn();
     } catch (e) {
       if (signal?.aborted || e?.name === 'AbortError') throw e;
-      if (!RETRYABLE_RE.test(e.message || '') || attempt >= max) throw e;
+      // Gli errori dei servizi locali non sono quote: si mostrano subito.
+      if (e?.local || !RETRYABLE_RE.test(e.message || '') || attempt >= max) throw e;
       onWait?.(Math.round(delay / 1000));
       await abortableSleep(delay, signal);
       delay = Math.min(delay * 2, cap);

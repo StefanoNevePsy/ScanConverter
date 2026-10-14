@@ -171,6 +171,12 @@ function LocalInstall({ form, set, setForm, defaults }) {
         computer. Con una scheda video NVIDIA è veloce; senza funziona lo stesso, ma una pagina
         può richiedere da qualche secondo a un minuto.
       </p>
+      {platform === 'macos' && (
+        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-ink">
+          Sui Mac con chip Apple (M1–M5) PaddleOCR-VL in locale non è supportato ufficialmente e
+          la lettura delle pagine può fallire. Su Mac conviene la modalità Online.
+        </p>
+      )}
 
       <div>
         <span className="mb-1.5 block text-sm font-medium text-ink">Dove installare</span>
