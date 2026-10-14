@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadSettings, saveSettings } from './lib/storage.js';
 import { requiredKeys, phaseConfig, ENGINE_LABELS } from './lib/phases.js';
 import { fixEverywhereLike, fixWholeTypst } from './lib/typstSelectionFix.js';
+import { fixTypstBullets } from './lib/bullets.js';
 import { formatBytes } from './lib/files.js';
 import { findBestEditorLocation } from './lib/editorScroll.js';
 import { cursorSearchText } from './lib/pdfPreview.js';
@@ -168,8 +169,11 @@ export default function App() {
   }, [livePreview, pipe.typstCode, pipe]);
 
   const manualCompile = useCallback(async () => {
-    const ok = await pipe.recompile(pipe.typstCode);
-    if (ok) lastCompiledRef.current = pipe.typstCode;
+    // Documenti già generati: i pallini LaTeX si sistemano a ogni «Genera PDF».
+    const { code } = fixTypstBullets(pipe.typstCode);
+    if (code !== pipe.typstCode) pipe.setTypstCode(code);
+    const ok = await pipe.recompile(code);
+    if (ok) lastCompiledRef.current = code;
   }, [pipe]);
 
   const download = useCallback(
