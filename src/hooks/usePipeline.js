@@ -11,7 +11,7 @@ import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assem
 import { refinePageTables } from '../lib/segments.js';
 import { localOcrBlocks } from '../lib/local.js';
 import { paddleOcrBlocks } from '../lib/paddle.js';
-import { fixTypstBullets } from '../lib/bullets.js';
+import { fixTypstBullets, normalizeOcrBullets } from '../lib/bullets.js';
 import { toTypstLocal } from '../lib/engines.js';
 import { ENGINE_LABELS, phaseConfig } from '../lib/phases.js';
 import { structureFromBlocks } from '../lib/docmodel.js';
@@ -1115,7 +1115,9 @@ export function usePipeline(settings) {
           10,
           speller ? (word) => speller.correct(word) : null,
         );
-        let canonicalText = boundaryRepair.text;
+        // Pallini LaTeX dell'OCR (`\(\bullet\)`) → voci d'elenco: anche per
+        // le sessioni estratte prima della correzione in assemble.js.
+        let canonicalText = normalizeOcrBullets(boundaryRepair.text);
         let corrections = [...intraWordCorrections, ...boundaryRepair.changes];
         if (settings.fixTypos) {
           const proofEngine = phaseEngineLabel(settings, 'proof');

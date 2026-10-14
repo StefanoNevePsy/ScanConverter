@@ -736,6 +736,37 @@ function indentUnderItem(rendered) {
     .join('\n');
 }
 
+/**
+ * Il piano di layout sceglie lo stile blocco per blocco, e su una serie di
+ * citazioni consecutive dello stesso tipo capita che ne metta metà in
+ * riquadro e metà no. Una serie di blocchi adiacenti che si aprono con
+ * virgolette riceve UNO stile solo: quello della maggioranza.
+ */
+const QUOTE_OPEN_RE = /^(?:[-+*]\s+)?[«"“„]/u;
+
+export function harmonizeQuoteStyles(blocks, styleMap) {
+  let i = 0;
+  while (i < blocks.length) {
+    if (!QUOTE_OPEN_RE.test(String(blocks[i] || '').trim())) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < blocks.length && QUOTE_OPEN_RE.test(String(blocks[j] || '').trim())) j++;
+    if (j - i >= 2) {
+      const ids = [];
+      for (let k = i; k < j; k++) ids.push(`b-${k + 1}`);
+      const quoted = ids.filter((id) => styleMap.get(id) === 'quote').length;
+      const style = quoted * 2 > ids.length ? 'quote' : null;
+      for (const id of ids) {
+        if (style) styleMap.set(id, style);
+        else if (styleMap.get(id) === 'quote') styleMap.delete(id);
+      }
+    }
+    i = j;
+  }
+}
+
 export function markdownToStrictTypst(markdown, plan = {}) {
   const blocks = String(markdown || '').trim().split(/\n{2,}/);
   const styleMap = new Map();
@@ -744,6 +775,7 @@ export function markdownToStrictTypst(markdown, plan = {}) {
   for (const item of plan.headings || []) {
     if (Number.isInteger(item?.level)) headingLevelMap.set(item.id, Math.max(1, Math.min(6, item.level)));
   }
+  harmonizeQuoteStyles(blocks, styleMap);
   const nestedBlocks = planListNesting(blocks);
   const out = [];
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
