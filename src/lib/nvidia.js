@@ -145,7 +145,9 @@ async function callNemotron({ apiKey, endpoint, model, imageDataUrl, tool, signa
             ],
           },
         ],
-        max_tokens: 8192,
+        // Il NIM ospitato ha un contesto totale di 4096 token (immagine +
+        // prompt + risposta): chiederne di più fa rispondere 400.
+        max_tokens: 3500,
         temperature: 0.0,
         top_k: 1,
         repetition_penalty: 1.1,
