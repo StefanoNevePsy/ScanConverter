@@ -74,15 +74,15 @@ export const PHASE_DEFAULTS = {
   },
   translate: {
     engine: 'gemini',
-    models: { nvidia: 'z-ai/glm-5.2', gemini: 'gemini-flash-lite-latest', local: 'translategemma:4b' },
+    models: { nvidia: 'deepseek-ai/deepseek-v3.2', gemini: 'gemini-flash-lite-latest', local: 'translategemma:4b' },
   },
   proof: {
     engine: 'nvidia',
-    models: { nvidia: 'z-ai/glm-5.2', gemini: 'gemini-flash-latest', local: 'qwen3:8b' },
+    models: { nvidia: 'deepseek-ai/deepseek-v3.2', gemini: 'gemini-flash-latest', local: 'qwen3:8b' },
   },
   fix: {
     engine: 'nvidia',
-    models: { nvidia: 'z-ai/glm-5.2', gemini: 'gemini-flash-latest', local: 'qwen3:8b' },
+    models: { nvidia: 'deepseek-ai/deepseek-v3.2', gemini: 'gemini-flash-latest', local: 'qwen3:8b' },
   },
 };
 

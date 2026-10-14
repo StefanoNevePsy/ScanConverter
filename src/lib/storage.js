@@ -99,6 +99,8 @@ export const DEFAULTS = {
   docContext: '',
 };
 
+const RETIRED_MODELS = new Set(['z-ai/glm-5.2', 'z-ai/glm5', 'z-ai/glm-5']);
+
 const PDF_MODES = ['auto', 'ocr'];
 const FORMAT_WORKFLOWS = ['legacy', 'strict'];
 
@@ -211,6 +213,8 @@ function loadPhases() {
     const models = { ...base.models };
     for (const engine of ENGINES) {
       const value = String(saved?.models?.[engine] || '').trim();
+      // Modelli ritirati da NVIDIA: chi li aveva salvati passa al default.
+      if (RETIRED_MODELS.has(value)) continue;
       if (value) {
         // qwen3:8b era il precedente default della sola traduzione. Chi aveva
         // scelto un modello diverso conserva la scelta; il vecchio default

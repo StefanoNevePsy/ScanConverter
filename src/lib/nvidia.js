@@ -200,6 +200,12 @@ async function callNemotron({ apiKey, endpoint, model, imageDataUrl, tool, signa
 
   if (!res.ok) {
     const detail = await safeErrorDetail(res);
+    if (res.status === 410 || res.status === 404) {
+      throw new Error(
+        `Il modello NVIDIA «${body.model}» non è più disponibile. Aprine un altro in ` +
+          `Impostazioni → Motori per fase (pulsante ↻ per l’elenco aggiornato). Dettaglio: ${detail}`,
+      );
+    }
     throw new Error(`NVIDIA NIM ha risposto ${res.status}. ${detail}`);
   }
 
@@ -270,6 +276,12 @@ export async function nvidiaChat({ apiKey, endpoint, model, system, user, temper
 
   if (!res.ok) {
     const detail = await safeErrorDetail(res);
+    if (res.status === 410 || res.status === 404) {
+      throw new Error(
+        `Il modello NVIDIA «${body.model}» non è più disponibile. Aprine un altro in ` +
+          `Impostazioni → Motori per fase (pulsante ↻ per l’elenco aggiornato). Dettaglio: ${detail}`,
+      );
+    }
     throw new Error(`NVIDIA NIM ha risposto ${res.status}. ${detail}`);
   }
 
