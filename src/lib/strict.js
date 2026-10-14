@@ -6,6 +6,7 @@
   testuale può provenire soltanto da una patch di correzione esplicita.
 */
 
+import { headingKey, sizeClasses } from './headingSize.js';
 import { buildPreamble, extractTitle } from './preamble.js';
 
 /** Testo confrontabile, Unicode-aware, con numeri e ordine preservati. */
@@ -772,16 +773,25 @@ export function headingShape(text, markdownLevel = 2) {
  * Rende coerenti i livelli dei titoli in tutto il documento.
  * Modifica `levels` (Map id → livello) e lo restituisce.
  */
-export function resolveHeadingLevels(blocks, levels) {
+export function resolveHeadingLevels(blocks, levels, sizes = null) {
   const items = [];
   blocks.forEach((raw, i) => {
     const block = String(raw || '').trim().replace(/^<!--\s*pagina\s+\d+\s*-->\s*/i, '');
     const m = block.match(/^(#{1,6})\s+([^\n]+)$/);
     if (!m) return;
     const id = `b-${i + 1}`;
-    items.push({ id, md: m[1].length, model: levels.get(id), ...headingShape(m[2], m[1].length) });
+    const ratio = sizes?.get?.(headingKey(m[2])) || null;
+    items.push({ id, md: m[1].length, model: levels.get(id), ratio, ...headingShape(m[2], m[1].length) });
   });
   if (!items.length) return levels;
+
+  // Taglia del carattere (relativa al testo vicino): per i titoli senza
+  // numero è il segnale più affidabile. Entra nella «forma» del titolo, così
+  // due titoli dello stesso tipo ma di corpo diverso non vengono uniti.
+  const classes = sizeClasses(items.map((it) => it.ratio).filter(Boolean));
+  for (const it of items) {
+    if (it.kind === 'none' && it.ratio) it.signature += `:s${classes.get(it.ratio)}`;
+  }
 
   // 1. Stessa forma → stesso livello (voto di maggioranza del modello).
   const groups = new Map();
@@ -804,6 +814,24 @@ export function resolveHeadingLevels(blocks, levels) {
   for (const it of items) {
     const g = groupLevel.get(it.signature);
     it.level = g.force || !it.model ? g.level : it.model;
+  }
+
+  // Gruppi che il modello non ha mai classificato: il livello lo decide la
+  // taglia, in ordine (più grande = livello più alto), invece del livello
+  // grezzo dell'OCR.
+  const sized = [...groups.entries()]
+    .filter(([sig, list]) => sig.startsWith('none') && list.every((it) => it.ratio))
+    .map(([sig, list]) => ({ sig, size: list[0].ratio, voted: list.some((it) => it.model) }));
+  if (sized.some((g) => !g.voted) && sized.some((g) => g.voted)) {
+    for (const g of sized.filter((x) => !x.voted)) {
+      // Il gruppo votato di taglia più vicina dà il livello.
+      const nearest = sized
+        .filter((x) => x.voted)
+        .sort((a, z) => Math.abs(Math.log(a.size / g.size)) - Math.abs(Math.log(z.size / g.size)))[0];
+      const level = groupLevel.get(nearest.sig).level;
+      groupLevel.get(g.sig).level = level;
+      for (const it of groups.get(g.sig)) it.level = level;
+    }
   }
 
   // 2. Vincoli certi della numerazione.
@@ -870,7 +898,9 @@ export function markdownToStrictTypst(markdown, plan = {}) {
     if (Number.isInteger(item?.level)) headingLevelMap.set(item.id, Math.max(1, Math.min(6, item.level)));
   }
   harmonizeQuoteStyles(blocks, styleMap);
-  resolveHeadingLevels(blocks, headingLevelMap);
+  // Solo sul documento intero (col piano del modello): i confronti parziali
+  // fra due versioni di un brano non devono rinumerare i titoli.
+  if (Array.isArray(plan.headings)) resolveHeadingLevels(blocks, headingLevelMap, plan.headingSizes);
   const nestedBlocks = planListNesting(blocks);
   const out = [];
   for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {

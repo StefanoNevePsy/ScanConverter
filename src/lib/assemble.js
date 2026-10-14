@@ -6,6 +6,7 @@
 */
 
 import { normalizeOcrBullets } from './bullets.js';
+import { headingSizeRatios } from './headingSize.js';
 import { loadImage, cropToPng } from './figures.js';
 import { isOrnament, pairCaptions, splitMarginalia } from './docmodel.js';
 
@@ -401,7 +402,7 @@ export async function assemblePage(blocks, pageDataUrl, figureCounter) {
     else lines.push(notes);
   }
 
-  return { markdown: lines.join('\n\n'), figures };
+  return { markdown: lines.join('\n\n'), figures, headingSizes: headingSizeRatios(sorted) };
 }
 
 /**

@@ -21,6 +21,7 @@ const KEYS = {
   compareOcr: 'sc.compareOcr',
   refineTables: 'sc.refineTables',
   cleanPages: 'sc.cleanPages',
+  useHeadingSize: 'sc.useHeadingSize',
   localEndpoint: 'sc.localEndpoint',
   localModel: 'sc.localModel',
   localOcrEndpoint: 'sc.localOcrEndpoint',
@@ -83,6 +84,8 @@ export const DEFAULTS = {
   // Raddrizza le pagine (inclinazione e curvatura vicino alla rilegatura) e
   // schiarisce il fondo grigio prima dell'OCR. Le pagine dritte restano intatte.
   cleanPages: true,
+  // Usa la dimensione dei titoli (relativa al testo vicino) per la gerarchia.
+  useHeadingSize: true,
   // Pipeline LOCALE (branch sperimentale): un server OpenAI-compatibile sulla
   // macchina dell'utente per le fasi testuali, e un sidecar che incapsula
   // Nemotron OCR v2 per la fase immagine → testo. Nessuna chiave richiesta.
@@ -258,6 +261,7 @@ export function loadSettings() {
     compareOcr: readBool(KEYS.compareOcr, DEFAULTS.compareOcr),
     refineTables: readBool(KEYS.refineTables, DEFAULTS.refineTables),
     cleanPages: readBool(KEYS.cleanPages, DEFAULTS.cleanPages),
+    useHeadingSize: readBool(KEYS.useHeadingSize, DEFAULTS.useHeadingSize),
     localEndpoint: read(KEYS.localEndpoint, DEFAULTS.localEndpoint),
     localOcrEndpoint: read(KEYS.localOcrEndpoint, DEFAULTS.localOcrEndpoint),
     paddleMode: read(KEYS.paddleMode, DEFAULTS.paddleMode) === 'local' ? 'local' : 'online',
@@ -383,6 +387,7 @@ export function saveSettings(s) {
   write(KEYS.compareOcr, s.compareOcr ? '1' : '0');
   write(KEYS.refineTables, s.refineTables ? '1' : '0');
   write(KEYS.cleanPages, s.cleanPages ? '1' : '0');
+  write(KEYS.useHeadingSize, s.useHeadingSize === false ? '0' : '1');
   write(KEYS.localEndpoint, s.localEndpoint?.trim() || DEFAULTS.localEndpoint);
   write(KEYS.localOcrEndpoint, s.localOcrEndpoint?.trim() || DEFAULTS.localOcrEndpoint);
   write(KEYS.paddleMode, s.paddleMode === 'local' ? 'local' : 'online');

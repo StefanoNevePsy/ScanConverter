@@ -392,6 +392,24 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                   </span>
                 </span>
               </label>
+              <label className="mt-3 flex cursor-pointer items-start gap-3 py-0.5">
+                <input
+                  type="checkbox"
+                  checked={form.useHeadingSize !== false}
+                  onChange={(e) => setForm((f) => ({ ...f, useHeadingSize: e.target.checked }))}
+                  className="mt-0.5 accent-primary"
+                />
+                <span>
+                  <span className="block text-sm font-medium text-ink">
+                    Usa la dimensione dei titoli per la gerarchia
+                  </span>
+                  <span className="block text-xs text-faint">
+                    Confronta ogni titolo con il testo che gli sta vicino, non con una misura
+                    assoluta: regge anche le foto storte o in prospettiva fatte col telefono.
+                    Vale per i documenti estratti da ora in poi.
+                  </span>
+                </span>
+              </label>
             </div>
             {ocrEngine !== 'gemini' && (
               <div className="mt-3">

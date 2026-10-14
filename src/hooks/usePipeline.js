@@ -14,6 +14,7 @@ import { paddleOcrBlocks } from '../lib/paddle.js';
 import { fixTypstBullets, normalizeOcrBullets } from '../lib/bullets.js';
 import { italianTypography } from '../lib/typography.js';
 import { cleanPageImage } from '../lib/dewarp.js';
+import { mergeHeadingSizes } from '../lib/headingSize.js';
 import { toTypstLocal } from '../lib/engines.js';
 import { ENGINE_LABELS, phaseConfig } from '../lib/phases.js';
 import { structureFromBlocks } from '../lib/docmodel.js';
@@ -1167,7 +1168,13 @@ export function usePipeline(settings) {
             `Layout Typst · ${typstEngine} · nuovo tentativo tra ${secs}s…`,
           ),
         );
-        const strict = buildStrictDocument(canonicalText, layoutPlan);
+        // Dimensione dei titoli rispetto al testo vicino, misurata in OCR.
+        const headingSizePages =
+          sessionRef.current?.ocr?.headingSizes || sessionRef.current?.headingSizes || [];
+        const strict = buildStrictDocument(canonicalText, {
+          ...layoutPlan,
+          headingSizes: settings.useHeadingSize === false ? null : mergeHeadingSizes(headingSizePages),
+        });
         const strictOptions = normalizeLayoutOptions(strict.documentOptions);
         setLayoutOptions(strictOptions);
         const previousComparisons = sessionRef.current?.ocr?.comparisons || [];
@@ -1181,6 +1188,7 @@ export function usePipeline(settings) {
           rawText: extracted,
           canonicalText,
           corrections,
+          headingSizes: headingSizePages,
           ocrComparisons: previousComparisons,
           strictIssueResolutions: {},
           layoutPlan,
@@ -1427,6 +1435,8 @@ export function usePipeline(settings) {
               };
             }
           }
+          if (!Array.isArray(s.ocr.headingSizes)) s.ocr.headingSizes = [];
+          s.ocr.headingSizes[i] = page.headingSizes || [];
           s.ocr.parts[i] = total > 1 ? `<!-- pagina ${i + 1} -->\n${page.markdown}` : page.markdown;
           s.ocr.figCount = figCounter.count();
           figuresRef.current.push(...page.figures);
