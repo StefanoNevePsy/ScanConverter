@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadSettings, saveSettings } from './lib/storage.js';
-import { requiredKeys } from './lib/phases.js';
+import { requiredKeys, phaseConfig, ENGINE_LABELS } from './lib/phases.js';
+import { fixTypstSelection } from './lib/typstSelectionFix.js';
 import { formatBytes } from './lib/files.js';
 import { findBestEditorLocation } from './lib/editorScroll.js';
 import { cursorSearchText } from './lib/pdfPreview.js';
@@ -629,6 +630,12 @@ function Workspace({
     setTimeout(() => setAutofixMsg(null), 7000);
   }, [pipe]);
 
+  // «Sistema codice» sulla selezione Typst: modello della fase Riparazione.
+  const handleFixSelection = useCallback(
+    (request) => fixTypstSelection({ settings, ...request }),
+    [settings],
+  );
+
   const handleAiFix = useCallback(async () => {
     const res = await pipe.aiFix();
     setAutofixMsg(res?.message || null);
@@ -1025,6 +1032,8 @@ function Workspace({
             proofreadDetail={pipe.proofreadDetail}
             proofModelLabel={pipe.proofModelLabel}
             onReviseSelection={pipe.strictWorkflow ? handleSelectionRevision : null}
+            onFixSelection={handleFixSelection}
+            fixModelLabel={`${ENGINE_LABELS[phaseConfig(settings, 'fix').engine]} · ${phaseConfig(settings, 'fix').model}`}
             selectionBusy={pipe.selectionAiBusy}
             selectionDetail={pipe.selectionAiDetail}
             translationModelLabel={pipe.translationModelLabel}

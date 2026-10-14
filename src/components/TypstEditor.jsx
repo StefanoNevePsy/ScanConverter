@@ -52,6 +52,8 @@ export default function TypstEditor({
   proofreadDetail,
   proofModelLabel,
   onReviseSelection,
+  onFixSelection,
+  fixModelLabel,
   selectionBusy,
   selectionDetail,
   translationModelLabel,
@@ -87,6 +89,9 @@ export default function TypstEditor({
   const [current, setCurrent] = useState(0);
   const [wholeWord, setWholeWord] = useState(false);
   const [editorSelection, setEditorSelection] = useState(null);
+  const [fixBusy, setFixBusy] = useState(false);
+  // Testo prima dell'ultima sistemazione IA: «Annulla» lo ripristina.
+  const [beforeFix, setBeforeFix] = useState(null);
   const [selectionNotice, setSelectionNotice] = useState('');
   const [reviewOffset, setReviewOffset] = useState(0);
   const [marksOn, setMarksOn] = useState(true);
@@ -437,6 +442,63 @@ export default function TypstEditor({
       source: 'typst',
     });
     setSelectionNotice(result?.message || 'Operazione completata.');
+  };
+
+  const runFixSelection = async () => {
+    if (!editorSelection || fixBusy || !onFixSelection) return;
+    const { start, end } = editorSelection;
+    const original = value;
+    const lineStart = (pos, n) => {
+      let i = pos;
+      for (let k = 0; k <= n && i > 0; k++) i = original.lastIndexOf('\n', i - 2) + 1;
+      return Math.max(0, i);
+    };
+    const lineEnd = (pos, n) => {
+      let i = pos;
+      for (let k = 0; k < n && i < original.length; k++) {
+        const next = original.indexOf('\n', i + 1);
+        i = next === -1 ? original.length : next;
+      }
+      return i;
+    };
+    setFixBusy(true);
+    setSelectionNotice('');
+    try {
+      const result = await onFixSelection({
+        code: original.slice(start, end),
+        before: original.slice(lineStart(start, 2), start),
+        after: original.slice(end, lineEnd(end, 2)),
+      });
+      if (result?.ok && result.code != null) {
+        // Il testo potrebbe essere cambiato mentre il modello lavorava.
+        if (value !== original && taRef.current?.value !== original) {
+          setSelectionNotice('Il testo è cambiato nel frattempo: proposta non applicata.');
+          return;
+        }
+        const next = original.slice(0, start) + result.code + original.slice(end);
+        setBeforeFix({ original, next });
+        pendingSelectionRef.current = { start, end: start + result.code.length };
+        onChange(next);
+      }
+      setSelectionNotice(result?.message || 'Operazione completata.');
+    } catch (error) {
+      setSelectionNotice(error?.message || 'Sistemazione non riuscita.');
+    } finally {
+      setFixBusy(false);
+    }
+  };
+
+  // «Annulla» vale solo finché il testo è quello appena sistemato: dopo
+  // altre modifiche riportarlo indietro cancellerebbe anche quelle.
+  useEffect(() => {
+    if (beforeFix && value !== beforeFix.next) setBeforeFix(null);
+  }, [value, beforeFix]);
+
+  const undoFix = () => {
+    if (beforeFix == null) return;
+    onChange(beforeFix.original);
+    setBeforeFix(null);
+    setSelectionNotice('Sistemazione annullata.');
   };
 
   const onSearchKeyDown = (e) => {
@@ -820,6 +882,19 @@ export default function TypstEditor({
                 <IconOutdent width={14} height={14} />
               </button>
             </div>
+            {onFixSelection && (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={runFixSelection}
+                disabled={fixBusy || !!selectionBusy || disabled}
+                title={`Fa sistemare all’IA la marcatura Typst selezionata (elenchi, titoli, corsivi) con ${fixModelLabel || 'il modello di riparazione'}. Le parole non vengono toccate.`}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-primary/40 bg-surface px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-surface-2 disabled:opacity-50"
+              >
+                {fixBusy ? <IconSpinner width={13} height={13} /> : <IconWand width={13} height={13} />}
+                {fixBusy ? 'Sistemo…' : 'Sistema codice'}
+              </button>
+            )}
             {onReviseSelection && (
               <>
                 <button
@@ -870,6 +945,15 @@ export default function TypstEditor({
           className="border-b border-border bg-surface-2 px-3 py-2 text-xs text-ink"
         >
           {selectionNotice}
+          {beforeFix != null && (
+            <button
+              type="button"
+              onClick={undoFix}
+              className="ml-2 rounded-md px-1.5 py-0.5 font-semibold text-primary hover:bg-surface"
+            >
+              Annulla
+            </button>
+          )}
         </p>
       )}
 
