@@ -54,6 +54,8 @@ _PIPELINE: Any = None
 # Il modello non è rientrante: una pagina alla volta.
 _LOCK = threading.Lock()
 _LOAD_LOCK = threading.Lock()
+MAX_SIDE = 1800
+MAX_NEW_TOKENS = 2048
 # Ultima attività e richieste in corso: servono allo spegnimento per inattività.
 _LAST_ACTIVITY = time.monotonic()
 _BUSY = 0
@@ -163,8 +165,24 @@ def parse_page(image) -> dict:
     import numpy as np
 
     pipeline = load_pipeline()
+    # Immagini più piccole: il modello lavora a ~1600 px, oltre sono solo token
+    # in più da generare (e memoria della scheda video). Le coordinate restano
+    # coerenti perché si restituiscono le misure dell'immagine ridotta.
+    longest = max(image.width, image.height)
+    if longest > MAX_SIDE:
+        scale = MAX_SIDE / longest
+        image = image.resize((round(image.width * scale), round(image.height * scale)))
+    started = time.monotonic()
+    array = np.asarray(image)[:, :, ::-1]  # RGB → BGR
     with _LOCK:
-        output = list(pipeline.predict(np.asarray(image)[:, :, ::-1]))  # RGB → BGR
+        try:
+            # Limite alla lunghezza della risposta e penalità sulle ripetizioni:
+            # senza, su certe pagine il modello ripete la stessa riga all'infinito
+            # e la scheda lavora al 100% senza mai finire.
+            output = list(pipeline.predict(array, max_new_tokens=MAX_NEW_TOKENS, repetition_penalty=1.05))
+        except TypeError:
+            output = list(pipeline.predict(array))
+    log.info("Pagina letta in %.1f s", time.monotonic() - started)
     blocks = to_blocks(output[0]) if output else []
     return {
         "errorCode": 0,

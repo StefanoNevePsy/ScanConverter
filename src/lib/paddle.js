@@ -191,7 +191,11 @@ export async function paddleOcrBlocks({ mode = 'online', url, token, endpoint, i
         useDocOrientationClassify: false,
         useDocUnwarping: false,
       }),
-      signal,
+      // In locale una pagina dura secondi: oltre 4 minuti il modello si è
+      // incastrato, e aspettare oltre non serve.
+      signal: local && typeof AbortSignal?.any === 'function'
+        ? AbortSignal.any([signal, AbortSignal.timeout(240000)].filter(Boolean))
+        : signal,
     });
   let res;
   try {
@@ -207,6 +211,14 @@ export async function paddleOcrBlocks({ mode = 'online', url, token, endpoint, i
       res = await send();
     }
   } catch (e) {
+    if (e?.name === 'TimeoutError' || (local && e?.name === 'AbortError' && !signal?.aborted)) {
+      const err = new Error(
+        'Il server PaddleOCR locale non ha finito la pagina entro 4 minuti: il modello si è ' +
+          'probabilmente incastrato. Riavvia il server e premi «Riprendi».',
+      );
+      err.local = true;
+      throw err;
+    }
     if (e?.name === 'AbortError') throw e;
     throw new Error(
       local
