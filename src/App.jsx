@@ -300,6 +300,7 @@ export default function App() {
           />
         ) : (
           <Workspace
+            settings={settings}
             file={file}
             previewUrl={previewUrl}
             pipe={pipe}
@@ -489,6 +490,7 @@ function Landing({
 /* -------------------------------------------------------------- Workspace */
 
 function Workspace({
+  settings,
   file,
   previewUrl,
   pipe,
