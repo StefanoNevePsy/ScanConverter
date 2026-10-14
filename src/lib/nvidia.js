@@ -388,7 +388,13 @@ export function chatCandidates(ids) {
   return ids.filter((id) => !NOT_CHAT.test(id));
 }
 
-export async function probeNvidiaModel({ apiKey, endpoint, model, signal }) {
+export async function probeNvidiaModel({ apiKey, endpoint, model, signal, timeoutMs = 20000 }) {
+  // Un modello che non risponde entro 20 secondi è inutilizzabile per un
+  // libro: si passa al successivo invece di restare bloccati.
+  const timer = new AbortController();
+  const timeout = setTimeout(() => timer.abort(), timeoutMs);
+  const onAbort = () => timer.abort();
+  signal?.addEventListener('abort', onAbort);
   try {
     const res = await fetch(resolveEndpoint(endpoint), {
       method: 'POST',
@@ -403,12 +409,15 @@ export async function probeNvidiaModel({ apiKey, endpoint, model, signal }) {
         max_tokens: 4,
         temperature: 0,
       }),
-      signal,
+      signal: timer.signal,
     });
     return { ok: res.ok, status: res.status };
   } catch (e) {
-    if (e?.name === 'AbortError') throw e;
-    return { ok: false, status: 0 };
+    if (signal?.aborted) throw e;
+    return { ok: false, status: 0, timedOut: e?.name === 'AbortError' };
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 
