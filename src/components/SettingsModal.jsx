@@ -439,10 +439,10 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
 
           {form.formatWorkflow === 'strict' && (
             <div className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-muted">
-              Nel workflow «Fedeltà massima» il modello della fase Typst sceglie
-              soltanto il piano editoriale (font, margini, densità e stili dei
-              blocchi). Il testo e il codice sono prodotti localmente e non
-              possono essere riscritti dal modello.
+              Nel workflow «Fedeltà massima» il testo e il codice Typst sono prodotti
+              localmente con regole fisse, senza modelli: niente quote né errori in
+              questa fase. Font, margini e stile si cambiano dal pannello di
+              impaginazione.
             </div>
           )}
 

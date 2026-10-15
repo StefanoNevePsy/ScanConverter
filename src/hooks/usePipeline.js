@@ -11,6 +11,7 @@ import { assemblePage, makeFigureCounter, applyFigureWidths } from '../lib/assem
 import { refinePageTables } from '../lib/segments.js';
 import { localOcrBlocks } from '../lib/local.js';
 import { paddleOcrBlocks } from '../lib/paddle.js';
+import { ollamaOcrBlocks } from '../lib/ollamaOcr.js';
 import { fixTypstBullets, normalizeOcrBullets } from '../lib/bullets.js';
 import { italianTypography } from '../lib/typography.js';
 import { cleanupBook } from '../lib/bookCleanup.js';
@@ -1327,7 +1328,14 @@ export function usePipeline(settings) {
               : ocr.engine === 'paddle'
               ? await withRetry(
                   () =>
-                    paddleOcrBlocks({
+                    settings.paddleMode === 'ollama'
+                      ? ollamaOcrBlocks({
+                          endpoint: settings.localEndpoint,
+                          model: settings.paddleOllamaModel,
+                          imageDataUrl: dataUrl,
+                          signal,
+                        })
+                      : paddleOcrBlocks({
                       mode: settings.paddleMode,
                       url: settings.paddleUrl,
                       token: settings.paddleToken,

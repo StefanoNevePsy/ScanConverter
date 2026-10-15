@@ -29,6 +29,7 @@ const KEYS = {
   paddleUrl: 'sc.paddleUrl',
   paddleToken: 'sc.paddleToken',
   paddleLocalEndpoint: 'sc.paddleLocalEndpoint',
+  paddleOllamaModel: 'sc.paddleOllamaModel',
   docContext: 'sc.docContext',
   sourceLang: 'sc.sourceLang',
   targetLang: 'sc.targetLang',
@@ -96,6 +97,8 @@ export const DEFAULTS = {
   paddleMode: 'online',
   paddleUrl: '',
   paddleLocalEndpoint: 'http://localhost:8001/layout-parsing',
+  // Modello di visione su Ollama per la modalità «ollama».
+  paddleOllamaModel: 'MedAIBase/PaddleOCR-VL:0.9b',
   // Traduzione (fase separata, mai in sovrascrittura dell'originale).
   sourceLang: 'auto',
   targetLang: 'en',
@@ -264,7 +267,10 @@ export function loadSettings() {
     useHeadingSize: readBool(KEYS.useHeadingSize, DEFAULTS.useHeadingSize),
     localEndpoint: read(KEYS.localEndpoint, DEFAULTS.localEndpoint),
     localOcrEndpoint: read(KEYS.localOcrEndpoint, DEFAULTS.localOcrEndpoint),
-    paddleMode: read(KEYS.paddleMode, DEFAULTS.paddleMode) === 'local' ? 'local' : 'online',
+    paddleMode: ['local', 'ollama'].includes(read(KEYS.paddleMode, DEFAULTS.paddleMode))
+      ? read(KEYS.paddleMode, DEFAULTS.paddleMode)
+      : 'online',
+    paddleOllamaModel: read(KEYS.paddleOllamaModel, DEFAULTS.paddleOllamaModel),
     paddleUrl: read(KEYS.paddleUrl, DEFAULTS.paddleUrl),
     paddleToken: read(KEYS.paddleToken),
     paddleLocalEndpoint: read(KEYS.paddleLocalEndpoint, DEFAULTS.paddleLocalEndpoint),
@@ -390,7 +396,8 @@ export function saveSettings(s) {
   write(KEYS.useHeadingSize, s.useHeadingSize === false ? '0' : '1');
   write(KEYS.localEndpoint, s.localEndpoint?.trim() || DEFAULTS.localEndpoint);
   write(KEYS.localOcrEndpoint, s.localOcrEndpoint?.trim() || DEFAULTS.localOcrEndpoint);
-  write(KEYS.paddleMode, s.paddleMode === 'local' ? 'local' : 'online');
+  write(KEYS.paddleMode, ['local', 'ollama'].includes(s.paddleMode) ? s.paddleMode : 'online');
+  write(KEYS.paddleOllamaModel, s.paddleOllamaModel?.trim() || DEFAULTS.paddleOllamaModel);
   write(KEYS.paddleUrl, s.paddleUrl?.trim() || '');
   write(KEYS.paddleToken, s.paddleToken?.trim() || '');
   write(KEYS.paddleLocalEndpoint, s.paddleLocalEndpoint?.trim() || DEFAULTS.paddleLocalEndpoint);

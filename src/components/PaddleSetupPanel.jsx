@@ -15,12 +15,18 @@ const inputClass =
   'w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 font-mono text-[13px] text-ink placeholder:text-faint transition-colors focus:border-primary focus:outline-none';
 
 export default function PaddleSetupPanel({ form, setForm, defaults }) {
-  const mode = form.paddleMode === 'local' ? 'local' : 'online';
+  const mode = ['local', 'ollama'].includes(form.paddleMode) ? form.paddleMode : 'online';
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <ModeButton
+          active={mode === 'ollama'}
+          onClick={() => setForm((f) => ({ ...f, paddleMode: 'ollama' }))}
+          title="Con Ollama"
+          sub="sul tuo computer, Windows e Mac"
+        />
         <ModeButton
           active={mode === 'online'}
           onClick={() => setForm((f) => ({ ...f, paddleMode: 'online' }))}
@@ -30,17 +36,75 @@ export default function PaddleSetupPanel({ form, setForm, defaults }) {
         <ModeButton
           active={mode === 'local'}
           onClick={() => setForm((f) => ({ ...f, paddleMode: 'local' }))}
-          title="Sul mio computer"
-          sub="nessuna quota, le pagine restano qui"
+          title="Server Paddle"
+          sub="solo Windows/Linux con GPU NVIDIA"
         />
       </div>
 
-      {mode === 'online' ? (
+      {mode === 'ollama' ? (
+        <OllamaFields form={form} set={set} defaults={defaults} />
+      ) : mode === 'online' ? (
         <OnlineFields form={form} set={set} />
       ) : (
         <LocalInstall form={form} set={set} setForm={setForm} defaults={defaults} />
       )}
     </div>
+  );
+}
+
+function OllamaFields({ form, set, defaults }) {
+  const model = (form.paddleOllamaModel || defaults.paddleOllamaModel || '').trim();
+  const command = `ollama pull ${model}`;
+  const [copied, setCopied] = useState(false);
+  return (
+    <>
+      <p className="text-xs leading-relaxed text-faint">
+        Usa Ollama, lo stesso programma dei modelli locali: funziona con la scheda video su
+        Windows e con i chip Apple sul Mac. Il modello restituisce solo il testo: i titoli si
+        riconoscono con regole (righe brevi, maiuscole, numerate), e le figure non vengono
+        ritagliate.
+      </p>
+      <label className="block">
+        <span className="mb-1.5 block text-sm font-medium text-ink">Modello</span>
+        <span className="mb-2 block text-xs text-faint">
+          PaddleOCR-VL legge il testo con più precisione. In alternativa un modello di visione
+          generico (es. un Qwen-VL) marca da sé i titoli, ma è più lento.
+        </span>
+        <input
+          value={form.paddleOllamaModel || ''}
+          onChange={set('paddleOllamaModel')}
+          placeholder={defaults.paddleOllamaModel}
+          spellCheck={false}
+          className={inputClass}
+        />
+      </label>
+      <div>
+        <span className="mb-1.5 flex items-center justify-between gap-2">
+          <span className="text-sm font-medium text-ink">Per scaricarlo, in un terminale</span>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(command);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2500);
+              } catch {
+                /* resta selezionabile */
+              }
+            }}
+            className="rounded-md px-1.5 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-ink"
+          >
+            {copied ? 'Copiato' : 'Copia'}
+          </button>
+        </span>
+        <pre className="overflow-x-auto rounded-lg border border-border bg-surface-2 px-3 py-2.5 font-mono text-xs text-ink">
+          {command}
+        </pre>
+        <span className="mt-1.5 block text-xs text-faint">
+          Serve Ollama in esecuzione. L’indirizzo è quello della sezione «Pipeline locale».
+        </span>
+      </div>
+    </>
   );
 }
 
