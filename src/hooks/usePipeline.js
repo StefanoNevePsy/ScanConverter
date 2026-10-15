@@ -94,7 +94,7 @@ import {
 } from '../lib/strict.js';
 import {
   requestStrictDifferenceReview,
-  requestStrictLayoutPlan,
+  defaultStrictLayoutPlan,
   requestStrictPassageRepair,
 } from '../lib/layoutPlan.js';
 import { createPdfSearchTarget } from '../lib/pdfPreview.js';
@@ -1165,15 +1165,13 @@ export function usePipeline(settings) {
             );
           }
         }
-        const typstEngine = phaseEngineLabel(settings, 'typst');
-        setDetail(`Progettazione layout Typst · ${typstEngine}…`);
-        const layoutPlan = await withRetry(
-          () => requestStrictLayoutPlan({ settings, markdown: canonicalText, signal }),
-          signal,
-          (secs) => setDetail(
-            `Layout Typst · ${typstEngine} · nuovo tentativo tra ${secs}s…`,
-          ),
-        );
+        // Nessun modello: in «Fedeltà massima» il Typst è prodotto da regole
+        // fisse, e il piano grafico (font, margini, livelli dei titoli) lo
+        // decidono il preambolo predefinito e le regole sui titoli. Il modello
+        // qui serviva solo a ritoccare lo stile, e quando falliva costringeva a
+        // ricominciare tutto. Lo stile resta modificabile dal pannello layout.
+        setDetail('Impaginazione…');
+        const layoutPlan = defaultStrictLayoutPlan();
         // Dimensione dei titoli rispetto al testo vicino, misurata in OCR.
         const headingSizePages =
           sessionRef.current?.ocr?.headingSizes || sessionRef.current?.headingSizes || [];

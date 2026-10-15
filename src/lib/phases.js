@@ -137,7 +137,8 @@ export function usesEngine(settings, engine, phases = PHASES) {
  * @returns {{google:boolean, nvidia:boolean}}
  */
 export function requiredKeys(settings) {
-  const automatic = ['ocr', 'typst'];
+  // In «Fedeltà massima» la fase Typst non usa modelli: niente chiave richiesta.
+  const automatic = settings?.formatWorkflow === 'strict' ? ['ocr'] : ['ocr', 'typst'];
   if (settings?.formatWorkflow === 'strict' && settings?.fixTypos) automatic.push('proof');
   // Il confronto fra motori OCR interroga entrambi i servizi in rete.
   const bothForComparison = settings?.formatWorkflow === 'strict' && !!settings?.compareOcr;

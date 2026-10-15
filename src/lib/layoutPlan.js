@@ -95,6 +95,15 @@ export function sampleLayoutDescriptors(descriptors, local = false) {
   }));
 }
 
+/**
+ * Piano grafico senza modello: i valori predefiniti, pensati per leggere e
+ * annotare (margini ampi, una colonna). I livelli dei titoli li decidono le
+ * regole fisse di `resolveHeadingLevels`.
+ */
+export function defaultStrictLayoutPlan() {
+  return validatePlan({ document: {}, blocks: [], headings: [] }, []);
+}
+
 export async function requestStrictLayoutPlan({ settings, markdown, signal }) {
   const descriptors = describeStrictBlocks(markdown);
   const local = phaseConfig(settings, 'typst').engine === 'local';
