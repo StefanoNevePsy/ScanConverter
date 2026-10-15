@@ -456,7 +456,44 @@ function stopPaddleServer() {
   paddleProcess = null;
 }
 
+/*
+  Modello Apple (Foundation Models) con il comando `fm` di macOS 27.
+  Il testo passa come argomento: niente shell, quindi niente problemi di
+  virgolette o caratteri speciali.
+*/
+function appleRespond(prompt, model) {
+  const { execFile } = require('child_process');
+  return new Promise((resolve) => {
+    if (process.platform !== 'darwin') {
+      resolve({ ok: false, error: 'Il modello Apple esiste solo su Mac.' });
+      return;
+    }
+    const args = ['respond'];
+    if (model === 'pcc') args.push('--model', 'pcc');
+    args.push(String(prompt || ''));
+    execFile('fm', args, { timeout: 180000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, PATH: `/usr/bin:/usr/local/bin:${process.env.PATH || ''}` } },
+      (error, stdout, stderr) => {
+        if (error) {
+          const missing = error.code === 'ENOENT';
+          resolve({
+            ok: false,
+            error: missing
+              ? 'Comando «fm» non trovato: serve macOS 27 con Apple Intelligence attiva.'
+              : `Il modello Apple ha dato errore: ${String(stderr || error.message).slice(0, 400)}`,
+          });
+          return;
+        }
+        resolve({ ok: true, text: String(stdout || '') });
+      });
+  });
+}
+
 function registerDesktopIpc() {
+  ipcMain.handle('desktop:apple:respond', async (event, request) => {
+    assertTrustedRenderer(event);
+    return appleRespond(request?.prompt, request?.model);
+  });
+
   const sendPaddleLog = (event) => (line) => {
     if (!event.sender.isDestroyed()) event.sender.send('desktop:paddle:log', line);
   };

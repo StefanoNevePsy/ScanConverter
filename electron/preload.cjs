@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('scanConverterDesktop', Object.freeze({
   paddleInstall: (request) => ipcRenderer.invoke('desktop:paddle:install', request),
   paddleStart: (request) => ipcRenderer.invoke('desktop:paddle:start', request),
   paddleEnsure: () => ipcRenderer.invoke('desktop:paddle:ensure'),
+  appleRespond: (request) => ipcRenderer.invoke('desktop:apple:respond', request),
   onPaddleLog: (callback) => {
     const listener = (_event, line) => callback(String(line));
     ipcRenderer.on('desktop:paddle:log', listener);

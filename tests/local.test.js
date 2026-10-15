@@ -139,7 +139,7 @@ test('un motore salvato ma sconosciuto ricade sul default della fase', async () 
     user: 'testo',
   });
   assert.match(url, /esempio/, 'il default della fase «fix» è NVIDIA');
-  assert.deepEqual(TEXT_ENGINES, ['gemini', 'nvidia', 'local']);
+  assert.deepEqual(TEXT_ENGINES, ['gemini', 'nvidia', 'local', 'apple']);
 });
 
 /* ------------------------------------------- contesto del documento */

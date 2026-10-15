@@ -663,7 +663,7 @@ function PhaseRow({ phase, form, providers, onEngine, onModel }) {
   const provider = providers[engine];
   // L'OCR locale è un sidecar che sceglie da sé il proprio modello: qui non
   // c'è niente da scegliere, e fingere il contrario confonderebbe.
-  const pickable = engine !== 'paddle' && (engine !== 'local' || meta.localModel !== false);
+  const pickable = !['paddle', 'apple'].includes(engine) && (engine !== 'local' || meta.localModel !== false);
 
   return (
     <div className="rounded-lg border border-border bg-surface-2/40 p-3">
@@ -699,7 +699,9 @@ function PhaseRow({ phase, form, providers, onEngine, onModel }) {
       )}
       {!pickable && (
         <p className="mt-2.5 text-xs text-faint">
-          {engine === 'paddle'
+          {engine === 'apple'
+            ? 'Usa il modello di Apple Intelligence integrato in macOS 27 (comando «fm»), sul chip del Mac. Solo nell’app desktop per Mac.'
+            : engine === 'paddle'
             ? 'Modello PaddleOCR-VL: scegli online o locale nella sezione «PaddleOCR», più sotto.'
             : 'Il modello lo sceglie il sidecar: qui basta il suo indirizzo, più sotto.'}
         </p>
@@ -713,6 +715,7 @@ const ENGINE_TITLES = {
   nvidia: 'NVIDIA',
   paddle: 'PaddleOCR-VL',
   local: 'Locale',
+  apple: 'Apple (Mac)',
 };
 
 // Il sottotitolo dice cosa cambia SCEGLIENDO quel motore per QUELLA fase: è
@@ -723,6 +726,7 @@ const ENGINE_SUBS = {
     nvidia: 'in rete, chiave NVIDIA',
     paddle: 'online gratuito o sul tuo computer',
     local: 'sulla tua macchina',
+    apple: 'integrato nel Mac, macOS 27',
   },
   ocr: {
     nvidia: 'estrae figure e tabelle',

@@ -16,6 +16,7 @@ import { nvidiaChat, buildTypstUser } from './nvidia.js';
 import { geminiGenerate, SYSTEM_PROMPT, unwrapCodeBlock } from './gemini.js';
 import { localChat, DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL } from './local.js';
 import { phaseConfig } from './phases.js';
+import { appleChat } from './apple.js';
 
 /**
  * Blocco di contesto da anteporre ai prompt.
@@ -40,7 +41,7 @@ export function contextBlock(settings) {
 }
 
 /** Motori ammessi per le fasi testuali. */
-export const TEXT_ENGINES = ['gemini', 'nvidia', 'local'];
+export const TEXT_ENGINES = ['gemini', 'nvidia', 'local', 'apple'];
 
 /**
  * Esegue una richiesta di chat per una FASE, uniformando i parametri.
@@ -85,8 +86,13 @@ export async function engineChat({
   const resolved =
     model?.trim() ||
     (configured && configured.engine === chosen ? configured.model : '') ||
-    (chosen === 'local' ? DEFAULT_LOCAL_MODEL : '');
+    (chosen === 'local' ? DEFAULT_LOCAL_MODEL : '') ||
+    (chosen === 'apple' ? 'system' : '');
   if (!resolved) throw new Error(`Nessun modello configurato per la fase «${phase || chosen}».`);
+
+  if (chosen === 'apple') {
+    return appleChat({ system, user, json, model: resolved, signal });
+  }
 
   if (chosen === 'local') {
     return localChat({

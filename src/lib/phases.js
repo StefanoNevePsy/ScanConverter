@@ -41,17 +41,17 @@ export const PHASE_META = {
   translate: {
     label: 'Traduzione',
     hint: 'Fase separata e facoltativa: produce un secondo documento, non tocca l’originale.',
-    engines: ['gemini', 'nvidia', 'local'],
+    engines: ['gemini', 'nvidia', 'local', 'apple'],
   },
   proof: {
     label: 'Rilettura e ortografia',
     hint: 'Accenti, parole troncate, refusi. È la fase con più chiamate.',
-    engines: ['nvidia', 'gemini', 'local'],
+    engines: ['nvidia', 'gemini', 'local', 'apple'],
   },
   fix: {
     label: 'Riparazione Typst',
     hint: 'Solo quando la correzione deterministica non basta a far compilare.',
-    engines: ['nvidia', 'gemini', 'local'],
+    engines: ['nvidia', 'gemini', 'local', 'apple'],
   },
 };
 
@@ -87,13 +87,14 @@ export const PHASE_DEFAULTS = {
 };
 
 /** Motori validi in assoluto (una fase può però ammetterne un sottoinsieme). */
-export const ENGINES = ['gemini', 'nvidia', 'paddle', 'local'];
+export const ENGINES = ['gemini', 'nvidia', 'paddle', 'local', 'apple'];
 
 export const ENGINE_LABELS = {
   gemini: 'Gemini',
   nvidia: 'NVIDIA',
   paddle: 'PaddleOCR',
   local: 'Locale',
+  apple: 'Apple (Mac)',
 };
 
 /** Motore ammesso per la fase, con ripiego sul default della fase. */
