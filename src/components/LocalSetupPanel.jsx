@@ -162,7 +162,7 @@ export default function LocalSetupPanel({ localEndpoint, localOcrEndpoint, onApp
         <span className="mt-1.5 block text-xs text-faint">{note}</span>
       </div>
 
-      <OllamaModels endpoint={localEndpoint} onUse={onUseModel} />
+      <OllamaModels endpoint={localEndpoint} onUse={onUseModel} root={root} />
 
       <div>
         <span className="mb-1.5 flex items-center justify-between gap-2">

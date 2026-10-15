@@ -344,15 +344,24 @@ function setupScriptsDir() {
 }
 
 function runPaddleInstall(root, onLine) {
+  return runSetup(root, ['paddle'], [], onLine);
+}
+
+/** Esegue lo script di setup per i componenti indicati, inoltrando l'output. */
+function runSetup(root, components, extra, onLine) {
   const { spawn } = require('child_process');
   const dir = setupScriptsDir();
   const child = process.platform === 'win32'
     ? spawn('powershell.exe', [
       '-NoProfile', '-ExecutionPolicy', 'Bypass',
       '-File', path.join(dir, 'Install-ScanConverter.ps1'),
-      '-Root', root, '-Components', 'paddle',
+      '-Root', root, '-Components', components.join(','),
+      ...(extra.includes('skip-model') ? ['-SkipModel'] : []),
     ], { cwd: dir, windowsHide: true })
-    : spawn('/bin/sh', [path.join(dir, 'install-scanconverter.sh'), '--root', root, '--components', 'paddle'], { cwd: dir });
+    : spawn('/bin/sh', [
+      path.join(dir, 'install-scanconverter.sh'), '--root', root, '--components', components.join(','),
+      ...(extra.includes('skip-model') ? ['--skip-model'] : []),
+    ], { cwd: dir });
   child.stdout.on('data', (chunk) => onLine(chunk.toString()));
   child.stderr.on('data', (chunk) => onLine(chunk.toString()));
   return new Promise((resolve) => {
@@ -505,6 +514,32 @@ function registerDesktopIpc() {
     // prima di reinstallare.
     stopPaddleServer();
     return runPaddleInstall(root, sendPaddleLog(event));
+  });
+  // Installazione di Ollama dall'app: il programma soltanto, i modelli si
+  // scaricano poi dall'elenco dei consigliati.
+  ipcMain.handle('desktop:ollama:install', async (event, request) => {
+    assertTrustedRenderer(event);
+    const root = String(request?.root || '').trim();
+    if (!root || !path.isAbsolute(root)) return { ok: false, error: 'Scegli una cartella con percorso completo.' };
+    const log = sendPaddleLog(event);
+    const result = await runSetup(root, ['ollama'], ['skip-model'], log);
+    // Su Windows l'installer silenzioso non avvia il server: lo si accende qui,
+    // con la cartella dei modelli scelta (la variabile utente vale solo per i
+    // programmi aperti da ora in poi).
+    if (result.ok && process.platform === 'win32') {
+      const exe = path.join(root, 'ollama', 'ollama.exe');
+      if (fs.existsSync(exe)) {
+        const { spawn } = require('child_process');
+        spawn(exe, ['serve'], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          env: { ...process.env, OLLAMA_MODELS: path.join(root, 'models') },
+        }).unref();
+        log('\nOllama avviato.\n');
+      }
+    }
+    return result;
   });
   ipcMain.handle('desktop:paddle:ensure', async (event) => {
     assertTrustedRenderer(event);

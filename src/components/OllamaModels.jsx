@@ -9,7 +9,9 @@ import { RECOMMENDED_MODELS, pullOllamaModel } from '../lib/ollamaModels.js';
   niente terminale. Dopo l'installazione un clic li assegna alla fase giusta.
 */
 
-export default function OllamaModels({ endpoint, onUse }) {
+export default function OllamaModels({ endpoint, onUse, root }) {
+  const bridge = globalThis.window?.scanConverterDesktop;
+  const [setup, setSetup] = useState(null);
   const [installed, setInstalled] = useState([]);
   const [progress, setProgress] = useState({});
   const [error, setError] = useState('');
@@ -52,6 +54,49 @@ export default function OllamaModels({ endpoint, onUse }) {
         italiano; i modelli più piccoli sono i più veloci.
       </span>
       {error && <p className="mb-2 text-xs text-warning">{error}</p>}
+      {error && typeof bridge?.ollamaInstall === 'function' && (
+        <div className="mb-3 flex flex-col gap-2">
+          <button
+            type="button"
+            className="button-secondary self-start"
+            disabled={setup?.busy}
+            onClick={async () => {
+              setSetup({ busy: true, log: '' });
+              const off = bridge.onPaddleLog?.((line) =>
+                setSetup((s) => ({ ...s, log: `${s?.log || ''}${line}`.slice(-6000) })));
+              try {
+                const res = await bridge.ollamaInstall({ root });
+                setSetup((s) => ({
+                  ...s,
+                  busy: false,
+                  done: res?.ok,
+                  log: `${s?.log || ''}\n${res?.ok ? '✔ Ollama installato.' : `✘ ${res?.error || 'Installazione non riuscita.'}`}`,
+                }));
+                // Il server impiega qualche secondo ad accendersi.
+                for (let i = 0; i < 10 && res?.ok; i++) {
+                  await new Promise((r) => setTimeout(r, 2000));
+                  try {
+                    setInstalled(await listLocalModels(endpoint));
+                    setError('');
+                    break;
+                  } catch {
+                    /* non ancora pronto */
+                  }
+                }
+              } finally {
+                off?.();
+              }
+            }}
+          >
+            {setup?.busy ? 'Installazione di Ollama…' : `Installa Ollama in ${root}`}
+          </button>
+          {setup?.log && (
+            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-[11px] text-muted">
+              {setup.log}
+            </pre>
+          )}
+        </div>
+      )}
       <ul className="flex flex-col gap-2">
         {RECOMMENDED_MODELS.map((m) => {
           const state = progress[m.name];

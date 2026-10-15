@@ -92,9 +92,23 @@ install_ollama() {
   if has ollama; then
     skip "ollama ($(command -v ollama))"
   elif [ "$(uname -s)" = 'Darwin' ]; then
-    warn 'Ollama non installato: scaricalo da https://ollama.com/download e rilancia.'
-    warn 'Su macOS è un.app: si installa in /Applications, ma i MODELLI seguono OLLAMA_MODELS.'
-    return
+    # Su Mac Ollama è un'app: la si scarica e la si mette nelle Applicazioni
+    # dell'utente (nessuna password da amministratore).
+    if [ -d /Applications/Ollama.app ] || [ -d "$HOME/Applications/Ollama.app" ]; then
+      skip 'Ollama.app'
+    else
+      printf '       scarico Ollama per Mac…\n'
+      staging="$(mktemp -d)"
+      curl -fsSL https://ollama.com/download/Ollama-darwin.zip -o "$staging/ollama.zip"
+      mkdir -p "$HOME/Applications"
+      ditto -x -k "$staging/ollama.zip" "$HOME/Applications"
+      rm -rf "$staging"
+      ok "Ollama installato in $HOME/Applications"
+    fi
+    # Le app aperte dal Finder non leggono il profilo della shell: la cartella
+    # dei modelli va passata anche a launchd.
+    launchctl setenv OLLAMA_MODELS "$ROOT/models" 2>/dev/null || true
+    open -a Ollama 2>/dev/null || open "$HOME/Applications/Ollama.app" 2>/dev/null || true
   else
     printf '       installo Ollama…\n'
     curl -fsSL https://ollama.com/install.sh | sh
