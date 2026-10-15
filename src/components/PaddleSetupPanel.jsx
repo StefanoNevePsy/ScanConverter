@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { buildCommand, chooseFolder, detectPlatform, probe, readLocalSetup, suggestedRoot } from '../lib/localSetup.js';
 import { paddleHealthUrl } from '../lib/paddle.js';
+import { pullOllamaModel } from '../lib/ollamaModels.js';
 
 /*
   PaddleOCR-VL: scelta fra servizio online gratuito e installazione locale.
@@ -54,8 +55,20 @@ export default function PaddleSetupPanel({ form, setForm, defaults }) {
 
 function OllamaFields({ form, set, defaults }) {
   const model = (form.paddleOllamaModel || defaults.paddleOllamaModel || '').trim();
-  const command = `ollama pull ${model}`;
-  const [copied, setCopied] = useState(false);
+  const [state, setState] = useState(null);
+  const install = async () => {
+    setState({ text: 'Avvio download…' });
+    try {
+      await pullOllamaModel({
+        endpoint: form.localEndpoint,
+        model,
+        onProgress: (text, pct) => setState({ text, pct }),
+      });
+      setState({ text: 'Installato: puoi usarlo.', pct: 100 });
+    } catch (e) {
+      setState({ text: e.message, error: true });
+    }
+  };
   return (
     <>
       <p className="text-xs leading-relaxed text-faint">
@@ -68,7 +81,7 @@ function OllamaFields({ form, set, defaults }) {
         <span className="mb-1.5 block text-sm font-medium text-ink">Modello</span>
         <span className="mb-2 block text-xs text-faint">
           PaddleOCR-VL legge il testo con più precisione. In alternativa un modello di visione
-          generico (es. un Qwen-VL) marca da sé i titoli, ma è più lento.
+          generico (es. gemma4:e4b o qwen3.5:9b) marca da sé i titoli, ma è più lento.
         </span>
         <input
           value={form.paddleOllamaModel || ''}
@@ -78,32 +91,27 @@ function OllamaFields({ form, set, defaults }) {
           className={inputClass}
         />
       </label>
-      <div>
-        <span className="mb-1.5 flex items-center justify-between gap-2">
-          <span className="text-sm font-medium text-ink">Per scaricarlo, in un terminale</span>
-          <button
-            type="button"
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(command);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2500);
-              } catch {
-                /* resta selezionabile */
-              }
-            }}
-            className="rounded-md px-1.5 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-ink"
-          >
-            {copied ? 'Copiato' : 'Copia'}
-          </button>
-        </span>
-        <pre className="overflow-x-auto rounded-lg border border-border bg-surface-2 px-3 py-2.5 font-mono text-xs text-ink">
-          {command}
-        </pre>
-        <span className="mt-1.5 block text-xs text-faint">
-          Serve Ollama in esecuzione. L’indirizzo è quello della sezione «Pipeline locale».
-        </span>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          className="button-secondary"
+          disabled={Boolean(state && !state.error && state.pct !== 100)}
+          onClick={install}
+        >
+          Installa il modello in Ollama
+        </button>
+        {state && (
+          <span className={`text-xs ${state.error ? 'text-warning' : 'text-faint'}`}>{state.text}</span>
+        )}
       </div>
+      {state && Number.isFinite(state.pct) && !state.error && (
+        <div className="h-1.5 overflow-hidden rounded bg-surface-2">
+          <div className="h-full bg-primary" style={{ width: `${state.pct}%` }} />
+        </div>
+      )}
+      <span className="block text-xs text-faint">
+        Serve Ollama in esecuzione. L’indirizzo è quello della sezione «Pipeline locale».
+      </span>
     </>
   );
 }

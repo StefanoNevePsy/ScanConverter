@@ -103,7 +103,10 @@ export async function engineChat({
       temperature,
       maxTokens,
       json,
-      reasoningEffort,
+      // Rilettura e traduzione: tante chiamate brevi. Il «ragionamento» dei
+      // modelli recenti (Qwen 3.5, Gemma 4) le rallenterebbe molto senza
+      // migliorare una correzione di poche parole.
+      reasoningEffort: reasoningEffort || (['proof', 'translate'].includes(phase) ? 'none' : undefined),
       signal,
     });
   }

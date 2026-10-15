@@ -499,6 +499,9 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
               <LocalSetupPanel
                 localEndpoint={form.localEndpoint}
                 localOcrEndpoint={form.localOcrEndpoint}
+                onUseModel={(phase, model) =>
+                  setForm((f) => withPhase(f, phase, { engine: 'local', model }))
+                }
                 onApplySetup={(setup) =>
                   setForm((f) => ({
                     ...f,

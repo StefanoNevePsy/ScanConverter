@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import OllamaModels from './OllamaModels.jsx';
 import {
   COMPONENTS,
   buildCommand,
@@ -23,7 +24,7 @@ import {
   comando, poi la verifica.
 */
 
-export default function LocalSetupPanel({ localEndpoint, localOcrEndpoint, onApplySetup }) {
+export default function LocalSetupPanel({ localEndpoint, localOcrEndpoint, onApplySetup, onUseModel }) {
   const platform = detectPlatform();
   const [root, setRoot] = useState(() => suggestedRoot(platform));
   const [picked, setPicked] = useState(() => COMPONENTS.filter((c) => c.default).map((c) => c.id));
@@ -160,6 +161,8 @@ export default function LocalSetupPanel({ localEndpoint, localOcrEndpoint, onApp
         </pre>
         <span className="mt-1.5 block text-xs text-faint">{note}</span>
       </div>
+
+      <OllamaModels endpoint={localEndpoint} onUse={onUseModel} />
 
       <div>
         <span className="mb-1.5 flex items-center justify-between gap-2">
