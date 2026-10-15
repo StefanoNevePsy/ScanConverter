@@ -114,7 +114,7 @@ export const DEFAULTS = {
 const RETIRED_MODELS = new Set(['z-ai/glm-5.2', 'z-ai/glm5', 'z-ai/glm-5']);
 
 const PDF_MODES = ['auto', 'ocr'];
-const FORMAT_WORKFLOWS = ['legacy', 'strict'];
+const FORMAT_WORKFLOWS = ['legacy', 'strict', 'scan'];
 
 const LIMITS = {
   maxPages: { min: 1, max: 2000 },

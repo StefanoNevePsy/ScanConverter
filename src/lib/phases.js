@@ -139,8 +139,9 @@ export function usesEngine(settings, engine, phases = PHASES) {
  */
 export function requiredKeys(settings) {
   // In «Fedeltà massima» la fase Typst non usa modelli: niente chiave richiesta.
-  const automatic = settings?.formatWorkflow === 'strict' ? ['ocr'] : ['ocr', 'typst'];
-  if (settings?.formatWorkflow === 'strict' && settings?.fixTypos) automatic.push('proof');
+  const ruleBased = ['strict', 'scan'].includes(settings?.formatWorkflow);
+  const automatic = ruleBased ? ['ocr'] : ['ocr', 'typst'];
+  if (ruleBased && settings?.fixTypos) automatic.push('proof');
   // Il confronto fra motori OCR interroga entrambi i servizi in rete.
   const bothForComparison = settings?.formatWorkflow === 'strict' && !!settings?.compareOcr;
   // Il riparsing delle tabelle è vision e passa sempre da Gemini.

@@ -17,6 +17,7 @@ import { italianTypography } from '../lib/typography.js';
 import { cleanupBook } from '../lib/bookCleanup.js';
 import { cleanPageImage } from '../lib/dewarp.js';
 import { mergeHeadingSizes } from '../lib/headingSize.js';
+import { buildScanTypst, splitTextByPage, textAreaOf, pageToJpeg } from '../lib/scanDocument.js';
 import { toTypstLocal } from '../lib/engines.js';
 import { ENGINE_LABELS, phaseConfig } from '../lib/phases.js';
 import { structureFromBlocks } from '../lib/docmodel.js';
@@ -1089,6 +1090,66 @@ export function usePipeline(settings) {
    * la formattazione. Riusa l'id della sessione OCR corrente (transizione dalla
    * fase OCR alla fase formato sotto lo stesso id), così l'elenco non duplica.
    */
+  /**
+   * «Scansione ricercabile»: un PDF con le pagine raddrizzate come immagini e
+   * il testo corretto invisibile sotto ciascuna, ricercabile e leggibile da
+   * un'IA. Niente impaginazione da ricostruire, quindi niente da verificare.
+   */
+  const buildSearchableScan = useCallback(
+    async ({ id, fileName, extracted, canonicalText, corrections, signal }) => {
+      const ocr = sessionRef.current?.ocr || {};
+      const total = ocr.total || Math.max(1, (canonicalText.match(/<!--\s*pagina\s+\d+\s*-->/gi) || []).length);
+      const texts = splitTextByPage(canonicalText, total);
+      const figures = [];
+      const pages = [];
+      for (let i = 0; i < total; i++) {
+        if (signal.aborted) return;
+        setDetail(`Preparo la pagina ${i + 1}/${total} della scansione…`);
+        const dataUrl = (await getPage(`${id}~scan`, i)) || (await getPage(id, i));
+        if (!dataUrl) continue;
+        const jpeg = await pageToJpeg(dataUrl);
+        const path = `/pagine/p${String(i + 1).padStart(4, "0")}.jpg`;
+        figures.push({ path, bytes: jpeg.bytes, widthPct: 100, junk: false });
+        pages.push({
+          path,
+          width: jpeg.width,
+          height: jpeg.height,
+          text: texts[i] || '',
+          area: ocr.textAreas?.[i] || null,
+        });
+      }
+      if (!pages.length) {
+        throw new Error(
+          'Le immagini delle pagine non sono più disponibili: per la scansione ricercabile ricarica il file con «Nuovo».',
+        );
+      }
+      figuresRef.current = figures;
+      const source = buildScanTypst(pages);
+      sessionRef.current = {
+        id,
+        fileName,
+        rawText: extracted,
+        canonicalText,
+        corrections,
+        workflow: 'scan',
+        verified: false,
+        chunks: [{ text: extracted, body: source, status: 'done', fidelity: { coverage: 1, missing: [] } }],
+        preamble: '',
+        styleHint: undefined,
+        lastError: '',
+        editorCode: source,
+      };
+      setTypstCode(source);
+      await saveFigures(id, figuresRef.current);
+      await persist();
+      setPhase('running');
+      setActiveStep('compile');
+      setStatus((x) => ({ ...x, format: 'done', compile: 'active' }));
+      await finalizeCompile(signal);
+    },
+    [persist, finalizeCompile],
+  );
+
   const startFormat = useCallback(
     async (extracted, fileName, signal) => {
       const id = sessionRef.current?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1098,7 +1159,9 @@ export function usePipeline(settings) {
       const sourceLanguage = sessionRef.current?.sourceLanguage || null;
       const targetLanguage = sessionRef.current?.targetLanguage || null;
       const translationFailures = sessionRef.current?.translationFailures || [];
-      if (settings.formatWorkflow === 'strict') {
+      // «Scansione ricercabile» condivide con «Fedeltà massima» tutta la
+      // pulizia e la rilettura del testo; cambia solo cosa se ne fa alla fine.
+      if (settings.formatWorkflow === 'strict' || settings.formatWorkflow === 'scan') {
         let speller = null;
         try {
           speller = await loadSpeller();
@@ -1165,6 +1228,10 @@ export function usePipeline(settings) {
               'modello scelto per la fase di rilettura.',
             );
           }
+        }
+        if (settings.formatWorkflow === 'scan') {
+          await buildSearchableScan({ id, fileName, extracted, canonicalText, corrections, signal });
+          return;
         }
         // Nessun modello: in «Fedeltà massima» il Typst è prodotto da regole
         // fisse, e il piano grafico (font, margini, livelli dei titoli) lo
@@ -1257,7 +1324,7 @@ export function usePipeline(settings) {
       setStatus((s) => ({ ...s, format: 'active' }));
       await runFormat(signal);
     },
-    [settings, runFormat, persist, finalizeCompile, refreshLanguageAudit],
+    [settings, runFormat, persist, finalizeCompile, refreshLanguageAudit, buildSearchableScan],
   );
 
   /**
@@ -1452,6 +1519,12 @@ export function usePipeline(settings) {
           }
           if (!Array.isArray(s.ocr.headingSizes)) s.ocr.headingSizes = [];
           s.ocr.headingSizes[i] = page.headingSizes || [];
+          if (settings.formatWorkflow === 'scan') {
+            // La pagina raddrizzata resta: sarà l'immagine del PDF finale.
+            await savePage(`${s.id}~scan`, i, dataUrl);
+            if (!Array.isArray(s.ocr.textAreas)) s.ocr.textAreas = [];
+            s.ocr.textAreas[i] = textAreaOf(pageBlocks);
+          }
           s.ocr.parts[i] = total > 1 ? `<!-- pagina ${i + 1} -->\n${page.markdown}` : page.markdown;
           s.ocr.figCount = figCounter.count();
           figuresRef.current.push(...page.figures);

@@ -332,9 +332,9 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                 Il workflow ad alta fedeltà conserva il testo OCR come fonte
                 canonica e genera il layout senza farlo riscrivere al modello.
               </span>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid gap-2 sm:grid-cols-3">
                 <EngineButton
-                  active={form.formatWorkflow !== 'strict'}
+                  active={!['strict', 'scan'].includes(form.formatWorkflow)}
                   onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'legacy' }))}
                   title="Attuale"
                   sub="layout generato dal modello"
@@ -344,6 +344,12 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
                   onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'strict' }))}
                   title="Fedeltà massima"
                   sub="testo immutabile e verificato"
+                />
+                <EngineButton
+                  active={form.formatWorkflow === 'scan'}
+                  onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'scan' }))}
+                  title="Scansione ricercabile"
+                  sub="pagine originali, testo corretto invisibile sotto"
                 />
               </div>
             </div>
