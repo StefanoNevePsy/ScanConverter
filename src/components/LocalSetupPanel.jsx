@@ -32,6 +32,21 @@ export default function LocalSetupPanel({ localEndpoint, localOcrEndpoint, onApp
   const [setup, setSetup] = useState(null);
   const [checks, setChecks] = useState(null);
   const [checking, setChecking] = useState(false);
+  const bridge = globalThis.window?.scanConverterDesktop;
+  const canRun = typeof bridge?.setupRun === 'function';
+  const [run, setRun] = useState(null); // { busy, log, ok, error }
+
+  const install = useCallback(async () => {
+    setRun({ busy: true, log: '' });
+    const off = bridge.onPaddleLog?.((line) =>
+      setRun((r) => ({ ...r, log: ((r?.log || '') + line).slice(-6000) })));
+    try {
+      const res = await bridge.setupRun({ root: root.trim(), components: picked });
+      setRun((r) => ({ ...r, busy: false, ok: res.ok, error: res.error }));
+    } finally {
+      off?.();
+    }
+  }, [bridge, root, picked]);
 
   // Sul desktop lo script lascia un esito: se c'è, il percorso è già quello
   // giusto e non va ridigitato.
@@ -144,9 +159,36 @@ export default function LocalSetupPanel({ localEndpoint, localOcrEndpoint, onApp
         </div>
       </div>
 
+      {canRun && (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={install}
+              disabled={run?.busy || !picked.length || !root.trim()}
+              className="button-primary"
+            >
+              {run?.busy ? 'Installazione in corso…' : 'Installa nella cartella scelta'}
+            </button>
+            {run && !run.busy && (
+              <span className={`text-xs ${run.ok ? 'text-success' : 'text-danger'}`}>
+                {run.ok ? 'Fatto. Riapri l’app perché Ollama usi la nuova cartella.' : run.error}
+              </span>
+            )}
+          </div>
+          {run?.log && (
+            <pre className="max-h-40 overflow-auto rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-[11px] text-muted">
+              {run.log}
+            </pre>
+          )}
+        </div>
+      )}
+
       <div>
         <span className="mb-1.5 flex items-center justify-between gap-2">
-          <span className="text-sm font-medium text-ink">Comando da eseguire ({shell})</span>
+          <span className="text-sm font-medium text-ink">
+            {canRun ? 'Oppure dal terminale' : 'Comando da eseguire'} ({shell})
+          </span>
           <button
             type="button"
             onClick={copy}

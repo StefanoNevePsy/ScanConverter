@@ -88,7 +88,7 @@ export function buildCommand({ root, components, model, platform = detectPlatfor
       shell: 'PowerShell',
       command: parts.join(' '),
       note:
-        'Apri PowerShell nella cartella tools\\setup del progetto. Se Windows ' +
+        'Apri PowerShell nella cartella tools\\setup (dentro «resources» nella cartella dove è installata l’app). Se Windows ' +
         'blocca lo script, prima: Set-ExecutionPolicy -Scope Process Bypass',
     };
   }
@@ -102,7 +102,9 @@ export function buildCommand({ root, components, model, platform = detectPlatfor
   return {
     shell: platform === 'macos' ? 'Terminale' : 'shell',
     command: parts.join(' '),
-    note: 'Esegui dalla cartella tools/setup del progetto.',
+    note: platform === 'macos'
+      ? 'Prima: cd /Applications/ScanConverter.app/Contents/Resources/tools/setup — poi incolla il comando con «sh » davanti.'
+      : 'Esegui dalla cartella tools/setup del progetto.',
   };
 }
 

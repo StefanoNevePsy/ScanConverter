@@ -552,6 +552,18 @@ function registerDesktopIpc() {
     return startPaddleServer(root, sendPaddleLog(event), { restart: true });
   });
 
+  // Installazione dall'app: lo stesso script del comando da terminale, già
+  // incluso nell'app, così nessuno deve cercare la cartella tools/setup.
+  ipcMain.handle('desktop:setup:run', async (event, request) => {
+    assertTrustedRenderer(event);
+    const root = String(request?.root || '').trim();
+    if (!root || !path.isAbsolute(root)) return { ok: false, error: 'Scegli una cartella con percorso completo.' };
+    const allowed = new Set(['ollama', 'typst', 'sidecar', 'paddle']);
+    const components = (request?.components || []).filter((c) => allowed.has(c));
+    if (!components.length) return { ok: false, error: 'Scegli almeno un componente.' };
+    return runSetup(root, components, [], sendPaddleLog(event));
+  });
+
   ipcMain.handle('desktop:local-setup', async (event) => {
     assertTrustedRenderer(event);
     return readLocalSetup();

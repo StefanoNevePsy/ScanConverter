@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('scanConverterDesktop', Object.freeze({
   paddleEnsure: () => ipcRenderer.invoke('desktop:paddle:ensure'),
   appleRespond: (request) => ipcRenderer.invoke('desktop:apple:respond', request),
   ollamaInstall: (request) => ipcRenderer.invoke('desktop:ollama:install', request),
+  setupRun: (request) => ipcRenderer.invoke('desktop:setup:run', request),
   onPaddleLog: (callback) => {
     const listener = (_event, line) => callback(String(line));
     ipcRenderer.on('desktop:paddle:log', listener);
