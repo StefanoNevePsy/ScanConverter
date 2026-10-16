@@ -1,83 +1,69 @@
-import { STEPS } from '../hooks/usePipeline.js';
-import { IconCheck, IconSpinner, IconAlert } from './Icons.jsx';
+import { IconCheck, IconAlert } from './Icons.jsx';
 
 /**
- * Indicatore delle tre fasi: [1/3] Estrazione → [2/3] Formattazione →
- * [3/3] Compilazione. Mostra lo stato attivo/completato/errore di ciascuna.
+ * Le tre fasi del documento, con nomi che dicono cosa succede DAVVERO nel
+ * workflow scelto: «Impaginazione» con un modello, «Ricomposizione» con le
+ * regole, «Testo sotto le pagine» per la scansione ricercabile.
  */
-export default function PipelineStepper({ status, compact = false }) {
-  const stateLabel = {
-    pending: 'in attesa',
-    active: 'in corso',
-    done: 'completata',
-    error: 'errore',
-  };
+export const WORKFLOW_STEPS = {
+  legacy: [
+    { id: 'ocr', label: 'Lettura', hint: 'testo dalle pagine' },
+    { id: 'format', label: 'Impaginazione', short: 'Layout', hint: 'un modello scrive il Typst' },
+    { id: 'compile', label: 'PDF', hint: 'composizione tipografica' },
+  ],
+  strict: [
+    { id: 'ocr', label: 'Lettura', hint: 'testo dalle pagine' },
+    { id: 'format', label: 'Ricomposizione', short: 'Testo', hint: 'testo fedele, regole fisse' },
+    { id: 'compile', label: 'PDF', hint: 'composizione tipografica' },
+  ],
+  scan: [
+    { id: 'ocr', label: 'Lettura', hint: 'testo dalle pagine' },
+    { id: 'format', label: 'Testo sotto le pagine', short: 'Testo', hint: 'invisibile, cercabile' },
+    { id: 'compile', label: 'PDF ricercabile', short: 'PDF', hint: 'pagine originali' },
+  ],
+};
+
+const NUMERALS = ['I', 'II', 'III'];
+const STATE_LABEL = { pending: 'in attesa', active: 'in corso', done: 'completata', error: 'errore' };
+
+export default function PipelineStepper({ status, workflow = 'legacy', detail }) {
+  const steps = WORKFLOW_STEPS[workflow] || WORKFLOW_STEPS.legacy;
   return (
-    <ol
-      aria-label="Avanzamento elaborazione"
-      className={`flex ${compact ? 'items-center gap-2' : 'flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-0'}`}
-    >
-      {STEPS.map((step, i) => {
-        const state = status[step.id]; // pending | active | done | error
+    <ol aria-label="Avanzamento del documento" className="stepper">
+      {steps.map((step, i) => {
+        const state = status[step.id] || 'pending';
         return (
           <li
             key={step.id}
+            className={`stepper-step is-${state}`}
             aria-current={state === 'active' ? 'step' : undefined}
-            aria-label={`Fase ${i + 1} di ${STEPS.length}: ${step.label}, ${stateLabel[state] || stateLabel.pending}`}
-            className={`flex ${compact ? 'items-center' : 'flex-1 items-start'} gap-3`}
+            aria-label={`Fase ${i + 1} di ${steps.length}: ${step.label}, ${STATE_LABEL[state]}`}
           >
-            <StepBadge index={i + 1} state={state} />
-            <div className={compact ? 'hidden md:block' : ''}>
-              <div
-                className={`text-sm font-medium leading-tight ${compact ? 'whitespace-nowrap' : ''} ${
-                  state === 'pending' ? 'text-faint' : 'text-ink'
-                }`}
-              >
-                {!compact && <span className="tabular-nums text-faint">[{i + 1}/3]</span>}{' '}
-                {compact ? step.short || step.label : step.label}
-                {state === 'active' && !compact && (
-                  <span className="dots text-primary" aria-hidden="true" />
-                )}
-              </div>
-              {!compact && (
-                <div className="mt-0.5 text-xs text-faint">{step.hint}</div>
+            <span className="stepper-mark" aria-hidden="true">
+              {state === 'done' ? (
+                <IconCheck key="done" className="anim-stamp" width={14} height={14} />
+              ) : state === 'error' ? (
+                <IconAlert width={14} height={14} />
+              ) : (
+                NUMERALS[i]
               )}
-            </div>
-            {!compact && i < STEPS.length - 1 && (
-              <div className="relative mx-2 hidden h-px flex-1 self-center bg-border sm:block">
-                {/* A fase conclusa il filetto si traccia verso la successiva. */}
-                {state === 'done' && <span className="anim-rule absolute inset-0 bg-primary" />}
-              </div>
-            )}
+            </span>
+            <span className="min-w-0">
+              <span className="stepper-label">
+                <span className="stepper-long">{step.label}</span>
+                <span className="stepper-short">{step.short || step.label}</span>
+              </span>
+              <span className="stepper-hint">
+                {state === 'active' && detail ? detail : step.hint}
+              </span>
+            </span>
+            {/* Il filetto sotto la fase: si traccia mentre lavora, pieno a fase conclusa. */}
+            <span className="stepper-rule" aria-hidden="true">
+              {(state === 'done' || state === 'active') && <i key={state} />}
+            </span>
           </li>
         );
       })}
     </ol>
-  );
-}
-
-function StepBadge({ index, state }) {
-  const cls = {
-    pending: 'border-border text-faint',
-    active: 'border-primary text-primary',
-    done: 'border-primary bg-primary text-primary-ink',
-    error: 'border-danger text-danger',
-  }[state];
-
-  return (
-    <span
-      aria-hidden="true"
-      className={`grid size-8 shrink-0 place-items-center rounded-full border text-sm font-semibold tabular-nums transition-colors ${cls}`}
-    >
-      {state === 'done' ? (
-        <IconCheck className="anim-stamp" width={16} height={16} />
-      ) : state === 'active' ? (
-        <IconSpinner width={16} height={16} />
-      ) : state === 'error' ? (
-        <IconAlert width={16} height={16} />
-      ) : (
-        index
-      )}
-    </span>
   );
 }

@@ -511,7 +511,7 @@ export default function TypstEditor({
       <header className="flex min-w-0 flex-col items-stretch justify-between gap-2 border-b border-border px-4 py-2.5 sm:flex-row sm:items-center sm:gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
-          <h2 className="text-sm font-medium text-ink">Codice Typst</h2>
+          <h2 className="panel-title">Sorgente Typst</h2>
           {value.trim() && (
             <span className="rounded-full border border-lime/60 bg-lime-soft px-2 py-0.5 text-[10px] font-semibold text-ink">
               Fonte del documento
@@ -745,7 +745,7 @@ export default function TypstEditor({
 
       {searchOpen && (
         <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface/60 px-3 py-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="flex min-w-[min(100%,15rem)] flex-1 items-center gap-2">
             <input
               ref={searchRef}
               value={query}
@@ -761,7 +761,7 @@ export default function TypstEditor({
               }}
               onKeyDown={onSearchKeyDown}
               placeholder="Cerca…"
-              className="w-full min-w-24 flex-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-ink placeholder:text-faint focus:border-primary focus:outline-none"
+              className="w-full min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-ink placeholder:text-faint focus:border-primary focus:outline-none"
             />
             <span className="shrink-0 text-xs tabular-nums text-faint">
               {matches.length ? `${current + 1}/${matches.length}` : query ? '0' : ''}
@@ -783,7 +783,7 @@ export default function TypstEditor({
               ↓
             </button>
           </div>
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="flex min-w-[min(100%,15rem)] flex-1 items-center gap-2">
             <input
               value={replaceStr}
               onChange={(e) => setReplaceStr(e.target.value)}
@@ -794,7 +794,7 @@ export default function TypstEditor({
                 }
               }}
               placeholder="Sostituisci con…"
-              className="w-full min-w-24 flex-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-ink placeholder:text-faint focus:border-primary focus:outline-none"
+              className="w-full min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-ink placeholder:text-faint focus:border-primary focus:outline-none"
             />
             <button
               onClick={replaceCurrent}

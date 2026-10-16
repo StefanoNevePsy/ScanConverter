@@ -3749,6 +3749,9 @@ export function usePipeline(settings) {
     rawText,
     canonicalText: sessionRef.current?.canonicalText || rawText,
     strictWorkflow: sessionRef.current?.workflow === 'strict',
+    // Workflow del documento aperto (quello salvato con la sessione vince
+    // sulle impostazioni, che possono essere cambiate dopo).
+    workflow: sessionRef.current?.workflow || settings?.formatWorkflow || 'legacy',
     typstCode,
     setTypstCode,
     layoutOptions,

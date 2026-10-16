@@ -129,7 +129,7 @@ export default function RestylePanel({
       >
         <span className="layout-panel-mark" aria-hidden="true"><i /><i /><i /></span>
         <span className="min-w-0 flex-1">
-          <strong>{strict ? 'Personalizza impaginazione' : 'Atelier di impaginazione'}</strong>
+          <strong className="panel-title">{strict ? 'Personalizza impaginazione' : 'Atelier di impaginazione'}</strong>
           <small>Pagina, margini, testo, titoli e apparati · tutto applicabile in locale</small>
         </span>
         <span className="layout-panel-count">30+ controlli</span>

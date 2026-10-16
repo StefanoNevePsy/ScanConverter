@@ -332,7 +332,7 @@ export default function PdfPreview({ pdfBytes, compiling, downloading, onDownloa
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <span className="size-2 shrink-0 rounded-full bg-annote" aria-hidden="true" />
-          <h2 className="text-sm font-medium text-ink">Anteprima</h2>
+          <h2 className="panel-title">Anteprima</h2>
           <span className="truncate text-xs text-faint">
             {pageCount ? `${pageCount} ${pageCount === 1 ? 'pagina' : 'pagine'}` : 'PDF paginato'}
           </span>

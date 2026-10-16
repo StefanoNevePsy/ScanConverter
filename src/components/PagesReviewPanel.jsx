@@ -32,7 +32,7 @@ export default function PagesReviewPanel({ items, onConfirm, busy }) {
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="flex items-center gap-2.5">
           <IconImage width={16} height={16} className="text-primary" />
-          <h2 className="text-sm font-medium text-ink">
+          <h2 className="panel-title">
             Controlla le pagine prima dell’estrazione
           </h2>
         </div>

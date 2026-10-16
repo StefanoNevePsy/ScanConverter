@@ -35,6 +35,7 @@ import {
   IconUpload,
   IconSun,
   IconMoon,
+  IconSpinner,
 } from './components/Icons.jsx';
 
 /** Le chiavi richieste dalla configurazione sono tutte presenti. */
@@ -361,7 +362,7 @@ function TopBar({ keysReady, onOpenSettings, onDashboard, status, running, theme
           )}
           <BrandMark />
           <div className="leading-tight">
-            <h1 className="brand-wordmark">
+            <h1 className="brand-wordmark whitespace-nowrap">
               Scan<em>Converter</em>
             </h1>
             <p className="hidden text-[11px] text-muted sm:block">
@@ -516,6 +517,8 @@ function Workspace({
   projectBusy,
   projectNotice,
 }) {
+  const workflow = ['strict', 'scan'].includes(pipe.workflow) ? pipe.workflow : 'legacy';
+  const isScan = workflow === 'scan';
   const doneCount = useMemo(
     () => Object.values(pipe.status).filter((s) => s === 'done').length,
     [pipe.status],
@@ -784,93 +787,54 @@ function Workspace({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
-      {/* Barra sorgente + stato pipeline + azioni */}
-      <div className="card flex min-w-0 flex-col gap-4 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="size-11 shrink-0 overflow-hidden rounded-lg border border-border bg-surface-2">
-            {previewUrl ? (
-              <img src={previewUrl} alt="" className="size-full object-cover" />
-            ) : (
-              <span className="grid size-full place-items-center text-faint">
-                <IconFile width={20} height={20} />
-              </span>
-            )}
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-ink">{file.name}</div>
-            <div className="truncate text-xs text-faint">
-              {pipe.detail
-                ? pipe.detail
-                : `${formatBytes(file.size)} · ${doneCount}/3 fasi completate`}
+      {/* Intestazione del documento: chi è, a che punto è, cosa si può fare. */}
+      <section className="doc-head anim-settle" aria-label="Documento">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-6 gap-y-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="size-12 shrink-0 overflow-hidden rounded-sm border border-border bg-surface-2 shadow-sm">
+              {previewUrl ? (
+                <img src={previewUrl} alt="" className="size-full object-cover" />
+              ) : (
+                <span className="grid size-full place-items-center text-faint">
+                  <IconFile width={20} height={20} />
+                </span>
+              )}
+            </div>
+            <div className="min-w-0">
+              <h2 className="truncate font-serif text-lg leading-tight text-ink" title={file.name}>
+                {file.name}
+              </h2>
+              <p className="truncate text-xs text-faint">
+                {formatBytes(file.size)} · {WORKFLOW_NAMES[workflow]} · {doneCount}/3 fasi
+              </p>
             </div>
           </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              onClick={onExportProject}
+              disabled={!!projectBusy}
+              className="button-secondary"
+              title="Salva sorgente, stato, figure e pagine ancora da elaborare, per riprendere più tardi"
+            >
+              {projectBusy === 'export' ? <IconSpinner width={15} height={15} /> : <IconDownload width={15} height={15} />}
+              <span className="hidden sm:inline">Salva progetto</span>
+            </button>
+            <button onClick={onRetry} disabled={pipe.phase === 'running'} className="button-secondary">
+              <IconRefresh width={15} height={15} />
+              <span className="hidden sm:inline">{pipe.status.ocr === 'done' ? 'Rielabora' : 'Riprova'}</span>
+            </button>
+            <button onClick={onStartOver} className="button-quiet" aria-label="Chiudi e inizia un nuovo documento">
+              <IconX width={15} height={15} />
+              <span className="hidden sm:inline">Nuovo documento</span>
+            </button>
+          </div>
         </div>
 
-        <div className="min-w-0 flex-1 sm:px-2">
-          <PipelineStepper status={pipe.status} compact />
+        <div className="mt-5">
+          <PipelineStepper status={pipe.status} workflow={workflow} detail={pipe.detail} />
         </div>
-
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-          <button
-            onClick={onExportProject}
-            disabled={!!projectBusy}
-            aria-label="Esporta progetto"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface-2 disabled:opacity-50"
-            title="Esporta sorgente, stato, figure e pagine ancora da elaborare"
-          >
-            {projectBusy === 'export' ? <span className="size-3.5 animate-spin rounded-full border border-current border-r-transparent" /> : <IconDownload width={15} height={15} />}
-            <span className="hidden xl:inline">Esporta progetto</span>
-          </button>
-          <label
-            className="mr-1 flex cursor-pointer items-center gap-2 text-xs text-muted"
-            title="L’anteprima mostra la pagina in cui sta il cursore, seguendoti mentre scrivi"
-          >
-            <span className="hidden sm:inline">Segui il cursore</span>
-            <span className="relative inline-flex">
-              <input
-                type="checkbox"
-                aria-label="L’anteprima segue il cursore"
-                checked={followCursor}
-                onChange={onToggleFollow}
-                className="peer sr-only"
-              />
-              <span className="h-5 w-9 rounded-full bg-surface-3 transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary peer-checked:bg-primary" />
-              <span className="absolute left-0.5 top-0.5 size-4 rounded-full bg-ink transition-transform peer-checked:translate-x-4" />
-            </span>
-          </label>
-          <label className="mr-1 flex cursor-pointer items-center gap-2 text-xs text-muted">
-            <span className="hidden sm:inline">Anteprima live</span>
-            <span className="relative inline-flex">
-              <input
-                type="checkbox"
-                aria-label="Attiva anteprima live"
-                checked={livePreview}
-                onChange={onToggleLive}
-                className="peer sr-only"
-              />
-              <span className="h-5 w-9 rounded-full bg-surface-3 transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary peer-checked:bg-primary" />
-              <span className="absolute left-0.5 top-0.5 size-4 rounded-full bg-ink transition-transform peer-checked:translate-x-4" />
-            </span>
-          </label>
-          <button
-            onClick={onStartOver}
-            aria-label="Nuovo documento"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-ink"
-          >
-            <IconX width={15} height={15} />
-            <span className="hidden sm:inline">Nuovo</span>
-          </button>
-          <button
-            onClick={onRetry}
-            disabled={pipe.phase === 'running'}
-            aria-label="Rielabora documento"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink transition-colors hover:bg-surface-2 disabled:opacity-50"
-          >
-            <IconRefresh width={15} height={15} />
-            <span className="hidden sm:inline">Rielabora</span>
-          </button>
-        </div>
-      </div>
+      </section>
 
       {projectNotice && <ProjectNotice notice={projectNotice} />}
 
@@ -966,8 +930,8 @@ function Workspace({
       {/* Strumenti secondari affiancati: due fisarmoniche chiuse impilate
           rubavano due righe intere allo spazio dell'editor, che è il lavoro. */}
       {pipe.rawText && (
-        <div className="workspace-tools grid gap-3 lg:grid-cols-2 lg:items-start">
-          {!pipe.figureReview && (
+        <div className={`workspace-tools grid gap-3 lg:items-start ${isScan ? '' : 'lg:grid-cols-2'}`}>
+          {!pipe.figureReview && !isScan && (
             <RestylePanel
               onRestyle={pipe.strictReport ? null : (hint) => pipe.restyle(hint)}
               onApplyLocal={(sel) => pipe.applyLocalStyle(sel)}
@@ -982,8 +946,9 @@ function Workspace({
             text={pipe.strictReport ? pipe.canonicalText : pipe.rawText}
             styleHint={styleHint}
             fixTypos={fixTypos}
+            scan={isScan}
           />
-          <TranslatePanel
+          {!isScan && <TranslatePanel
             sourceLang={sourceLang}
             targetLang={targetLang}
             onLanguageChange={onLanguageChange}
@@ -1004,25 +969,44 @@ function Workspace({
             modelLabel={pipe.translationModelLabel}
             onLocate={locatePassage}
             disabled={pipe.phase === 'running'}
-          />
+          />}
         </div>
       )}
 
-      {/* Selettore a schede (solo mobile/tablet stretto) */}
-      <div className="flex items-center gap-1 rounded-lg border border-border bg-surface p-1 lg:hidden">
-        <TabButton active={mobileTab === 'code'} onClick={() => setMobileTab('code')}>
-          Codice Typst
-        </TabButton>
-        <TabButton active={mobileTab === 'pdf'} onClick={() => setMobileTab('pdf')}>
-          Anteprima PDF
-        </TabButton>
-      </div>
+      {/* Opzioni di vista e, su schermi stretti, scelta fra codice e anteprima.
+          Nella scansione ricercabile non c'è codice da scrivere: solo il PDF. */}
+      {!isScan && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-1 rounded-md border border-border bg-surface p-1 lg:hidden">
+            <TabButton active={mobileTab === 'code'} onClick={() => setMobileTab('code')}>
+              Sorgente
+            </TabButton>
+            <TabButton active={mobileTab === 'pdf'} onClick={() => setMobileTab('pdf')}>
+              Anteprima
+            </TabButton>
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-2">
+            <ViewToggle
+              checked={followCursor}
+              onChange={onToggleFollow}
+              label="Segui il cursore"
+              title="L’anteprima mostra la pagina in cui sta il cursore"
+            />
+            <ViewToggle
+              checked={livePreview}
+              onChange={onToggleLive}
+              label="Anteprima mentre scrivi"
+              title="Ricompone il PDF a ogni modifica"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Doppia colonna: editor Typst | anteprima PDF.
           Su mobile una scheda alla volta. L'altezza segue la viewport ma è
           limitata: editor e PDF scorrono internamente invece di allungare la pagina. */}
-      <div className="flex h-[clamp(380px,70dvh,800px)] min-h-0 flex-none flex-col gap-4 lg:grid lg:grid-cols-2">
-        <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'code' ? 'flex' : 'hidden'} lg:flex`}>
+      <div className={`flex h-[clamp(380px,70dvh,800px)] min-h-0 flex-none flex-col gap-4 ${isScan ? '' : 'lg:grid lg:grid-cols-2'}`}>
+        <div className={`min-h-0 flex-1 flex-col ${!isScan && mobileTab === 'code' ? 'flex' : 'hidden'} ${isScan ? '' : 'lg:flex'}`}>
           {autofixMsg && (
             <div className="mb-2 rounded-lg border border-primary/40 bg-primary-soft px-3 py-2 text-xs text-ink">
               {autofixMsg}
@@ -1065,7 +1049,7 @@ function Workspace({
           />
         </div>
 
-        <div className={`min-h-0 flex-1 flex-col ${mobileTab === 'pdf' ? 'flex' : 'hidden'} lg:flex`}>
+        <div className={`min-h-0 flex-1 flex-col ${isScan || mobileTab === 'pdf' ? 'flex' : 'hidden'} lg:flex`}>
           <PdfPreview
             pdfBytes={pipe.previewPdf}
             compiling={pipe.compiling || pipe.status.compile === 'active'}
@@ -1111,6 +1095,12 @@ function ProjectImportButton({ onImport, busy }) {
   );
 }
 
+const WORKFLOW_NAMES = {
+  legacy: 'impaginato da un modello',
+  strict: 'testo ricomposto',
+  scan: 'scansione ricercabile',
+};
+
 function BrandMark() {
   return (
     <span className="brand-mark" aria-hidden="true">
@@ -1133,6 +1123,19 @@ function ProjectNotice({ notice }) {
       {notice.kind === 'error' ? <IconAlert width={17} height={17} /> : <IconCheck width={17} height={17} />}
       <span>{notice.text}</span>
     </div>
+  );
+}
+
+function ViewToggle({ checked, onChange, label, title }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-xs text-muted" title={title}>
+      <span className="relative inline-flex">
+        <input type="checkbox" checked={checked} onChange={onChange} className="peer sr-only" />
+        <span className="h-5 w-9 rounded-full border border-border-strong transition-colors peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary peer-checked:border-primary peer-checked:bg-primary" />
+        <span className="absolute left-[3px] top-[3px] size-3.5 rounded-full bg-ink transition-transform duration-200 peer-checked:translate-x-4 peer-checked:bg-primary-ink" />
+      </span>
+      {label}
+    </label>
   );
 }
 

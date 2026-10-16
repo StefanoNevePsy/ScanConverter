@@ -64,7 +64,7 @@ export default function StrictReportPanel({
             ? <IconAlert width={16} height={16} className="text-danger" />
             : <IconCheck width={16} height={16} className="text-success" />}
           <span>
-            <span className="font-medium">Workflow fedeltà massima</span>
+            <span className="panel-title">Testo ricomposto</span>
             {' · '}{report.pdf
               ? (pdfOk ? 'contenuto del PDF verificato' : 'PDF generato con avviso di verifica')
               : 'verifica in corso'}

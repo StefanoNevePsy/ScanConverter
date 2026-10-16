@@ -23,6 +23,7 @@ export default function OcrTextPanel({
   selectionDetail,
   proofModelLabel,
   translationModelLabel,
+  scan = false,
 }) {
   const [open, setOpen] = useState(false);
   const [idx, setIdx] = useState(0);
@@ -112,13 +113,13 @@ export default function OcrTextPanel({
       >
         <span className="flex items-center gap-2.5">
           <IconText width={16} height={16} className="text-annote" />
-          <span className="text-sm font-medium text-ink">
-            {targeted ? 'Testo di lavoro' : 'OCR originale · riferimento'}
+          <span className="panel-title">
+            {targeted ? 'Testo di lavoro' : scan ? 'Testo letto' : 'Testo letto · riferimento'}
           </span>
           <span className="hidden text-xs text-faint sm:inline">
             {targeted
               ? `${total > 1 ? `${total} parti · ` : ''}seleziona un brano per un intervento IA puntuale`
-              : `${total > 1 ? `${total} parti · ` : ''}sola lettura: il Typst è la fonte del documento`}
+              : `${total > 1 ? `${total} parti · ` : ''}${scan ? 'è il testo cercabile nascosto sotto le pagine' : 'sola lettura: il sorgente qui sotto è la fonte del documento'}`}
           </span>
         </span>
         <span className={`text-faint transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
