@@ -50,7 +50,8 @@ function initialTheme() {
   } catch {
     /* storage non disponibile */
   }
-  return globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  // Scuro di base: l'app nasce come tipografia di notte. Il chiaro resta a un clic.
+  return 'dark';
 }
 
 export default function App() {
@@ -71,7 +72,7 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     document.querySelector('meta[name="theme-color"]')?.setAttribute(
       'content',
-      theme === 'dark' ? '#10110f' : '#f0eee8',
+      theme === 'dark' ? '#14161c' : '#f2eee6',
     );
     try {
       localStorage.setItem('scanconverter:theme', theme);
@@ -361,7 +362,7 @@ function TopBar({ keysReady, onOpenSettings, onDashboard, status, running, theme
           <BrandMark />
           <div className="leading-tight">
             <h1 className="brand-wordmark">
-              ScanConverter
+              Scan<em>Converter</em>
             </h1>
             <p className="hidden text-[11px] text-muted sm:block">
               Scansione · testo · pagina

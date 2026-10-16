@@ -188,9 +188,9 @@ async function withRetry(fn, signal, onWait, { max = 6, start = 15000, cap = 120
 
 // Le tre fasi dello split delle operazioni, nell'ordine mostrato all'utente.
 export const STEPS = [
-  { id: 'ocr', label: 'Estrazione testo', hint: 'NVIDIA Nemotron-Parse' },
-  { id: 'format', label: 'Formattazione layout', hint: 'Gemini/NVIDIA → Typst' },
-  { id: 'compile', label: 'Compilazione PDF', hint: 'Typst nativo/WASM · locale' },
+  { id: 'ocr', label: 'Estrazione testo', short: 'Lettura', hint: 'NVIDIA Nemotron-Parse' },
+  { id: 'format', label: 'Formattazione layout', short: 'Impaginazione', hint: 'Gemini/NVIDIA → Typst' },
+  { id: 'compile', label: 'Compilazione PDF', short: 'PDF', hint: 'Typst nativo/WASM · locale' },
 ];
 
 const emptyStatus = { ocr: 'pending', format: 'pending', compile: 'pending' };

@@ -29,12 +29,12 @@ export default function PipelineStepper({ status, compact = false }) {
             <StepBadge index={i + 1} state={state} />
             <div className={compact ? 'hidden md:block' : ''}>
               <div
-                className={`text-sm font-medium leading-tight ${
+                className={`text-sm font-medium leading-tight ${compact ? 'whitespace-nowrap' : ''} ${
                   state === 'pending' ? 'text-faint' : 'text-ink'
                 }`}
               >
-                <span className="tabular-nums text-faint">[{i + 1}/3]</span>{' '}
-                {step.label}
+                {!compact && <span className="tabular-nums text-faint">[{i + 1}/3]</span>}{' '}
+                {compact ? step.short || step.label : step.label}
                 {state === 'active' && !compact && (
                   <span className="dots text-primary" aria-hidden="true" />
                 )}
@@ -44,15 +44,10 @@ export default function PipelineStepper({ status, compact = false }) {
               )}
             </div>
             {!compact && i < STEPS.length - 1 && (
-              <div
-                className="mx-2 hidden h-px flex-1 self-center sm:block"
-                style={{
-                  background:
-                    state === 'done'
-                      ? 'var(--color-primary)'
-                      : 'var(--color-border)',
-                }}
-              />
+              <div className="relative mx-2 hidden h-px flex-1 self-center bg-border sm:block">
+                {/* A fase conclusa il filetto si traccia verso la successiva. */}
+                {state === 'done' && <span className="anim-rule absolute inset-0 bg-primary" />}
+              </div>
             )}
           </li>
         );
@@ -75,7 +70,7 @@ function StepBadge({ index, state }) {
       className={`grid size-8 shrink-0 place-items-center rounded-full border text-sm font-semibold tabular-nums transition-colors ${cls}`}
     >
       {state === 'done' ? (
-        <IconCheck width={16} height={16} />
+        <IconCheck className="anim-stamp" width={16} height={16} />
       ) : state === 'active' ? (
         <IconSpinner width={16} height={16} />
       ) : state === 'error' ? (

@@ -224,18 +224,18 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
       <button
         aria-label="Chiudi"
         onClick={onClose}
-        className="fixed inset-0 bg-black/60 cursor-default"
+        className="anim-fade fixed inset-0 bg-black/60 cursor-default"
         style={{ zIndex: 'var(--z-backdrop)' }}
         tabIndex={-1}
       />
       <form
         ref={dialogRef}
         onSubmit={submit}
-        className="card relative flex h-[min(88vh,760px)] w-full max-w-4xl flex-col overflow-hidden shadow-2xl"
+        className="card anim-settle relative flex h-[min(88vh,760px)] w-full max-w-4xl flex-col overflow-hidden shadow-2xl"
         style={{ zIndex: 'var(--z-modal)' }}
       >
         <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
-          <h2 id="settings-title" className="text-base font-semibold text-ink">
+          <h2 id="settings-title" className="font-display text-xl text-ink">
             Impostazioni
           </h2>
           <button
@@ -273,7 +273,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             ))}
           </nav>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
+          <div key={tab} className="anim-settle min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
             {tab === 'document' && (
               <div className="space-y-8">
                 <Section title="Che cosa vuoi ottenere">

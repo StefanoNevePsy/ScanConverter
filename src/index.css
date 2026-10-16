@@ -1,69 +1,86 @@
 @import 'tailwindcss';
 
 /*
-  ScanConverter — banco editoriale ispirato a Soglia.
-  Carta minerale / grafite, inchiostro netto, violetto operativo e lime per
-  gli interventi locali. La forma resta quella di uno strumento di lavoro.
+  ScanConverter — «Notturno di tipografia».
+  La tipografia di notte: carta blu-nera e avorio, il rosso della matita del
+  correttore per le azioni, l'oro della bozza per ciò che gira sul computer.
+  Caslon per leggere, un corsivo calligrafico solo per il nome e i richiami,
+  Franklin (sans da quotidiano) per i comandi. Scuro di base, chiaro a scelta.
 */
 
 @theme {
-  --color-bg: #f0eee8;
-  --color-surface: #f8f6f0;
-  --color-surface-2: #e7e4dc;
-  --color-surface-3: #d9d5cb;
-  --color-border: #9a968c;
-  --color-border-strong: #4c4a45;
+  /* Chiaro: carta avorio. */
+  --color-bg: #f2eee6;
+  --color-surface: #faf8f3;
+  --color-surface-2: #ebe6db;
+  --color-surface-3: #ddd6c8;
+  --color-border: #c4bcac;
+  --color-border-strong: #5d584f;
 
-  --color-ink: #11110f;
-  --color-muted: #4f4d47;
-  --color-faint: #66635c;
+  --color-ink: #1d1b18;
+  --color-muted: #514c44;
+  --color-faint: #645e54;
 
-  --color-primary: #6858e8;
-  --color-primary-strong: #7c6cff;
-  --color-primary-soft: rgb(104 88 232 / 0.12);
-  --color-primary-ink: #ffffff;
-  --color-lime: #d7ff3f;
-  --color-lime-soft: rgb(215 255 63 / 0.18);
-  --color-annote: #bfdc24;
+  --color-primary: #b23a26;
+  --color-primary-strong: #962e1d;
+  --color-primary-soft: rgb(178 58 38 / 0.1);
+  --color-primary-ink: #fffaf4;
+  /* «lime» resta il nome storico del colore del locale: ora è oro di bozza. */
+  --color-lime: #8a6a1e;
+  --color-lime-soft: rgb(138 106 30 / 0.12);
+  --color-annote: #3a5f9c;
 
-  --color-success: #177653;
-  --color-warning: #9b6500;
+  --color-success: #2f6b3a;
+  --color-warning: #8a5a00;
   --color-danger: #b32633;
-  --color-danger-soft: rgb(179 38 51 / 0.11);
+  --color-danger-soft: rgb(179 38 51 / 0.1);
 
-  --font-sans: 'Manrope', 'Segoe UI', sans-serif;
-  --font-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --font-sans: 'Libre Franklin', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Libre Caslon Display', 'Libre Caslon Text', Georgia, serif;
+  --font-serif: 'Libre Caslon Text', Georgia, 'Times New Roman', serif;
+  --font-script: 'Pinyon Script', 'Snell Roundhand', cursive;
   --font-mono: ui-monospace, 'SF Mono', 'Menlo', 'Consolas', monospace;
+
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+  --radius-2xl: 10px;
 
   --z-sticky: 20;
   --z-backdrop: 40;
   --z-modal: 50;
   --z-toast: 60;
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --grain-opacity: 0.32;
+  --grain-blend: multiply;
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --color-bg: #10110f;
-  --color-surface: #1a1b18;
-  --color-surface-2: #242520;
-  --color-surface-3: #30312b;
-  --color-border: #54544d;
-  --color-border-strong: #aaa79f;
-  --color-ink: #efeee8;
-  --color-muted: #c5c1b8;
-  --color-faint: #aaa79f;
-  --color-primary: #968aff;
-  --color-primary-strong: #afa7ff;
-  --color-primary-soft: rgb(150 138 255 / 0.14);
-  --color-primary-ink: #11110f;
-  --color-lime: #d7ff3f;
-  --color-lime-soft: rgb(215 255 63 / 0.1);
-  --color-annote: #d7ff3f;
-  --color-success: #70d6a8;
-  --color-warning: #f0be60;
-  --color-danger: #ff817f;
-  --color-danger-soft: rgb(255 129 127 / 0.12);
+  /* Scuro: carta blu-nera, inchiostro avorio. */
+  --color-bg: #14161c;
+  --color-surface: #1b1e25;
+  --color-surface-2: #22252d;
+  --color-surface-3: #2c3039;
+  --color-border: #3a3e48;
+  --color-border-strong: #8d8779;
+  --color-ink: #ece6d8;
+  --color-muted: #c2bbac;
+  --color-faint: #a59f92;
+  --color-primary: #e0624a;
+  --color-primary-strong: #ec7a63;
+  --color-primary-soft: rgb(224 98 74 / 0.14);
+  --color-primary-ink: #fff6ee;
+  --color-lime: #d4bf7c;
+  --color-lime-soft: rgb(212 191 124 / 0.12);
+  --color-annote: #9fb4d8;
+  --color-success: #8fc79e;
+  --color-warning: #e6bb62;
+  --color-danger: #ff8a7f;
+  --color-danger-soft: rgb(255 138 127 / 0.12);
+  --grain-opacity: 0.14;
+  --grain-blend: screen;
 }
 
 @layer base {
@@ -80,19 +97,32 @@
     margin: 0;
     min-width: 320px;
     min-height: 100vh;
-    background:
-      radial-gradient(80% 55% at 50% -8%, rgb(255 255 255 / 0.7), transparent 70%),
-      var(--color-bg);
+    background: var(--color-bg);
     color: var(--color-ink);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    transition: background-color 400ms ease, color 400ms ease;
   }
 
-  :root[data-theme='dark'] body {
-    background:
-      radial-gradient(90% 60% at 50% -12%, rgb(124 108 255 / 0.09), transparent 65%),
-      var(--color-bg);
+  /* Grana della carta: un solo strato fisso, sotto a tutto, mai sopra al testo. */
+  body::before {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    content: '';
+    opacity: var(--grain-opacity);
+    mix-blend-mode: var(--grain-blend);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .45 0 0 0 0 .38 0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  #root {
+    isolation: isolate;
+  }
+
+  h1, h2, h3 {
+    text-wrap: balance;
   }
 
   button,
@@ -110,13 +140,20 @@
     cursor: not-allowed;
   }
 
+  /* Ogni pressione si sente: il tasto cede di poco e torna. */
+  button:not(:disabled):active,
+  [role='button']:active {
+    transform: scale(0.97);
+    transition: transform 80ms ease-out;
+  }
+
   ::selection {
-    background: var(--color-lime);
-    color: #11110f;
+    background: var(--color-primary-soft);
+    color: inherit;
   }
 
   :focus-visible {
-    outline: 3px solid var(--color-primary);
+    outline: 2px solid var(--color-primary);
     outline-offset: 3px;
   }
 }
@@ -132,10 +169,11 @@
     padding-top: env(safe-area-inset-top);
   }
 
+  /* Doppio filetto sotto la testata, come nei frontespizi. */
   .scan-topbar {
-    border-bottom: 1px solid var(--color-ink);
-    background: color-mix(in srgb, var(--color-bg) 94%, transparent);
-    backdrop-filter: blur(14px);
+    border-bottom: 3px double var(--color-border-strong);
+    background: color-mix(in srgb, var(--color-bg) 96%, transparent);
+    backdrop-filter: blur(10px);
   }
 
   .brand-wordmark,
@@ -144,25 +182,37 @@
   }
 
   .brand-wordmark {
-    font-size: 24px;
-    font-weight: 500;
-    letter-spacing: -0.025em;
-    line-height: 0.9;
+    font-size: 25px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    line-height: 1;
+  }
+
+  /* «Converter» in corsivo calligrafico: si traccia al primo caricamento. */
+  .brand-wordmark em {
+    display: inline-block;
+    margin-left: 0.04em;
+    color: var(--color-primary);
+    font-family: var(--font-script);
+    font-size: 1.18em;
+    font-style: normal;
+    animation: ink-write 1.3s var(--ease-out-quint) both;
   }
 
   .brand-mark {
     display: grid;
-    width: 36px;
-    height: 36px;
+    width: 34px;
+    height: 34px;
     flex: 0 0 auto;
     place-items: center;
-    background: var(--color-lime);
-    color: #11110f;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--color-ink);
   }
 
   .brand-mark svg {
-    width: 31px;
-    height: 31px;
+    width: 28px;
+    height: 28px;
     fill: none;
     stroke: currentColor;
     stroke-linecap: round;
@@ -172,13 +222,24 @@
 
   .brand-mark .brand-margin {
     stroke: var(--color-primary);
-    stroke-width: 2.4;
+    stroke-width: 2;
+  }
+
+  .script {
+    font-family: var(--font-script);
+    font-weight: 400;
+    color: var(--color-primary);
+  }
+
+  .serif {
+    font-family: var(--font-serif);
   }
 
   .topbar-icon-button,
   .topbar-settings {
     min-height: 38px;
-    border: 1px solid var(--color-ink);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
     background: transparent;
     color: var(--color-ink);
     transition: background-color 180ms ease-out, color 180ms ease-out, transform 180ms var(--ease-out-quint);
@@ -207,11 +268,11 @@
   }
 
   .landing-title {
-    max-width: 16ch;
-    font-size: clamp(2.8rem, 7vw, 4.75rem);
-    font-weight: 500;
-    letter-spacing: -0.03em;
-    line-height: 0.92;
+    max-width: 18ch;
+    font-size: clamp(2.2rem, 5vw, 3.4rem);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    line-height: 1.05;
   }
 
   .text-center .landing-title {
@@ -220,7 +281,7 @@
 
   .card {
     border: 1px solid var(--color-border);
-    border-radius: 12px;
+    border-radius: var(--radius-xl);
     background-color: var(--color-surface);
   }
 
@@ -233,25 +294,25 @@
     justify-content: center;
     gap: 7px;
     padding: 8px 13px;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     transition: background-color 180ms ease-out, color 180ms ease-out, transform 180ms var(--ease-out-quint);
   }
 
   .button-primary {
-    border: 1px solid #11110f;
-    background: var(--color-lime);
-    color: #11110f;
+    border: 1px solid var(--color-primary);
+    background: var(--color-primary);
+    color: var(--color-primary-ink);
   }
 
   .button-primary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-lime) 86%, white);
+    background: var(--color-primary-strong);
     transform: translateY(-1px);
   }
 
   .button-secondary {
-    border: 1px solid var(--color-ink);
+    border: 1px solid var(--color-border-strong);
     background: transparent;
     color: var(--color-ink);
   }
@@ -592,7 +653,8 @@
   }
 
   .layout-toggle input:checked + i {
-    background: var(--color-lime);
+    border-color: var(--color-primary);
+    background: var(--color-primary);
   }
 
   .layout-toggle input:focus-visible + i {
@@ -601,7 +663,7 @@
   }
 
   .layout-toggle input:checked + i::after {
-    background: #11110f;
+    background: var(--color-primary-ink);
     transform: translateX(16px);
   }
 
@@ -662,6 +724,39 @@
     animation: shimmer 1.6s var(--ease-out-quint) infinite;
   }
 }
+
+/* ---- Movimento: breve, mai decorativo, sempre in risposta a qualcosa ---- */
+@keyframes ink-write {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+@keyframes rule-draw {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+/* Un foglio che si posa: compare già leggibile, scende di pochi pixel. */
+@keyframes sheet-settle {
+  from { opacity: 0.35; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes stamp {
+  0% { transform: scale(1.35); opacity: 0; }
+  60% { transform: scale(0.94); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+.anim-settle { animation: sheet-settle 320ms var(--ease-out-quint) both; }
+.anim-fade { animation: backdrop-in 220ms ease-out both; }
+.anim-stamp { animation: stamp 420ms var(--ease-out-quint) both; }
+.anim-rule { transform-origin: left; animation: rule-draw 600ms var(--ease-out-quint) both; }
 
 @keyframes dots {
   0% { content: ''; }
@@ -731,6 +826,5 @@
 }
 
 .typst-editor::selection {
-  background: #d7ff3f !important;
-  color: #11110f !important;
+  background: var(--color-primary-soft) !important;
 }
