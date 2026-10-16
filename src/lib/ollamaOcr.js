@@ -85,14 +85,29 @@ export function plainOcrToMarkdown(text) {
   return blocks.join('\n\n');
 }
 
+/** Compito → richiesta. PaddleOCR-VL è addestrato su richieste brevissime. */
+const PADDLE_TASKS = {
+  text: 'OCR:',
+  table: 'Table Recognition:',
+  formula: 'Formula Recognition:',
+  page: 'OCR:',
+};
+const GENERIC_TASKS = {
+  text: 'Trascrivi ESATTAMENTE il testo di questa immagine, riga per riga. Solo il testo, senza commenti.',
+  table: 'Trascrivi questa tabella come tabella Markdown, cella per cella. Solo la tabella.',
+  formula: 'Trascrivi questa formula in LaTeX. Solo la formula.',
+  page: MARKDOWN_PROMPT,
+};
+
 /**
- * OCR di una pagina via Ollama (API compatibile OpenAI).
- * @returns {Promise<Array<{type:string,bbox:null,text:string}>>}
+ * Una richiesta di lettura a un modello di visione su Ollama.
+ * @param {{endpoint?:string, model?:string, imageDataUrl:string, task?:'text'|'table'|'formula'|'page', signal?:AbortSignal}} p
+ * @returns {Promise<string>} testo grezzo
  */
-export async function ollamaOcrBlocks({ endpoint, model, imageDataUrl, signal }) {
+export async function ollamaRecognize({ endpoint, model, imageDataUrl, task = 'text', signal }) {
   const target = String(endpoint || DEFAULT_LOCAL_ENDPOINT).trim();
   const name = String(model || DEFAULT_OLLAMA_OCR_MODEL).trim();
-  const paddle = isPaddle(name);
+  const prompt = (isPaddle(name) ? PADDLE_TASKS : GENERIC_TASKS)[task] || PADDLE_TASKS.text;
   let res;
   try {
     res = await fetch(target, {
@@ -101,18 +116,16 @@ export async function ollamaOcrBlocks({ endpoint, model, imageDataUrl, signal })
       body: JSON.stringify({
         model: name,
         temperature: 0,
-        // PaddleOCR-VL è addestrato su richieste di una parola («OCR:»);
-        // un'istruzione lunga lo confonde.
         messages: [
           {
             role: 'user',
             content: [
               { type: 'image_url', image_url: { url: imageDataUrl } },
-              { type: 'text', text: paddle ? 'OCR:' : MARKDOWN_PROMPT },
+              { type: 'text', text: prompt },
             ],
           },
         ],
-        max_tokens: 4096,
+        max_tokens: task === 'page' ? 4096 : 2048,
       }),
       signal,
     });
@@ -129,7 +142,7 @@ export async function ollamaOcrBlocks({ endpoint, model, imageDataUrl, signal })
     const missing = res.status === 404 || /not found|pull/i.test(detail);
     const err = new Error(
       missing
-        ? `Il modello «${name}» non è scaricato in Ollama. In un terminale: ollama pull ${name}`
+        ? `Il modello «${name}» non è scaricato in Ollama: installalo da Impostazioni → PaddleOCR.`
         : `Ollama ha avuto un problema con la pagina: ${detail.slice(0, 300)}`,
     );
     err.local = true;
@@ -138,11 +151,23 @@ export async function ollamaOcrBlocks({ endpoint, model, imageDataUrl, signal })
   const data = await res.json();
   let text = data?.choices?.[0]?.message?.content || '';
   if (Array.isArray(text)) text = text.map((p) => p?.text || '').join('');
-  text = String(text).replace(/<think>[\s\S]*?<\/think>/g, '').replace(/^```(?:markdown)?\s*|\s*```$/g, '').trim();
+  return String(text)
+    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/^```(?:markdown|latex)?\s*|\s*```$/g, '')
+    .trim();
+}
+
+/**
+ * OCR di una pagina intera via Ollama (senza analisi dell'impaginazione).
+ * @returns {Promise<Array<{type:string,bbox:null,text:string}>>}
+ */
+export async function ollamaOcrBlocks({ endpoint, model, imageDataUrl, signal }) {
+  const name = String(model || DEFAULT_OLLAMA_OCR_MODEL).trim();
+  const text = await ollamaRecognize({ endpoint, model: name, imageDataUrl, task: 'page', signal });
   if (!text) {
     const err = new Error(`Il modello «${name}» non ha restituito testo per questa pagina.`);
     err.local = true;
     throw err;
   }
-  return [{ type: 'Text', bbox: null, text: paddle ? plainOcrToMarkdown(text) : text }];
+  return [{ type: 'Text', bbox: null, text: isPaddle(name) ? plainOcrToMarkdown(text) : text }];
 }

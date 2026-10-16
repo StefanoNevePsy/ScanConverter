@@ -20,3 +20,6 @@ native/typst/
 
 # Archivi di lavoro esportati dall'app (possono contenere libri e scansioni).
 *.scanconverter
+
+# Motore ONNX copiato da node_modules all'avvio di Vite.
+public/ort/

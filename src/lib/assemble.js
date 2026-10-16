@@ -216,6 +216,11 @@ export function applyFigureWidths(code, figures) {
  * @returns {Array} blocchi in ordine di lettura
  */
 export function orderBlocks(blocks) {
+  // Il modello di impaginazione dà già l'ordine di lettura (colonne, note a
+  // margine, didascalie comprese): se c'è per tutti i blocchi, vale quello.
+  if (blocks.length && blocks.every((b) => Number.isFinite(b?.order))) {
+    return [...blocks].sort((a, b) => a.order - b.order);
+  }
   const boxed = blocks.filter((b) => b?.bbox);
   const unboxed = blocks.filter((b) => !b?.bbox);
 

@@ -30,6 +30,7 @@ const KEYS = {
   paddleToken: 'sc.paddleToken',
   paddleLocalEndpoint: 'sc.paddleLocalEndpoint',
   paddleOllamaModel: 'sc.paddleOllamaModel',
+  paddleLayout: 'sc.paddleLayout',
   docContext: 'sc.docContext',
   sourceLang: 'sc.sourceLang',
   targetLang: 'sc.targetLang',
@@ -99,6 +100,8 @@ export const DEFAULTS = {
   paddleLocalEndpoint: 'http://localhost:8001/layout-parsing',
   // Modello di visione su Ollama per la modalità «ollama».
   paddleOllamaModel: 'MedAIBase/PaddleOCR-VL:0.9b',
+  // Analisi dell'impaginazione (PP-DocLayoutV3 nell'app) prima della lettura.
+  paddleLayout: true,
   // Traduzione (fase separata, mai in sovrascrittura dell'originale).
   sourceLang: 'auto',
   targetLang: 'en',
@@ -271,6 +274,7 @@ export function loadSettings() {
       ? read(KEYS.paddleMode, DEFAULTS.paddleMode)
       : 'online',
     paddleOllamaModel: read(KEYS.paddleOllamaModel, DEFAULTS.paddleOllamaModel),
+    paddleLayout: readBool(KEYS.paddleLayout, DEFAULTS.paddleLayout),
     paddleUrl: read(KEYS.paddleUrl, DEFAULTS.paddleUrl),
     paddleToken: read(KEYS.paddleToken),
     paddleLocalEndpoint: read(KEYS.paddleLocalEndpoint, DEFAULTS.paddleLocalEndpoint),
@@ -398,6 +402,7 @@ export function saveSettings(s) {
   write(KEYS.localOcrEndpoint, s.localOcrEndpoint?.trim() || DEFAULTS.localOcrEndpoint);
   write(KEYS.paddleMode, ['local', 'ollama'].includes(s.paddleMode) ? s.paddleMode : 'online');
   write(KEYS.paddleOllamaModel, s.paddleOllamaModel?.trim() || DEFAULTS.paddleOllamaModel);
+  write(KEYS.paddleLayout, s.paddleLayout === false ? '0' : '1');
   write(KEYS.paddleUrl, s.paddleUrl?.trim() || '');
   write(KEYS.paddleToken, s.paddleToken?.trim() || '');
   write(KEYS.paddleLocalEndpoint, s.paddleLocalEndpoint?.trim() || DEFAULTS.paddleLocalEndpoint);
