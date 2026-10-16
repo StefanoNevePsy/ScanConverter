@@ -38,6 +38,12 @@ export async function extractPageBlocks({ apiKey, endpoint, model, imageDataUrl,
   if (!apiKey) throw new Error('Chiave API NVIDIA mancante. Aprine le Impostazioni.');
   if (!imageDataUrl) throw new Error('Nessuna immagine da analizzare.');
 
+  // Modelli di visione generici (es. Nemotron 3.5 Super VL): non hanno il
+  // protocollo a «tools» dei parser, si chiede la pagina in Markdown con i
+  // titoli marcati. Niente riquadri: niente figure ritagliate.
+  if (model && !/parse/i.test(model)) {
+    return [{ type: 'Text', bbox: null, text: await visionPageMarkdown({ apiKey, endpoint, model, imageDataUrl, signal }) }];
+  }
   const data = await callNemotron({ apiKey, endpoint, model, imageDataUrl, tool: 'markdown_bbox', signal });
   if (isParseV2(model)) {
     try {
@@ -70,6 +76,31 @@ export async function extractPageText({ apiKey, endpoint, model, imageDataUrl, s
     throw new Error('La risposta di NVIDIA NIM non conteneva testo estraibile.');
   }
   return text.trim();
+}
+
+const VISION_OCR_PROMPT =
+  'Trascrivi ESATTAMENTE il testo di questa pagina di libro in Markdown. ' +
+  'Marca i titoli con # (capitolo), ## (sezione), ### (sottosezione) secondo la ' +
+  'loro evidenza grafica. Elenchi puntati con «- », numerati con «1. ». Ometti ' +
+  'testatina e numero di pagina. Non tradurre, non correggere, non commentare: ' +
+  'solo il testo della pagina.';
+
+async function visionPageMarkdown({ apiKey, endpoint, model, imageDataUrl, signal }) {
+  const text = await nvidiaChat({
+    apiKey,
+    endpoint,
+    model,
+    user: [
+      { type: 'image_url', image_url: { url: imageDataUrl } },
+      { type: 'text', text: VISION_OCR_PROMPT },
+    ],
+    temperature: 0,
+    maxTokens: 6000,
+    signal,
+  });
+  const clean = String(text || '').replace(/^```(?:markdown)?\s*|\s*```$/g, '').trim();
+  if (!clean) throw new Error(`Il modello «${model}» non ha restituito testo per questa pagina.`);
+  return clean;
 }
 
 /** Nemotron-Parse 2.x: protocollo a prompt invece che a «tools». */
