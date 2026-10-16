@@ -73,10 +73,24 @@ function OllamaFields({ form, set, defaults }) {
     <>
       <p className="text-xs leading-relaxed text-faint">
         Usa Ollama, lo stesso programma dei modelli locali: funziona con la scheda video su
-        Windows e con i chip Apple sul Mac. Il modello restituisce solo il testo: i titoli si
-        riconoscono con regole (righe brevi, maiuscole, numerate), e le figure non vengono
-        ritagliate.
+        Windows e con i chip Apple sul Mac.
       </p>
+      <label className="flex cursor-pointer items-start gap-3">
+        <input
+          type="checkbox"
+          checked={form.paddleLayout !== false}
+          onChange={(e) => set('paddleLayout')({ target: { value: e.target.checked } })}
+          className="mt-0.5 size-4 accent-primary"
+        />
+        <span>
+          <span className="block text-sm font-medium text-ink">Riconosci prima l’impaginazione</span>
+          <span className="block text-xs leading-relaxed text-faint">
+            Un piccolo modello (65 MB, scaricato una volta) trova titoli, paragrafi, note e figure;
+            poi ogni zona viene letta da sola. Gerarchia più affidabile, testatine scartate,
+            figure ritagliate. Consigliato.
+          </span>
+        </span>
+      </label>
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium text-ink">Modello</span>
         <span className="mb-2 block text-xs text-faint">

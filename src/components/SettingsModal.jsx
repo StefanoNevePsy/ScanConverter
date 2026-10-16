@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, forwardRef } from 'react';
 import { DEFAULTS } from '../lib/storage.js';
-import { PHASES, PHASE_META, PHASE_DEFAULTS, phaseConfig, withPhase } from '../lib/phases.js';
+import { PHASES, PHASE_META, PHASE_DEFAULTS, phaseConfig, withPhase, requiredKeys } from '../lib/phases.js';
 import { listGeminiModels } from '../lib/gemini.js';
 import { listNvidiaModels, chatCandidates, probeNvidiaModel } from '../lib/nvidia.js';
 import { listLocalModels } from '../lib/local.js';
 import LocalSetupPanel from './LocalSetupPanel.jsx';
 import PaddleSetupPanel from './PaddleSetupPanel.jsx';
-import { IconX, IconEye, IconEyeOff, IconKey, IconSpinner, IconRefresh } from './Icons.jsx';
+import { IconX, IconEye, IconEyeOff, IconSpinner, IconRefresh } from './Icons.jsx';
 
 /**
  * Modale di configurazione: chiavi API (NVIDIA, Google), motore per la
@@ -20,6 +20,21 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
   const [showNvidia, setShowNvidia] = useState(false);
   const [showGoogle, setShowGoogle] = useState(false);
   const dialogRef = useRef(null);
+  const [tab, setTab] = useState(() => {
+    try {
+      return localStorage.getItem('sc.settingsTab') || 'document';
+    } catch {
+      return 'document';
+    }
+  });
+  const chooseTab = (id) => {
+    setTab(id);
+    try {
+      localStorage.setItem('sc.settingsTab', id);
+    } catch {
+      /* solo in memoria */
+    }
+  };
   const firstFieldRef = useRef(null);
 
   // Elenchi modelli auto-aggiornanti. `{ list, loading, error }` per fornitore.
@@ -192,9 +207,15 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
     onClose();
   };
 
+  const workflow = ['strict', 'scan'].includes(form.formatWorkflow) ? form.formatWorkflow : 'legacy';
+  const keys = requiredKeys(form);
+  const missingKey = (keys.google && !form.googleApiKey?.trim()) || (keys.nvidia && !form.nvidiaApiKey?.trim());
+  const toggle = (k) => (checked) => setForm((f) => ({ ...f, [k]: checked }));
+  const correctionPhases = PHASES.filter((p) => p !== 'ocr' && (p !== 'typst' || workflow === 'legacy'));
+
   return (
     <div
-      className="fixed inset-0 grid place-items-center p-4"
+      className="fixed inset-0 grid place-items-center p-3 sm:p-4"
       style={{ zIndex: 'var(--z-modal)' }}
       role="dialog"
       aria-modal="true"
@@ -203,28 +224,20 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
       <button
         aria-label="Chiudi"
         onClick={onClose}
-        className="fixed inset-0 bg-black/60 backdrop-blur-[2px] cursor-default"
+        className="fixed inset-0 bg-black/60 cursor-default"
         style={{ zIndex: 'var(--z-backdrop)' }}
         tabIndex={-1}
       />
       <form
         ref={dialogRef}
         onSubmit={submit}
-        className="card relative flex max-h-[90vh] w-full max-w-2xl flex-col p-6 shadow-2xl sm:p-7"
+        className="card relative flex h-[min(88vh,760px)] w-full max-w-4xl flex-col overflow-hidden shadow-2xl"
         style={{ zIndex: 'var(--z-modal)' }}
       >
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span className="grid size-9 place-items-center rounded-lg bg-primary-soft text-primary">
-              <IconKey />
-            </span>
-            <div>
-              <h2 id="settings-title" className="text-lg font-semibold text-ink">
-                Impostazioni
-              </h2>
-              <p className="text-sm text-muted">Motori, qualità e chiavi.</p>
-            </div>
-          </div>
+        <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-4 sm:px-6">
+          <h2 id="settings-title" className="text-base font-semibold text-ink">
+            Impostazioni
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -233,412 +246,339 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
           >
             <IconX />
           </button>
-        </div>
+        </header>
 
-        <div className="mt-7 space-y-8 overflow-y-auto pr-1">
-          {/* Le due chiavi stanno insieme: sono la stessa decisione, e prima
-              erano separate da un'impostazione che non c'entra. */}
-          <Section title="Chiavi API" note="Restano solo in questo browser.">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field
-                label="NVIDIA_API_KEY"
-                hint="OCR con Nemotron-Parse."
-                ref={firstFieldRef}
-                type={showNvidia ? 'text' : 'password'}
-                value={form.nvidiaApiKey}
-                onChange={update('nvidiaApiKey')}
-                onBlur={(e) => fetchNvidia(e.target.value, form.nvidiaEndpoint)}
-                placeholder="nvapi-…"
-                reveal={showNvidia}
-                onToggle={() => setShowNvidia((v) => !v)}
-                autoComplete="off"
-              />
-              <Field
-                label="GOOGLE_API_KEY"
-                hint="Gemini: OCR e conversione in Typst."
-                type={showGoogle ? 'text' : 'password'}
-                value={form.googleApiKey}
-                onChange={update('googleApiKey')}
-                onBlur={(e) => fetchGemini(e.target.value)}
-                placeholder="AIza…"
-                reveal={showGoogle}
-                onToggle={() => setShowGoogle((v) => !v)}
-                autoComplete="off"
-              />
-            </div>
-          </Section>
-
-          <Section title="Contesto del documento" note="Facoltativo, ma cambia molto.">
-            <label className="block">
-              <span className="mb-2 block text-xs leading-relaxed text-faint">
-                Una frase su cosa stai digitalizzando. Senza, i modelli
-                trattano il lessico specialistico come un refuso: «parenti&shy;ficazione»
-                o «ipercircolarità» somigliano a errori di scansione e
-                rischiano di essere “corretti”. Dichiarare il dominio li rende
-                attesi — e vale per l’ortografia, la rilettura e la conversione.
-              </span>
-              <textarea
-                value={form.docContext || ''}
-                onChange={update('docContext')}
-                rows={2}
-                placeholder="Es. Libro di psicoterapia sistemica (scuola di Milano): cibernetica di secondo ordine, parentificazione, doppio legame, ipotizzazione."
-                className="w-full resize-y rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-ink placeholder:text-faint transition-colors focus:border-primary focus:outline-none"
-              />
-            </label>
-          </Section>
-
-          {/* Una riga per fase: motore e modello. Prima la stessa decisione
-              era ripetuta con cinque convenzioni diverse, sparse fra la
-              sezione principale e le opzioni avanzate. */}
-          <Section
-            title="Motori per fase"
-            note="Ogni fase è indipendente: locale dove conviene, in rete dove serve."
+        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+          <nav
+            aria-label="Sezioni"
+            className="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-2 sm:w-48 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r sm:p-3"
           >
-            <div className="rounded-lg border border-border bg-surface-2/40 p-3 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-faint">
-                  L’elenco NVIDIA è il catalogo intero: molti modelli non sono disponibili per il tuo
-                  account. Provali una volta e l’elenco mostrerà solo quelli che funzionano (2–4 minuti).
-                </span>
-                <button type="button" onClick={verifyNvidia} className="button-secondary shrink-0">
-                  {probe?.running ? 'Interrompi' : 'Trova i modelli NVIDIA funzionanti'}
-                </button>
-              </div>
-              {probe?.message && <p className="mt-2 text-ink">{probe.message}</p>}
-              {nvidiaWorking?.length > 0 && !probe?.running && (
-                <p className="mt-1 text-faint">
-                  Funzionanti: {nvidiaWorking.join(', ')}
-                </p>
-              )}
-            </div>
-            {PHASES.map((phase) => (
-              <PhaseRow
-                key={phase}
-                phase={phase}
-                form={form}
-                providers={providers}
-                onEngine={setPhaseEngine}
-                onModel={setPhaseModel}
-              />
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => chooseTab(t.id)}
+                aria-current={tab === t.id ? 'page' : undefined}
+                className={`flex shrink-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors ${
+                  tab === t.id
+                    ? 'bg-primary-soft font-semibold text-ink'
+                    : 'text-muted hover:bg-surface-2 hover:text-ink'
+                }`}
+              >
+                {t.label}
+                {t.id === 'keys' && missingKey && (
+                  <span className="size-2 rounded-full bg-danger" aria-label="chiave mancante" />
+                )}
+              </button>
             ))}
-          </Section>
+          </nav>
 
-          <Section title="Come viene ricostruito il documento">
-            <div>
-              <span className="mb-1.5 block text-sm font-medium text-ink">
-                Workflow di formattazione
-              </span>
-              <span className="mb-2 block text-xs text-faint">
-                Il workflow ad alta fedeltà conserva il testo OCR come fonte
-                canonica e genera il layout senza farlo riscrivere al modello.
-              </span>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <EngineButton
-                  active={!['strict', 'scan'].includes(form.formatWorkflow)}
-                  onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'legacy' }))}
-                  title="Attuale"
-                  sub="layout generato dal modello"
-                />
-                <EngineButton
-                  active={form.formatWorkflow === 'strict'}
-                  onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'strict' }))}
-                  title="Fedeltà massima"
-                  sub="testo immutabile e verificato"
-                />
-                <EngineButton
-                  active={form.formatWorkflow === 'scan'}
-                  onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'scan' }))}
-                  title="Scansione ricercabile"
-                  sub="pagine originali, testo corretto invisibile sotto"
-                />
-              </div>
-            </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
+            {tab === 'document' && (
+              <div className="space-y-8">
+                <Section title="Che cosa vuoi ottenere">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <EngineButton
+                      active={workflow === 'strict'}
+                      onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'strict' }))}
+                      title="Testo ricomposto"
+                      sub="consigliato · testo fedele, impaginato con regole fisse"
+                    />
+                    <EngineButton
+                      active={workflow === 'scan'}
+                      onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'scan' }))}
+                      title="Scansione ricercabile"
+                      sub="le pagine originali, con il testo cercabile sotto"
+                    />
+                    <EngineButton
+                      active={workflow === 'legacy'}
+                      onClick={() => setForm((f) => ({ ...f, formatWorkflow: 'legacy' }))}
+                      title="Impaginato da un modello"
+                      sub="più libero, ma il modello può alterare il testo"
+                    />
+                  </div>
+                </Section>
 
-          <div>
-            {form.formatWorkflow === 'strict' && (
-              <div className="mt-3">
-                <label className="flex cursor-pointer items-start gap-3 py-0.5">
-                  <input
-                    type="checkbox"
-                    checked={!!form.compareOcr}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, compareOcr: e.target.checked }))
-                    }
-                    className="mt-0.5 accent-primary"
+                <Section title="Contesto del documento" note="Facoltativo, ma cambia molto">
+                  <label className="block">
+                    <span className="mb-2 block max-w-prose text-xs leading-relaxed text-muted">
+                      Una frase su cosa stai digitalizzando. Così i termini specialistici
+                      («parentificazione», «ipercircolarità») non vengono scambiati per refusi.
+                    </span>
+                    <textarea
+                      value={form.docContext || ''}
+                      onChange={update('docContext')}
+                      rows={3}
+                      placeholder="Es. Libro di psicoterapia sistemica (scuola di Milano): cibernetica di secondo ordine, parentificazione, doppio legame."
+                      className="w-full resize-y rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-ink placeholder:text-faint transition-colors focus:border-primary focus:outline-none"
+                    />
+                  </label>
+                </Section>
+
+                <Section title="Qualità">
+                  <Toggle
+                    checked={form.cleanPages !== false}
+                    onChange={toggle('cleanPages')}
+                    title="Raddrizza le pagine prima della lettura"
+                    text="Corregge inclinazione e righe curve vicino alla rilegatura, schiarisce il grigio delle fotocopie."
                   />
-                  <span>
-                    <span className="block text-sm font-medium text-ink">
-                      Confronta con un secondo OCR
-                    </span>
-                    <span className="block text-xs text-faint">
-                      Esegue anche l’altro motore (Gemini/NVIDIA) sulla stessa
-                      pagina e segnala le divergenze. Richiede entrambe le chiavi
-                      e raddoppia il costo OCR.
-                    </span>
-                  </span>
-                </label>
+                  <Toggle
+                    checked={form.fixTypos !== false}
+                    onChange={toggle('fixTypos')}
+                    title="Rilettura automatica dei refusi"
+                    text="Un modello corregge accenti e parole spezzate dall’OCR; nel dubbio lascia il testo com’è. Usa il motore scelto in «Correzione»."
+                  />
+                  {workflow !== 'scan' && (
+                    <Toggle
+                      checked={form.useHeadingSize !== false}
+                      onChange={toggle('useHeadingSize')}
+                      title="Usa la dimensione dei titoli per la gerarchia"
+                      text="Confronta ogni titolo con il testo vicino: regge anche le foto storte fatte col telefono."
+                    />
+                  )}
+                  {ocrEngine !== 'gemini' && workflow !== 'scan' && (
+                    <Toggle
+                      checked={!!form.refineTables}
+                      onChange={toggle('refineTables')}
+                      title="Ricostruisci le tabelle dall’immagine"
+                      text="Righe e colonne si recuperano dall’immagine con Gemini. Richiede la chiave Google."
+                    />
+                  )}
+                  {workflow === 'strict' && (
+                    <Toggle
+                      checked={!!form.compareOcr}
+                      onChange={toggle('compareOcr')}
+                      title="Confronta con un secondo OCR"
+                      text="Legge ogni pagina anche con l’altro motore in rete e segnala le differenze. Richiede entrambe le chiavi e raddoppia il costo."
+                    />
+                  )}
+                </Section>
               </div>
             )}
-            <div className="mt-3">
-              <label className="flex cursor-pointer items-start gap-3 py-0.5">
-                <input
-                  type="checkbox"
-                  checked={form.cleanPages !== false}
-                  onChange={(e) => setForm((f) => ({ ...f, cleanPages: e.target.checked }))}
-                  className="mt-0.5 accent-primary"
-                />
-                <span>
-                  <span className="block text-sm font-medium text-ink">
-                    Raddrizza le pagine prima della lettura
-                  </span>
-                  <span className="block text-xs text-faint">
-                    Corregge l’inclinazione e l’«onda» delle righe vicino alla rilegatura, e
-                    schiarisce il fondo grigio delle fotocopie. Le pagine già dritte restano
-                    intatte.
-                  </span>
-                </span>
-              </label>
-              <label className="mt-3 flex cursor-pointer items-start gap-3 py-0.5">
-                <input
-                  type="checkbox"
-                  checked={form.useHeadingSize !== false}
-                  onChange={(e) => setForm((f) => ({ ...f, useHeadingSize: e.target.checked }))}
-                  className="mt-0.5 accent-primary"
-                />
-                <span>
-                  <span className="block text-sm font-medium text-ink">
-                    Usa la dimensione dei titoli per la gerarchia
-                  </span>
-                  <span className="block text-xs text-faint">
-                    Confronta ogni titolo con il testo che gli sta vicino, non con una misura
-                    assoluta: regge anche le foto storte o in prospettiva fatte col telefono.
-                    Vale per i documenti estratti da ora in poi.
-                  </span>
-                </span>
-              </label>
-            </div>
-            {ocrEngine !== 'gemini' && (
-              <div className="mt-3">
-                <label className="flex cursor-pointer items-start gap-3 py-0.5">
-                  <input
-                    type="checkbox"
-                    checked={!!form.refineTables}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, refineTables: e.target.checked }))
+
+            {tab === 'reading' && (
+              <div className="space-y-8">
+                <Section title="Lettura delle pagine">
+                  <PhaseRow phase="ocr" form={form} providers={providers} onEngine={setPhaseEngine} onModel={setPhaseModel} />
+                </Section>
+                {ocrEngine === 'paddle' && (
+                  <Section title="PaddleOCR-VL" note="Stesso modello, tre modi di usarlo">
+                    <PaddleSetupPanel form={form} setForm={setForm} defaults={DEFAULTS} />
+                  </Section>
+                )}
+                {ocrEngine === 'local' && (
+                  <Section title="Sidecar OCR">
+                    <Field
+                      label="Indirizzo del sidecar"
+                      hint="Il servizio Python con Nemotron OCR v2 (vedi tools/local-ocr)."
+                      value={form.localOcrEndpoint}
+                      onChange={update('localOcrEndpoint')}
+                      placeholder={DEFAULTS.localOcrEndpoint}
+                      mono
+                    />
+                  </Section>
+                )}
+              </div>
+            )}
+
+            {tab === 'correction' && (
+              <Section
+                title="Modelli per fase"
+                note="Locale dove basta, in rete dove serve"
+              >
+                {workflow !== 'legacy' && (
+                  <p className="max-w-prose text-xs leading-relaxed text-muted">
+                    Con «{workflow === 'strict' ? 'Testo ricomposto' : 'Scansione ricercabile'}»
+                    l’impaginazione è fatta con regole fisse, senza modelli: qui scegli solo chi
+                    rilegge, ripara e traduce.
+                  </p>
+                )}
+                {correctionPhases.map((phase) => (
+                  <PhaseRow key={phase} phase={phase} form={form} providers={providers} onEngine={setPhaseEngine} onModel={setPhaseModel} />
+                ))}
+              </Section>
+            )}
+
+            {tab === 'local' && (
+              <div className="space-y-8">
+                <Section title="Modelli sul tuo computer" note="Nessuna chiave, nessuna quota">
+                  <LocalSetupPanel
+                    localEndpoint={form.localEndpoint}
+                    localOcrEndpoint={form.localOcrEndpoint}
+                    onUseModel={(phase, model) =>
+                      setForm((f) => withPhase(f, phase, { engine: 'local', model }))
                     }
-                    className="mt-0.5 accent-primary"
+                    onApplySetup={(setup) =>
+                      setForm((f) => ({
+                        ...f,
+                        localEndpoint: setup.localEndpoint || f.localEndpoint,
+                        localOcrEndpoint: setup.localOcrEndpoint || f.localOcrEndpoint,
+                      }))
+                    }
                   />
-                  <span>
-                    <span className="block text-sm font-medium text-ink">
-                      Ricostruisci le tabelle dall’immagine
+                </Section>
+                <Section title="Indirizzo di Ollama">
+                  <Field
+                    label="Endpoint"
+                    hint="Cambialo solo se Ollama gira su un altro computer della rete."
+                    value={form.localEndpoint}
+                    onChange={update('localEndpoint')}
+                    placeholder={DEFAULTS.localEndpoint}
+                    mono
+                  />
+                </Section>
+                {!usesLocal && (
+                  <p className="text-xs text-faint">
+                    Nessuna fase usa ancora i modelli locali: sceglili in «Lettura» o «Correzione».
+                  </p>
+                )}
+              </div>
+            )}
+
+            {tab === 'keys' && (
+              <div className="space-y-8">
+                <Section title="Chiavi dei servizi in rete" note="Restano solo su questo dispositivo">
+                  {missingKey && (
+                    <p className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-ink">
+                      Le impostazioni attuali usano {keys.google && !form.googleApiKey?.trim() ? 'Google' : 'NVIDIA'}
+                      {' '}ma la chiave è vuota.
+                    </p>
+                  )}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field
+                      label="Chiave NVIDIA"
+                      hint="build.nvidia.com · OCR Nemotron e modelli di testo."
+                      ref={firstFieldRef}
+                      type={showNvidia ? 'text' : 'password'}
+                      value={form.nvidiaApiKey}
+                      onChange={update('nvidiaApiKey')}
+                      onBlur={(e) => fetchNvidia(e.target.value, form.nvidiaEndpoint)}
+                      placeholder="nvapi-…"
+                      reveal={showNvidia}
+                      onToggle={() => setShowNvidia((v) => !v)}
+                      autoComplete="off"
+                    />
+                    <Field
+                      label="Chiave Google"
+                      hint="aistudio.google.com · Gemini."
+                      type={showGoogle ? 'text' : 'password'}
+                      value={form.googleApiKey}
+                      onChange={update('googleApiKey')}
+                      onBlur={(e) => fetchGemini(e.target.value)}
+                      placeholder="AIza…"
+                      reveal={showGoogle}
+                      onToggle={() => setShowGoogle((v) => !v)}
+                      autoComplete="off"
+                    />
+                  </div>
+                </Section>
+                <Section title="Modelli NVIDIA disponibili">
+                  <p className="max-w-prose text-xs leading-relaxed text-muted">
+                    Il catalogo NVIDIA elenca anche modelli non attivi per il tuo account. La prova
+                    (2–4 minuti) li interroga uno per uno e poi mostra solo quelli che rispondono.
+                  </p>
+                  <div>
+                    <button type="button" onClick={verifyNvidia} className="button-secondary">
+                      {probe?.running ? 'Interrompi' : 'Trova i modelli funzionanti'}
+                    </button>
+                  </div>
+                  {probe?.message && <p className="text-xs text-ink">{probe.message}</p>}
+                  {nvidiaWorking?.length > 0 && !probe?.running && (
+                    <p className="text-xs leading-relaxed text-faint">Funzionanti: {nvidiaWorking.join(', ')}</p>
+                  )}
+                </Section>
+              </div>
+            )}
+
+            {tab === 'advanced' && (
+              <div className="space-y-8">
+                <Section title="PDF">
+                  <div>
+                    <span className="mb-1.5 block text-sm font-medium text-ink">PDF che contengono già testo</span>
+                    <span className="mb-2 block text-xs text-muted">
+                      Usare il testo esistente salta l’OCR ed è più fedele, ma non estrae figure e tabelle.
                     </span>
-                    <span className="block text-xs text-faint">
-                      Righe e colonne si recuperano solo dall’immagine, non dal
-                      testo appiattito dall’OCR. Una cella inventata viene
-                      scartata. Richiede la chiave Google.
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <EngineButton
+                        active={form.pdfTextMode !== 'ocr'}
+                        onClick={() => setForm((f) => ({ ...f, pdfTextMode: 'auto' }))}
+                        title="Automatico"
+                        sub="usa il testo se c’è"
+                      />
+                      <EngineButton
+                        active={form.pdfTextMode === 'ocr'}
+                        onClick={() => setForm((f) => ({ ...f, pdfTextMode: 'ocr' }))}
+                        title="Sempre OCR"
+                        sub="rilegge le pagine come immagini"
+                      />
+                    </div>
+                  </div>
+                  <label className="block">
+                    <span className="mb-1.5 block text-sm font-medium text-ink">Risoluzione delle pagine</span>
+                    <span className="mb-2 block text-xs text-muted">
+                      Più alta legge meglio le scansioni difficili, ma è più lenta.
                     </span>
-                  </span>
-                </label>
+                    <select
+                      value={String(form.ocrLongSide ?? DEFAULTS.ocrLongSide)}
+                      onChange={(e) => setForm((f) => ({ ...f, ocrLongSide: parseInt(e.target.value, 10) }))}
+                      className="w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink transition-colors focus:border-primary focus:outline-none"
+                    >
+                      <option value="2048">Standard · ~250 DPI</option>
+                      <option value="2600">Alta · ~320 DPI</option>
+                      <option value="3200">Molto alta · ~390 DPI</option>
+                      <option value="4000">Massima · ~490 DPI</option>
+                    </select>
+                  </label>
+                  <Field
+                    label="Pagine massime per PDF"
+                    type="number"
+                    min={1}
+                    max={2000}
+                    value={form.maxPages}
+                    onChange={update('maxPages')}
+                    placeholder={String(DEFAULTS.maxPages)}
+                    mono
+                  />
+                </Section>
+                <Section title="Richieste ai modelli">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field
+                      label="Caratteri per richiesta"
+                      hint="TranslateGemma: massimo 5000."
+                      type="number"
+                      min={1000}
+                      max={30000}
+                      value={form.chunkSize}
+                      onChange={update('chunkSize')}
+                      placeholder={String(DEFAULTS.chunkSize)}
+                      mono
+                    />
+                    <Field
+                      label="Frasi di contesto in traduzione"
+                      hint="Prima e dopo ogni passaggio (0–6)."
+                      type="number"
+                      min={0}
+                      max={6}
+                      value={form.translateOverlap}
+                      onChange={update('translateOverlap')}
+                      placeholder={String(DEFAULTS.translateOverlap)}
+                      mono
+                    />
+                  </div>
+                  <Field
+                    label="Endpoint NVIDIA"
+                    value={form.nvidiaEndpoint}
+                    onChange={update('nvidiaEndpoint')}
+                    placeholder={DEFAULTS.nvidiaEndpoint}
+                    mono
+                  />
+                </Section>
               </div>
             )}
           </div>
-
-          {form.formatWorkflow === 'strict' && (
-            <div className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-muted">
-              Nel workflow «Fedeltà massima» il testo e il codice Typst sono prodotti
-              localmente con regole fisse, senza modelli: niente quote né errori in
-              questa fase. Font, margini e stile si cambiano dal pannello di
-              impaginazione.
-            </div>
-          )}
-
-          {/* Correzione conservativa dei refusi OCR durante la strutturazione. */}
-          <div>
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Correggi i refusi durante la strutturazione
-            </span>
-            <span className="mb-2 block text-xs text-faint">
-              Il modello che genera il Typst corregge anche accenti («è/e»),
-              parole saltate e virgolette, usando il contesto della frase. In
-              caso di dubbio lascia il testo invariato. Non intacca la verifica
-              di fedeltà (che ignora gli accenti).
-            </span>
-            <div className="grid grid-cols-2 gap-2">
-              <EngineButton
-                active={form.fixTypos !== false}
-                onClick={() => setForm((f) => ({ ...f, fixTypos: true }))}
-                title="Attiva"
-                sub="consigliato su scansioni pessime"
-              />
-              <EngineButton
-                active={form.fixTypos === false}
-                onClick={() => setForm((f) => ({ ...f, fixTypos: false }))}
-                title="Disattiva"
-                sub="trascrizione letterale dell’OCR"
-              />
-            </div>
-          </div>
-          </Section>
-
-          {ocrEngine === 'paddle' && (
-            <Section title="PaddleOCR" note="Stesso modello, online o sul tuo computer.">
-              <PaddleSetupPanel
-                form={form}
-                setForm={setForm}
-                defaults={DEFAULTS}
-              />
-            </Section>
-          )}
-
-          {/* Pipeline locale: compare solo se almeno una fase la usa, così non
-              ingombra chi lavora solo con le API. I MODELLI ora stanno nelle
-              righe di fase; qui restano i due indirizzi, che sono di macchina
-              e non di fase. */}
-          {usesLocal && (
-            <Section title="Pipeline locale" note="Nessuna chiave, nessuna quota.">
-              <p className="text-xs leading-relaxed text-faint">
-                L’OCR locale riconosce i glifi velocissimo ma non capisce la
-                lingua: è il modello locale a rimettere gli accenti e le parole
-                troncate, con gli stessi guard usati per Gemini. Serve Ollama in
-                esecuzione (e il sidecar OCR, se scegli l’OCR locale).
-              </p>
-              <LocalSetupPanel
-                localEndpoint={form.localEndpoint}
-                localOcrEndpoint={form.localOcrEndpoint}
-                onUseModel={(phase, model) =>
-                  setForm((f) => withPhase(f, phase, { engine: 'local', model }))
-                }
-                onApplySetup={(setup) =>
-                  setForm((f) => ({
-                    ...f,
-                    localEndpoint: setup.localEndpoint || f.localEndpoint,
-                    localOcrEndpoint: setup.localOcrEndpoint || f.localOcrEndpoint,
-                  }))
-                }
-              />
-              <Field
-                label="Endpoint LLM locale"
-                hint="Ollama espone l’API compatibile OpenAI su questa porta."
-                value={form.localEndpoint}
-                onChange={update('localEndpoint')}
-                placeholder={DEFAULTS.localEndpoint}
-                mono
-              />
-              {ocrEngine === 'local' && (
-                <Field
-                  label="Endpoint sidecar OCR"
-                  hint="Il servizio Python che incapsula Nemotron OCR v2 (vedi tools/local-ocr)."
-                  value={form.localOcrEndpoint}
-                  onChange={update('localOcrEndpoint')}
-                  placeholder={DEFAULTS.localOcrEndpoint}
-                  mono
-                />
-              )}
-            </Section>
-          )}
-
-          <details className="group border-t border-border pt-5">
-            <summary className="cursor-pointer select-none text-sm font-medium text-muted hover:text-ink transition-colors">
-              Opzioni avanzate
-            </summary>
-            <div className="space-y-5 pt-4">
-              <Field
-                label="Endpoint NVIDIA NIM"
-                value={form.nvidiaEndpoint}
-                onChange={update('nvidiaEndpoint')}
-                placeholder={DEFAULTS.nvidiaEndpoint}
-                mono
-              />
-              {/* Ingestione dei PDF con testo (vettoriali / già OCR'd). */}
-              <div>
-                <span className="mb-1.5 block text-sm font-medium text-ink">
-                  PDF con testo già presente
-                </span>
-                <span className="mb-2 block text-xs text-faint">
-                  Molti PDF (vettoriali o già passati per un OCR) hanno un layer
-                  di testo esatto: usarlo salta l’OCR NVIDIA ed è più fedele, ma
-                  non estrae figure/tabelle.
-                </span>
-                <div className="grid grid-cols-2 gap-2">
-                  <EngineButton
-                    active={form.pdfTextMode !== 'ocr'}
-                    onClick={() => setForm((f) => ({ ...f, pdfTextMode: 'auto' }))}
-                    title="Automatico"
-                    sub="usa il testo se c’è, altrimenti OCR"
-                  />
-                  <EngineButton
-                    active={form.pdfTextMode === 'ocr'}
-                    onClick={() => setForm((f) => ({ ...f, pdfTextMode: 'ocr' }))}
-                    title="Sempre OCR"
-                    sub="rasterizza e usa Nemotron-Parse"
-                  />
-                </div>
-              </div>
-              {/* Risoluzione di rasterizzazione per l'OCR (solo PDF). */}
-              <div>
-                <span className="mb-1.5 block text-sm font-medium text-ink">
-                  Risoluzione OCR (PDF)
-                </span>
-                <span className="mb-2 block text-xs text-faint">
-                  Più alta = OCR più accurato sulle scansioni difficili, ma
-                  pagine più pesanti e lente. Non incide sulle immagini caricate
-                  direttamente.
-                </span>
-                <select
-                  value={String(form.ocrLongSide ?? DEFAULTS.ocrLongSide)}
-                  onChange={(e) => setForm((f) => ({ ...f, ocrLongSide: parseInt(e.target.value, 10) }))}
-                  className="w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink transition-colors focus:border-primary focus:outline-none"
-                >
-                  <option value="2048">Standard · ~250 DPI (2048 px)</option>
-                  <option value="2600">Alta · ~320 DPI (2600 px)</option>
-                  <option value="3200">Molto alta · ~390 DPI (3200 px)</option>
-                  <option value="4000">Massima · ~490 DPI (4000 px)</option>
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field
-                  label="Max pagine PDF"
-                  hint="Per caricamento (1–2000)."
-                  type="number"
-                  min={1}
-                  max={2000}
-                  value={form.maxPages}
-                  onChange={update('maxPages')}
-                  placeholder={String(DEFAULTS.maxPages)}
-                  mono
-                />
-                <Field
-                  label="Dimensione chunk"
-                  hint="Caratteri per richiesta. In traduzione il valore è usato per intero (TranslateGemma: massimo 5000)."
-                  type="number"
-                  min={1000}
-                  max={30000}
-                  value={form.chunkSize}
-                  onChange={update('chunkSize')}
-                  placeholder={String(DEFAULTS.chunkSize)}
-                  mono
-                />
-              </div>
-              <Field
-                label="Contesto della traduzione"
-                hint={
-                  'Frasi passate prima e dopo ogni passaggio, come contesto non ' +
-                  'traducibile: danno al modello gli antecedenti dei pronomi e la ' +
-                  'resa già scelta per i termini ricorrenti (0–6).'
-                }
-                type="number"
-                min={0}
-                max={6}
-                value={form.translateOverlap}
-                onChange={update('translateOverlap')}
-                placeholder={String(DEFAULTS.translateOverlap)}
-                mono
-              />
-            </div>
-          </details>
         </div>
 
-        <div className="mt-7 flex items-center justify-end gap-3">
+        <footer className="flex items-center justify-end gap-3 border-t border-border px-5 py-3 sm:px-6">
           <button
             type="button"
             onClick={onClose}
@@ -650,11 +590,38 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
             type="submit"
             className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-ink hover:bg-primary-strong transition-colors"
           >
-            Salva configurazione
+            Salva
           </button>
-        </div>
+        </footer>
       </form>
     </div>
+  );
+}
+
+const TABS = [
+  { id: 'document', label: 'Documento' },
+  { id: 'reading', label: 'Lettura' },
+  { id: 'correction', label: 'Correzione' },
+  { id: 'local', label: 'Sul computer' },
+  { id: 'keys', label: 'Chiavi' },
+  { id: 'advanced', label: 'Avanzate' },
+];
+
+/** Interruttore con titolo e spiegazione: una riga per scelta sì/no. */
+function Toggle({ checked, onChange, title, text }) {
+  return (
+    <label className="flex cursor-pointer items-start gap-3">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 size-4 shrink-0 accent-primary"
+      />
+      <span>
+        <span className="block text-sm font-medium text-ink">{title}</span>
+        <span className="block max-w-prose text-xs leading-relaxed text-muted">{text}</span>
+      </span>
+    </label>
   );
 }
 
@@ -711,7 +678,7 @@ function PhaseRow({ phase, form, providers, onEngine, onModel }) {
           {engine === 'apple'
             ? 'Usa il modello di Apple Intelligence integrato in macOS 27 (comando «fm»), sul chip del Mac. Solo nell’app desktop per Mac.'
             : engine === 'paddle'
-            ? 'Modello PaddleOCR-VL: scegli online o locale nella sezione «PaddleOCR», più sotto.'
+            ? 'Modello PaddleOCR-VL: scegli come usarlo qui sotto.'
             : 'Il modello lo sceglie il sidecar: qui basta il suo indirizzo, più sotto.'}
         </p>
       )}
