@@ -124,7 +124,7 @@ function OllamaFields({ form, set, defaults }) {
         </div>
       )}
       <span className="block text-xs text-faint">
-        Serve Ollama in esecuzione. L’indirizzo è quello della sezione «Pipeline locale».
+        Serve Ollama in esecuzione. L’indirizzo di Ollama si cambia nella scheda «Sul computer».
       </span>
     </>
   );
