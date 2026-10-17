@@ -132,7 +132,7 @@ export async function ollamaRecognize({ endpoint, model, imageDataUrl, task = 't
   } catch (e) {
     if (e?.name === 'AbortError') throw e;
     const err = new Error(
-      `Ollama non è raggiungibile su ${target}. Avvialo (o installalo da Impostazioni → Pipeline locale). Dettaglio: ${e.message}`,
+      `Ollama non è raggiungibile su ${target}. Avvialo (o installalo da Impostazioni → Sul computer). Dettaglio: ${e.message}`,
     );
     err.local = true;
     throw err;
@@ -140,10 +140,16 @@ export async function ollamaRecognize({ endpoint, model, imageDataUrl, task = 't
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
     const missing = res.status === 404 || /not found|pull/i.test(detail);
+    // Il modello c'è ma Ollama non gli sa passare immagini (manca la parte
+    // «visiva», mmproj): succede con PaddleOCR-VL su versioni di Ollama che
+    // non lo supportano ancora del tutto.
+    const noVision = /image input is not supported|mmproj/i.test(detail);
     const err = new Error(
       missing
-        ? `Il modello «${name}» non è scaricato in Ollama: installalo da Impostazioni → PaddleOCR.`
-        : `Ollama ha avuto un problema con la pagina: ${detail.slice(0, 300)}`,
+        ? `Il modello «${name}» non è scaricato in Ollama: installalo da Impostazioni → Lettura.`
+        : noVision
+          ? `Ollama non riesce a dare immagini al modello «${name}». Aggiorna Ollama all’ultima versione e riscarica il modello; se non basta, in Impostazioni → Lettura usa un modello di visione generico (es. qwen3.5:9b o gemma4:e4b) oppure PaddleOCR online.`
+          : `Ollama ha avuto un problema con la pagina: ${detail.slice(0, 300)}`,
     );
     err.local = true;
     throw err;
