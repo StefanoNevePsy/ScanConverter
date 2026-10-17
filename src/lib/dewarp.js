@@ -244,7 +244,9 @@ export function estimateWarp(gray, w, h) {
       for (let k = ref + dir; k >= 0 && k < STRIPS; k += dir) {
         const prev = k - dir;
         const { shift, score } = bestShift(profiles[prev], profiles[k], y0, y1, maxStep);
-        const usable = score > 0.35 && stripInk[k] > 0.004;
+        // Solo strisce con righe di testo nette: un'illustrazione o un margine
+        // vuoto danno una correlazione bassa e falserebbero la curva.
+        const usable = score > 0.55 && stripInk[k] > 0.004;
         if (usable) acc += shift;
         conf = usable ? Math.min(conf, score) : conf * 0.5;
         cumulative[k] = acc;
@@ -262,16 +264,21 @@ export function estimateWarp(gray, w, h) {
       ws.push(weight[k]);
     }
     if (xs.length < 6) continue;
-    const coef = polyfit(xs, ys, ws, 3);
+    // La curva vale solo dove è stata misurata: oltre (es. accanto a una
+    // figura) si tiene l'ultimo valore invece di estrapolare un polinomio
+    // che lì schizzerebbe e deformerebbe la pagina.
+    const xmin = Math.min(...xs);
+    const xmax = Math.max(...xs);
+    const coef = polyfit(xs, ys, ws, xmax - xmin > 0.5 ? 3 : 2);
     if (!coef) continue;
     // Spostamento medio nullo: la pagina non «scende», si raddrizza.
     let mean = 0;
-    for (let i = 0; i <= 20; i++) mean += evalPoly(coef, left / w + ((right - left) / w) * (i / 20));
+    for (let i = 0; i <= 20; i++) mean += evalPoly(coef, xmin + (xmax - xmin) * (i / 20));
     coef[0] -= mean / 21;
     for (let i = 0; i <= 20; i++) {
-      amplitude = Math.max(amplitude, Math.abs(evalPoly(coef, left / w + ((right - left) / w) * (i / 20))));
+      amplitude = Math.max(amplitude, Math.abs(evalPoly(coef, xmin + (xmax - xmin) * (i / 20))));
     }
-    bands.push({ y: (y0 + y1) / 2 / h, coef });
+    bands.push({ y: (y0 + y1) / 2 / h, coef, xmin, xmax });
   }
   if (bands.length < 2) return null;
   return { bands, amplitude, confidence: confN ? confSum / confN : 0, left: left / w, right: right / w };
@@ -280,16 +287,19 @@ export function estimateWarp(gray, w, h) {
 /** Spostamento verticale (in frazione di altezza × h di analisi) nel punto (u,v) 0–1. */
 function displacementAt(warp, u, v) {
   const { bands } = warp;
-  const x = Math.min(warp.right, Math.max(warp.left, u));
-  if (v <= bands[0].y) return evalPoly(bands[0].coef, x);
+  const at = (band) => evalPoly(
+    band.coef,
+    Math.min(band.xmax ?? warp.right, Math.max(band.xmin ?? warp.left, u)),
+  );
+  if (v <= bands[0].y) return at(bands[0]);
   const last = bands[bands.length - 1];
-  if (v >= last.y) return evalPoly(last.coef, x);
+  if (v >= last.y) return at(last);
   for (let i = 0; i < bands.length - 1; i++) {
     const a = bands[i];
     const b = bands[i + 1];
     if (v >= a.y && v <= b.y) {
       const t = (v - a.y) / (b.y - a.y);
-      return evalPoly(a.coef, x) * (1 - t) + evalPoly(b.coef, x) * t;
+      return at(a) * (1 - t) + at(b) * t;
     }
   }
   return 0;
