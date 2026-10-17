@@ -7,7 +7,8 @@ name: Build app desktop (Mac + Windows)
 #
 # Avvio: manuale dalla tab "Actions" → "Run workflow", oppure creando un tag
 # di versione (es. git tag v0.1.0 && git push --tags). Gli installabili
-# compaiono come "Artifacts" del run (Mac: .dmg/.zip · Windows: .exe). Ogni
+# compaiono fra le Releases del repository (build-N) e come "Artifacts"
+# del run (Mac: .dmg/.zip · Windows: .exe). Ogni
 # runner scarica lo stesso Typst 0.15.1 per la propria piattaforma/architettura.
 
 on:
@@ -15,6 +16,9 @@ on:
   push:
     tags:
       - "v*"
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -61,12 +65,27 @@ jobs:
       - name: Build webapp (Vite)
         run: npm run build
 
+      # Firma e notarizzazione Apple: si attivano da sole quando nei Secrets
+      # del repository ci sono MAC_CERT_P12_BASE64, MAC_CERT_PASSWORD,
+      # APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD e APPLE_TEAM_ID (serve l'Apple
+      # Developer Program). Senza, l'app esce non firmata come prima.
       - name: Build desktop (electron-builder)
-        run: npx electron-builder --publish never
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ] && [ -n "$CSC_LINK" ]; then
+            echo "Firma con Developer ID e notarizzazione Apple."
+            npx electron-builder --publish never -c.mac.notarize=true
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            unset CSC_LINK CSC_KEY_PASSWORD
+            npx electron-builder --publish never
+          fi
         env:
-          # App non firmata (nessun certificato): niente firma/notarizzazione.
-          # All'utente basta autorizzarla una volta (vedi README).
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload installabili
@@ -79,15 +98,16 @@ jobs:
             release/*.zip
             release/*.exe
 
-      - name: Mirror temporaneo (Litterbox, 72h)
-        continue-on-error: true
-        shell: bash
-        run: |
-          echo "## Download veloce (valido 72 ore)" >> "$GITHUB_STEP_SUMMARY"
-          for f in release/*.dmg release/*.exe; do
-            [ -f "$f" ] || continue
-            url=$(curl -sS --retry 3 -F reqtype=fileupload -F time=72h \
-              -F "fileToUpload=@$f" https://litterbox.catbox.moe/resources/internals/api.php)
-            echo "LINK $(basename "$f"): $url"
-            echo "- [$(basename "$f")]($url)" >> "$GITHUB_STEP_SUMMARY"
-          done
+      # Download diretto e veloce: una pre-release del repository per ogni
+      # build, con i file già pronti (niente zip degli Artifacts, niente
+      # servizi esterni che rispondono con errore 500).
+      - name: Pubblica la build fra le Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }} (${{ github.ref_name }})
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: |
+            release/*.dmg
+            release/*.exe
