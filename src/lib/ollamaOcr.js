@@ -15,7 +15,7 @@
 
 import { DEFAULT_LOCAL_ENDPOINT } from './local.js';
 
-export const DEFAULT_OLLAMA_OCR_MODEL = 'MedAIBase/PaddleOCR-VL:0.9b';
+export const DEFAULT_OLLAMA_OCR_MODEL = 'hf.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF';
 
 const isPaddle = (model) => /paddleocr/i.test(String(model || ''));
 

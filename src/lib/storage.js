@@ -99,7 +99,7 @@ export const DEFAULTS = {
   paddleUrl: '',
   paddleLocalEndpoint: 'http://localhost:8001/layout-parsing',
   // Modello di visione su Ollama per la modalità «ollama».
-  paddleOllamaModel: 'MedAIBase/PaddleOCR-VL:0.9b',
+  paddleOllamaModel: 'hf.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF',
   // Analisi dell'impaginazione (PP-DocLayoutV3 nell'app) prima della lettura.
   paddleLayout: true,
   // Traduzione (fase separata, mai in sovrascrittura dell'originale).
@@ -273,7 +273,11 @@ export function loadSettings() {
     paddleMode: ['local', 'ollama'].includes(read(KEYS.paddleMode, DEFAULTS.paddleMode))
       ? read(KEYS.paddleMode, DEFAULTS.paddleMode)
       : 'online',
-    paddleOllamaModel: read(KEYS.paddleOllamaModel, DEFAULTS.paddleOllamaModel),
+    // La vecchia versione comunitaria (MedAIBase) non passa le immagini al
+    // modello su Ollama: chi l'aveva come predefinita passa a quella ufficiale.
+    paddleOllamaModel: /^MedAIBase\/PaddleOCR-VL/i.test(read(KEYS.paddleOllamaModel, ''))
+      ? DEFAULTS.paddleOllamaModel
+      : read(KEYS.paddleOllamaModel, DEFAULTS.paddleOllamaModel),
     paddleLayout: readBool(KEYS.paddleLayout, DEFAULTS.paddleLayout),
     paddleUrl: read(KEYS.paddleUrl, DEFAULTS.paddleUrl),
     paddleToken: read(KEYS.paddleToken),
