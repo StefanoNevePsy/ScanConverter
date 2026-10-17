@@ -693,6 +693,12 @@ function Workspace({
     setTimeout(() => setAutofixMsg(null), 18000);
   }, [pipe]);
 
+  const handleScanProofread = useCallback(async () => {
+    const res = await pipe.proofreadScan();
+    setAutofixMsg(res?.message || null);
+    setTimeout(() => setAutofixMsg(null), 20000);
+  }, [pipe]);
+
   const handleTranslate = useCallback(async () => {
     const res = await pipe.translateSession();
     // Da qui in poi il workspace mostra la traduzione: l'intestazione e il
@@ -811,6 +817,17 @@ function Workspace({
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {isScan && (
+              <button
+                onClick={handleScanProofread}
+                disabled={pipe.proofreadBusy || pipe.phase === 'running'}
+                className="button-secondary"
+                title={`Rilegge refusi e accenti con ${pipe.proofModelLabel || 'il modello di rilettura'} e rifà il PDF, senza ripetere l’OCR`}
+              >
+                {pipe.proofreadBusy ? <IconSpinner width={15} height={15} /> : <IconRefresh width={15} height={15} />}
+                {pipe.proofreadBusy ? `Rilettura ${pipe.proofreadDetail || '…'}` : 'Rileggi il testo'}
+              </button>
+            )}
             <button
               onClick={onExportProject}
               disabled={!!projectBusy}
@@ -835,6 +852,12 @@ function Workspace({
           <PipelineStepper status={pipe.status} workflow={workflow} detail={pipe.detail} />
         </div>
       </section>
+
+      {isScan && autofixMsg && (
+        <div role="status" className="anim-settle rounded-lg border border-primary/40 bg-primary-soft px-4 py-2.5 text-sm text-ink">
+          {autofixMsg}
+        </div>
+      )}
 
       {projectNotice && <ProjectNotice notice={projectNotice} />}
 

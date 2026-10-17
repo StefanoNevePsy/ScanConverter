@@ -2475,6 +2475,63 @@ export function usePipeline(settings) {
    * rete di sicurezza sulla compilazione come per l'ortografia.
    * @returns {Promise<{ok:boolean, message:string}>}
    */
+  /**
+   * Scansione ricercabile: rifà solo la rilettura sul testo già letto e
+   * ricompone il PDF. L'OCR non si ripete; le pagine sono già in memoria.
+   */
+  const proofreadScan = useCallback(async () => {
+    const session = sessionRef.current;
+    if (!session?.canonicalText) return { ok: false, message: 'Nessun testo da rileggere.' };
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const engine = phaseEngineLabel(settings, 'proof');
+    setProofreadBusy(true);
+    setProofNotice('');
+    setProofreadDetail(`Avvio ${engine}…`);
+    try {
+      let speller = null;
+      try {
+        speller = await loadSpeller();
+      } catch {
+        /* senza dizionario la rilettura funziona lo stesso */
+      }
+      const proof = await proofreadBody({
+        settings,
+        code: session.canonicalText,
+        speller,
+        signal: controller.signal,
+        onProgress: (done, total) => setProofreadDetail(`${done}/${total} paragrafi`),
+      });
+      if (proof.failed && !proof.changed) {
+        return {
+          ok: false,
+          message: `Rilettura NON riuscita con ${engine}: ${proof.failed} paragrafi non controllati. ${(proof.error || '').slice(0, 200)}`,
+        };
+      }
+      setProofreadDetail('Ricompongo il PDF…');
+      await buildSearchableScan({
+        id: session.id,
+        fileName: session.fileName,
+        extracted: session.rawText,
+        canonicalText: proof.code,
+        corrections: [...(session.corrections || []), ...proof.changes],
+        signal: controller.signal,
+      });
+      return {
+        ok: !proof.failed,
+        message: `Rilettura con ${engine}: ${proof.changed} correzioni applicate` +
+          (proof.failed ? ` · ${proof.failed} paragrafi NON controllati (${(proof.error || '').slice(0, 120)})` : '') +
+          '. PDF aggiornato.',
+      };
+    } catch (e) {
+      return { ok: false, message: e?.name === 'AbortError' ? 'Rilettura interrotta.' : e.message };
+    } finally {
+      setProofreadBusy(false);
+      setProofreadDetail('');
+      setPhase((p) => (p === 'running' ? 'done' : p));
+    }
+  }, [settings, buildSearchableScan]);
+
   const proofreadAI = useCallback(async () => {
     const before = typstCode;
     if (!before.trim()) return { ok: false, message: 'Nessun codice da rileggere.' };
@@ -3749,6 +3806,7 @@ export function usePipeline(settings) {
     rawText,
     canonicalText: sessionRef.current?.canonicalText || rawText,
     strictWorkflow: sessionRef.current?.workflow === 'strict',
+    proofreadScan,
     // Workflow del documento aperto (quello salvato con la sessione vince
     // sulle impostazioni, che possono essere cambiate dopo).
     workflow: sessionRef.current?.workflow || settings?.formatWorkflow || 'legacy',
