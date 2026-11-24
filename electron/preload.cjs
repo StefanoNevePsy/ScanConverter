@@ -16,6 +16,13 @@ contextBridge.exposeInMainWorld('scanConverterDesktop', Object.freeze({
     ipcRenderer.on('desktop:paddle:log', listener);
     return () => ipcRenderer.removeListener('desktop:paddle:log', listener);
   },
+  updateCheck: () => ipcRenderer.invoke('desktop:update:check'),
+  updateInstall: () => ipcRenderer.invoke('desktop:update:install'),
+  onUpdateProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('desktop:update:progress', listener);
+    return () => ipcRenderer.removeListener('desktop:update:progress', listener);
+  },
   prepareTypstFigureSet: (request) => ipcRenderer.invoke('desktop:typst:prepare-figures', request),
   compileTypst: (request) => ipcRenderer.invoke('desktop:typst:compile', request),
   savePdf: (request) => ipcRenderer.invoke('desktop:pdf:save', request),

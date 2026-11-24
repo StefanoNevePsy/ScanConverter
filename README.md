@@ -249,6 +249,15 @@ npm run electron   # avvia l'app desktop sulla build
 # pacchetto per il tuo OS: npm run build:desktop (scarica Typst automaticamente)
 ```
 
+**Aggiornamenti automatici.** Ogni build del workflow diventa una Release
+(`v0.1.N`) e l'app desktop la trova da sola: all'avvio (e ogni 6 ore) controlla
+l'ultima Release e, se c'è una versione più recente, mostra in alto il pulsante
+«Aggiornamento 0.1.N». Un clic scarica il file giusto per il tuo sistema e
+riavvia l'app aggiornata; si può anche controllare a mano da
+**Impostazioni → Avanzate → Aggiornamenti**. Essendo l'app non firmata, su
+macOS il sistema può chiedere una volta di confermare l'apertura (click destro
+→ *Apri*) dopo il primo aggiornamento.
+
 Le chiavi API e le sessioni restano locali all'app, come sul web.
 
 ## Progetti portabili tra computer

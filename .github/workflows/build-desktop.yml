@@ -7,7 +7,7 @@ name: Build app desktop (Mac + Windows)
 #
 # Avvio: manuale dalla tab "Actions" → "Run workflow", oppure creando un tag
 # di versione (es. git tag v0.1.0 && git push --tags). Gli installabili
-# compaiono fra le Releases del repository (build-N) e come "Artifacts"
+# compaiono fra le Releases del repository (v0.1.N) e come "Artifacts"
 # del run (Mac: .dmg/.zip · Windows: .exe). Ogni
 # runner scarica lo stesso Typst 0.15.1 per la propria piattaforma/architettura.
 
@@ -65,6 +65,12 @@ jobs:
       - name: Build webapp (Vite)
         run: npm run build
 
+      # La versione dell'app segue il numero del run (0.1.N): l'aggiornamento
+      # in-app confronta questo numero con quello dell'ultima Release.
+      - name: Imposta la versione dell'app
+        shell: bash
+        run: npm version "0.1.${{ github.run_number }}" --no-git-tag-version --allow-same-version
+
       # Firma e notarizzazione Apple: si attivano da sole quando nei Secrets
       # del repository ci sono MAC_CERT_P12_BASE64, MAC_CERT_PASSWORD,
       # APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD e APPLE_TEAM_ID (serve l'Apple
@@ -98,16 +104,18 @@ jobs:
             release/*.zip
             release/*.exe
 
-      # Download diretto e veloce: una pre-release del repository per ogni
-      # build, con i file già pronti (niente zip degli Artifacts, niente
-      # servizi esterni che rispondono con errore 500).
+      # Ogni build è una Release vera (non pre-release), marcata "latest":
+      # l'app la trova da sola e si aggiorna. I due job (Mac e Windows)
+      # caricano i file sulla stessa Release.
       - name: Pubblica la build fra le Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Build ${{ github.run_number }} (${{ github.ref_name }})
+          tag_name: v0.1.${{ github.run_number }}
+          name: ScanConverter 0.1.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          prerelease: true
+          prerelease: false
+          make_latest: true
           files: |
             release/*.dmg
+            release/*.zip
             release/*.exe

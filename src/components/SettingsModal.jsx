@@ -6,6 +6,8 @@ import { listNvidiaModels, chatCandidates, probeNvidiaModel } from '../lib/nvidi
 import { listLocalModels } from '../lib/local.js';
 import LocalSetupPanel from './LocalSetupPanel.jsx';
 import PaddleSetupPanel from './PaddleSetupPanel.jsx';
+import UpdateDialog from './UpdateDialog.jsx';
+import { useAppUpdate } from '../hooks/useAppUpdate.js';
 import { IconX, IconEye, IconEyeOff, IconSpinner, IconRefresh } from './Icons.jsx';
 
 /**
@@ -17,6 +19,8 @@ import { IconX, IconEye, IconEyeOff, IconSpinner, IconRefresh } from './Icons.js
  */
 export default function SettingsModal({ open, initial, onClose, onSave }) {
   const [form, setForm] = useState(initial);
+  const appUpdate = useAppUpdate();
+  const [updateOpen, setUpdateOpen] = useState(false);
   const [showNvidia, setShowNvidia] = useState(false);
   const [showGoogle, setShowGoogle] = useState(false);
   const dialogRef = useRef(null);
@@ -492,6 +496,32 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
 
             {tab === 'advanced' && (
               <div className="space-y-8">
+                {appUpdate.supported && (
+                  <Section title="Aggiornamenti">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="text-sm text-muted">
+                        Versione installata: <span className="font-medium text-ink">{appUpdate.info?.current || '—'}</span>
+                        {appUpdate.checked && !appUpdate.info?.available && !appUpdate.info?.dev && !appUpdate.error && (
+                          <span className="block text-xs">Sei aggiornato.</span>
+                        )}
+                        {appUpdate.info?.dev && <span className="block text-xs">Versione di sviluppo: nessun controllo.</span>}
+                        {appUpdate.error && !appUpdate.info?.available && <span className="block text-xs">{appUpdate.error}</span>}
+                      </div>
+                      {appUpdate.info?.available ? (
+                        <button type="button" className="button-primary" onClick={() => setUpdateOpen(true)}>
+                          Aggiorna a {appUpdate.info.latest}
+                        </button>
+                      ) : (
+                        <button type="button" className="button-secondary" onClick={appUpdate.check} disabled={appUpdate.phase === 'checking'}>
+                          {appUpdate.phase === 'checking' ? 'Controllo…' : 'Controlla aggiornamenti'}
+                        </button>
+                      )}
+                    </div>
+                    {updateOpen && appUpdate.info?.available && (
+                      <UpdateDialog update={appUpdate} onClose={() => setUpdateOpen(false)} />
+                    )}
+                  </Section>
+                )}
                 <Section title="PDF">
                   <div>
                     <span className="mb-1.5 block text-sm font-medium text-ink">PDF che contengono già testo</span>

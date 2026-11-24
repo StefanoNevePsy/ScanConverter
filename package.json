@@ -107,7 +107,8 @@
         "dmg",
         "zip"
       ],
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "artifactName": "ScanConverter-${version}-${arch}-mac.${ext}"
     },
     "win": {
       "target": [
@@ -120,6 +121,15 @@
         "AppImage"
       ],
       "category": "Office"
+    },
+    "dmg": {
+      "artifactName": "ScanConverter-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "artifactName": "ScanConverter-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "ScanConverter-Portable-${version}.${ext}"
     }
   }
 }

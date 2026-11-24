@@ -497,7 +497,201 @@ function appleRespond(prompt, model) {
   });
 }
 
+// --- Aggiornamento in-app ---------------------------------------------------
+// Custom, senza electron-updater: l'app Mac non è firmata e Squirrel.Mac
+// rifiuterebbe l'aggiornamento. Si legge l'ultima Release di GitHub, si scarica
+// l'asset giusto e lo si installa a mano.
+const UPDATE_REPO = 'StefanoNevePsy/ScanConverter';
+
+function parseVersion(text) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(text || '').trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+function compareVersions(a, b) {
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+function pickUpdateAsset(assets) {
+  const list = Array.isArray(assets) ? assets : [];
+  let found = null;
+  if (process.platform === 'win32') {
+    found = list.find((a) => /^ScanConverter-Setup-.*\.exe$/i.test(a.name))
+      || list.find((a) => /setup.*\.exe$/i.test(a.name));
+  } else if (process.platform === 'darwin') {
+    const zips = list.filter((a) => /\.zip$/i.test(a.name) && /mac/i.test(a.name));
+    found = zips.find((a) => a.name.includes(`-${process.arch}-`))
+      || zips[0]
+      || list.find((a) => /\.zip$/i.test(a.name));
+  }
+  return found
+    ? { name: found.name, url: found.browser_download_url, size: Number(found.size) || 0 }
+    : null;
+}
+
+async function checkForUpdate() {
+  const current = app.getVersion();
+  if (!app.isPackaged) return { available: false, dev: true, current };
+  try {
+    const response = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+      headers: { 'User-Agent': 'ScanConverter-Updater', Accept: 'application/vnd.github+json' },
+    });
+    if (!response.ok) return { available: false, current, error: `GitHub ha risposto ${response.status}.` };
+    const release = await response.json();
+    const latest = parseVersion(release.tag_name);
+    const here = parseVersion(current);
+    if (!latest || !here) return { available: false, current, error: 'Versione non riconosciuta.' };
+    const latestText = latest.join('.');
+    if (compareVersions(latest, here) <= 0) return { available: false, current, latest: latestText };
+    const asset = pickUpdateAsset(release.assets);
+    if (!asset) return { available: false, current, latest: latestText, error: 'Nessun file adatto a questo computer nella release.' };
+    return {
+      available: true,
+      current,
+      latest: latestText,
+      notes: String(release.body || '').slice(0, 1500),
+      asset,
+    };
+  } catch (error) {
+    return { available: false, current, error: 'Impossibile controllare gli aggiornamenti: sei online?' };
+  }
+}
+
+async function downloadUpdate(asset, onProgress) {
+  const dir = path.join(app.getPath('temp'), 'scanconverter-update');
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, path.basename(asset.name));
+  const response = await fetch(asset.url, {
+    redirect: 'follow',
+    headers: { 'User-Agent': 'ScanConverter-Updater' },
+  });
+  if (!response.ok || !response.body) throw new Error(`Download non riuscito (${response.status}).`);
+  const total = Number(response.headers.get('content-length')) || asset.size || 0;
+  const out = fs.createWriteStream(file);
+  let received = 0;
+  let lastSent = 0;
+  try {
+    for await (const chunk of response.body) {
+      if (!out.write(chunk)) await new Promise((resolve) => out.once('drain', resolve));
+      received += chunk.length;
+      const now = Date.now();
+      if (now - lastSent > 150) {
+        lastSent = now;
+        onProgress({ pct: total ? Math.min(100, (received / total) * 100) : 0, received, total });
+      }
+    }
+    await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+  } catch (error) {
+    out.destroy();
+    throw error;
+  }
+  onProgress({ pct: 100, received, total: total || received });
+  return { dir, file };
+}
+
+function execFileAsync(cmd, args) {
+  const { execFile } = require('child_process');
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, (error, stdout, stderr) => (error ? reject(new Error(String(stderr || error.message))) : resolve(stdout)));
+  });
+}
+
+function shQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+async function installUpdateWindows(file) {
+  const { spawn } = require('child_process');
+  const child = spawn(file, ['/S', '--force-run'], { detached: true, stdio: 'ignore' });
+  child.unref();
+  setTimeout(() => app.quit(), 300);
+}
+
+async function installUpdateMac(dir, zipFile) {
+  const { spawn } = require('child_process');
+  const extracted = path.join(dir, 'app');
+  fs.mkdirSync(extracted, { recursive: true });
+  await execFileAsync('/usr/bin/ditto', ['-x', '-k', zipFile, extracted]);
+  const newApp = fs.readdirSync(extracted).find((name) => name.endsWith('.app'));
+  if (!newApp) throw new Error('Nel pacchetto scaricato non c’è nessuna app.');
+  const newAppPath = path.join(extracted, newApp);
+
+  // Il bundle in esecuzione: il percorso di execPath fino al primo ".app".
+  const marker = process.execPath.indexOf('.app/');
+  let target = marker >= 0 ? process.execPath.slice(0, marker + 4) : '/Applications/ScanConverter.app';
+  try {
+    fs.accessSync(path.dirname(target), fs.constants.W_OK);
+  } catch {
+    target = '/Applications/ScanConverter.app';
+  }
+
+  const script = path.join(dir, 'install.sh');
+  fs.writeFileSync(script, [
+    '#!/bin/sh',
+    `PID=${process.pid}`,
+    `NEW=${shQuote(newAppPath)}`,
+    `TARGET=${shQuote(target)}`,
+    'while kill -0 "$PID" 2>/dev/null; do sleep 0.5; done',
+    // Prima si copia accanto, poi si scambia: se la copia fallisce la
+    // versione installata resta intatta.
+    'if ditto "$NEW" "$TARGET.new" && rm -rf "$TARGET" && mv "$TARGET.new" "$TARGET"; then',
+    '  xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null',
+    '  open "$TARGET"',
+    'else',
+    '  open -R "$NEW"',
+    'fi',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  const child = spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' });
+  child.unref();
+  setTimeout(() => app.quit(), 300);
+}
+
+let updateInstalling = false;
+
+async function installUpdate(event) {
+  if (updateInstalling) return { ok: false, error: 'Aggiornamento già in corso.' };
+  updateInstalling = true;
+  try {
+    const info = await checkForUpdate();
+    if (info.dev) return { ok: false, error: 'Gli aggiornamenti funzionano solo nell’app installata.' };
+    if (!info.available || !info.asset) return { ok: false, error: info.error || 'Nessun aggiornamento disponibile.' };
+    const send = (payload) => {
+      if (!event.sender.isDestroyed()) event.sender.send('desktop:update:progress', payload);
+    };
+    let downloaded;
+    try {
+      downloaded = await downloadUpdate(info.asset, send);
+    } catch (error) {
+      return { ok: false, error: `Download non riuscito: ${error.message}` };
+    }
+    try {
+      if (process.platform === 'win32') await installUpdateWindows(downloaded.file);
+      else if (process.platform === 'darwin') await installUpdateMac(downloaded.dir, downloaded.file);
+      else return { ok: false, error: 'Aggiornamento automatico non disponibile su questo sistema.' };
+    } catch (error) {
+      return { ok: false, error: `Installazione non riuscita: ${error.message}` };
+    }
+    return { ok: true };
+  } finally {
+    updateInstalling = false;
+  }
+}
+
 function registerDesktopIpc() {
+  ipcMain.handle('desktop:update:check', async (event) => {
+    assertTrustedRenderer(event);
+    return checkForUpdate();
+  });
+  ipcMain.handle('desktop:update:install', async (event) => {
+    assertTrustedRenderer(event);
+    return installUpdate(event);
+  });
+
   ipcMain.handle('desktop:apple:respond', async (event, request) => {
     assertTrustedRenderer(event);
     return appleRespond(request?.prompt, request?.model);

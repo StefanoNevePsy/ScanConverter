@@ -9,6 +9,8 @@ import { cursorSearchText } from './lib/pdfPreview.js';
 import { usePipeline } from './hooks/usePipeline.js';
 import { initNativeShell, onBackButton, setNativeTheme } from './lib/native.js';
 import { getSharedFile, onSharedFile } from './lib/incoming.js';
+import UpdateDialog from './components/UpdateDialog.jsx';
+import { useAppUpdate } from './hooks/useAppUpdate.js';
 import SettingsModal from './components/SettingsModal.jsx';
 import Dropzone from './components/Dropzone.jsx';
 import PipelineStepper from './components/PipelineStepper.jsx';
@@ -343,6 +345,10 @@ export default function App() {
 /* ---------------------------------------------------------------- Top bar */
 
 function TopBar({ keysReady, onOpenSettings, onDashboard, status, running, theme, onToggleTheme }) {
+  // Solo nell'app desktop: controlla all'avvio e ogni 6 ore.
+  const update = useAppUpdate({ auto: true });
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const updateReady = update.supported && update.info?.available;
   return (
     <header
       className="safe-top scan-topbar sticky top-0"
@@ -378,6 +384,17 @@ function TopBar({ keysReady, onOpenSettings, onDashboard, status, running, theme
               Elaborazione in corso
             </span>
           )}
+          {updateReady && (
+            <button
+              type="button"
+              onClick={() => setUpdateOpen(true)}
+              className="topbar-settings"
+              title="È disponibile una nuova versione"
+            >
+              <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
+              <span className="whitespace-nowrap">Aggiornamento {update.info.latest}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={onToggleTheme}
@@ -401,6 +418,9 @@ function TopBar({ keysReady, onOpenSettings, onDashboard, status, running, theme
           </button>
         </div>
       </div>
+      {updateReady && updateOpen && (
+        <UpdateDialog update={update} onClose={() => setUpdateOpen(false)} />
+      )}
     </header>
   );
 }
