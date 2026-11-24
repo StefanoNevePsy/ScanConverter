@@ -879,6 +879,25 @@ function Workspace({
         </div>
       )}
 
+      {/* Lettura finita ma fase 2 mai partita (app chiusa, documento riaperto,
+          interruzione senza errore): senza questo avviso la pagina resta ferma
+          senza dire cosa fare. «Rielabora» riparte dal testo già letto. */}
+      {pipe.status.ocr === 'done' && pipe.status.format === 'pending' &&
+        pipe.phase !== 'running' && !pipe.figureReview && !pipe.pageReview && !pipe.error && (
+        <div role="status" className="anim-settle flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary-soft px-4 py-3">
+          <p className="min-w-0 text-sm text-ink">
+            La lettura delle pagine è completa, ma la fase successiva non è partita.
+            Il testo letto è salvato: si riprende da lì, senza rifare l’OCR.
+          </p>
+          {/* Un oggetto senza contenuto fa ripartire la pipeline dal testo già
+              letto anche quando il file originale è ancora in memoria. */}
+          <button onClick={() => pipe.runPipeline({ name: file.name })} className="button-primary">
+            <IconRefresh width={15} height={15} />
+            Continua
+          </button>
+        </div>
+      )}
+
       {projectNotice && <ProjectNotice notice={projectNotice} />}
 
       {pipe.error && (
