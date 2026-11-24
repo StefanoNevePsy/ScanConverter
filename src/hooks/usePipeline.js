@@ -1766,7 +1766,13 @@ export function usePipeline(settings) {
 
       // Sessione ancora in fase OCR (estrazione incompleta): riprendi le
       // pagine mancanti dalla cache, senza rifare quelle già estratte.
-      if (meta.ocr && meta.ocr.done < meta.ocr.total) {
+      // Anche a lettura COMPLETA ma senza testo salvato (app chiusa o
+      // documento riaperto durante la scelta delle immagini, prima che la
+      // fase 2 salvasse il testo): le pagine lette sono ancora nell'archivio
+      // e il testo si ricompone da lì, senza rifare l'OCR.
+      const ocrTextMissing = meta.ocr && meta.ocr.done >= meta.ocr.total &&
+        !meta.rawText?.trim() && !meta.editorCode?.trim();
+      if (meta.ocr && (meta.ocr.done < meta.ocr.total || ocrTextMissing)) {
         figuresRef.current = await getFigures(meta.id);
         sessionRef.current = {
           id: meta.id,
