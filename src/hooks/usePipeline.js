@@ -1160,6 +1160,12 @@ export function usePipeline(settings) {
       const sourceLanguage = sessionRef.current?.sourceLanguage || null;
       const targetLanguage = sessionRef.current?.targetLanguage || null;
       const translationFailures = sessionRef.current?.translationFailures || [];
+      // La fase 2 si dichiara SUBITO: dopo la scelta delle immagini la
+      // rilettura con un modello locale dura minuti, e senza questo la fase
+      // restava «in attesa» con l'avanzamento nascosto, come se fosse ferma.
+      setPhase('running');
+      setActiveStep('format');
+      setStatus((x) => ({ ...x, ocr: 'done', format: 'active' }));
       // «Scansione ricercabile» condivide con «Fedeltà massima» tutta la
       // pulizia e la rilettura del testo; cambia solo cosa se ne fa alla fine.
       if (settings.formatWorkflow === 'strict' || settings.formatWorkflow === 'scan') {
