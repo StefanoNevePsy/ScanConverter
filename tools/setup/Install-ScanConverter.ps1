@@ -28,8 +28,9 @@
     Cartella base. Esempio: D:\ScanConverter
 
 .PARAMETER Model
-    Modello linguistico da scaricare. Default qwen3:8b (~5 GB): multilingue,
-    la resa migliore sull'italiano fra quelli che entrano in 10 GB di VRAM.
+    Modello linguistico da scaricare. Default Inkling 2 Mini (~9 GB, Unsloth
+    UD-Q2_K_XL via Hugging Face): MoE con 3,4B parametri attivi, entra in 10 GB
+    di VRAM. Serve un Ollama recente.
 
 .PARAMETER TranslationModel
     Modello locale dedicato alla traduzione. Default translategemma:4b
@@ -55,7 +56,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $Root,
 
-    [string] $Model = 'qwen3:8b',
+    [string] $Model = 'hf.co/unsloth/Inkling-2-Mini-GGUF:UD-Q2_K_XL',
 
     [string] $TranslationModel = 'translategemma:4b',
 

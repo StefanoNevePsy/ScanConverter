@@ -151,7 +151,7 @@ export default function SettingsModal({ open, initial, onClose, onSave }) {
 
   // I modelli locali si elencano dallo stesso endpoint della chat: nessuna
   // chiave, e l'utente sceglie fra quelli che ha davvero scaricato invece di
-  // ricordarsi a memoria tag come «qwen3:8b».
+  // ricordarsi a memoria tag come «hf.co/unsloth/Inkling-2-Mini-GGUF:UD-Q2_K_XL».
   const fetchLocal = useCallback(async (endpoint) => {
     setLocal((l) => ({ ...l, loading: true, error: '' }));
     try {

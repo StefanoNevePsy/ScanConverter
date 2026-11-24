@@ -70,7 +70,7 @@ export const PHASE_DEFAULTS = {
   },
   typst: {
     engine: 'gemini',
-    models: { nvidia: 'meta/llama-3.3-70b-instruct', gemini: 'gemini-flash-latest', local: 'qwen3:8b' },
+    models: { nvidia: 'meta/llama-3.3-70b-instruct', gemini: 'gemini-flash-latest', local: 'hf.co/unsloth/Inkling-2-Mini-GGUF:UD-Q2_K_XL' },
   },
   translate: {
     engine: 'gemini',
@@ -78,11 +78,11 @@ export const PHASE_DEFAULTS = {
   },
   proof: {
     engine: 'nvidia',
-    models: { nvidia: 'deepseek-ai/deepseek-v3.2', gemini: 'gemini-flash-latest', local: 'qwen3:8b' },
+    models: { nvidia: 'deepseek-ai/deepseek-v3.2', gemini: 'gemini-flash-latest', local: 'hf.co/unsloth/Inkling-2-Mini-GGUF:UD-Q2_K_XL' },
   },
   fix: {
     engine: 'nvidia',
-    models: { nvidia: 'deepseek-ai/deepseek-v3.2', gemini: 'gemini-flash-latest', local: 'qwen3:8b' },
+    models: { nvidia: 'deepseek-ai/deepseek-v3.2', gemini: 'gemini-flash-latest', local: 'hf.co/unsloth/Inkling-2-Mini-GGUF:UD-Q2_K_XL' },
   },
 };
 

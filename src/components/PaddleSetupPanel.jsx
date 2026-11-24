@@ -95,7 +95,7 @@ function OllamaFields({ form, set, defaults }) {
         <span className="mb-1.5 block text-sm font-medium text-ink">Modello</span>
         <span className="mb-2 block text-xs text-faint">
           PaddleOCR-VL legge il testo con più precisione. In alternativa un modello di visione
-          generico (es. gemma4:e4b o qwen3.5:9b) marca da sé i titoli, ma è più lento.
+          generico (es. gemma4:e4b) marca da sé i titoli, ma è più lento.
         </span>
         <input
           value={form.paddleOllamaModel || ''}

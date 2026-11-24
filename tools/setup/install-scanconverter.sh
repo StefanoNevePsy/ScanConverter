@@ -6,7 +6,7 @@
 # stesso file di esito. Vedi quello per il perché di ogni scelta.
 #
 #   ./install-scanconverter.sh --root /Volumes/Esterno/ScanConverter
-#   ./install-scanconverter.sh --root ~/sc --model qwen3:4b --components ollama
+#   ./install-scanconverter.sh --root ~/sc --model hf.co/unsloth/Inkling-2-Mini-GGUF:UD-IQ3_XXS --components ollama
 #
 # Rieseguibile: quello che c'è già viene saltato. Se un disco esterno cambia
 # punto di mount, rilanciarlo con il nuovo percorso rimette a posto le
@@ -16,7 +16,7 @@ set -eu
 
 TYPST_VERSION='0.15.1'
 ROOT=''
-MODEL='qwen3:8b'
+MODEL='hf.co/unsloth/Inkling-2-Mini-GGUF:UD-Q2_K_XL'
 TRANSLATION_MODEL='translategemma:4b'
 COMPONENTS='ollama typst'
 SKIP_MODEL=0

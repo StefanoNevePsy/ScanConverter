@@ -15,7 +15,7 @@
 */
 
 export const DEFAULT_LOCAL_ENDPOINT = 'http://localhost:11434/v1/chat/completions';
-export const DEFAULT_LOCAL_MODEL = 'qwen3:8b';
+export const DEFAULT_LOCAL_MODEL = 'hf.co/unsloth/Inkling-2-Mini-GGUF:UD-Q2_K_XL';
 export const DEFAULT_LOCAL_OCR_ENDPOINT = 'http://localhost:8000/ocr';
 
 /**
@@ -23,7 +23,7 @@ export const DEFAULT_LOCAL_OCR_ENDPOINT = 'http://localhost:8000/ocr';
  *
  * Anche `/v1/models` fa parte dell'API compatibile OpenAI, quindi si ricava
  * dall'endpoint di chat senza chiedere all'utente un secondo indirizzo. Serve
- * a scegliere da un elenco invece che ricordare a memoria «qwen3:8b»: i nomi
+ * a scegliere da un elenco invece che ricordare a memoria «hf.co/unsloth/Inkling-2-Mini-GGUF:UD-Q2_K_XL»: i nomi
  * dei modelli locali hanno tag e due punti, e sbagliarli dà un errore che
  * sembra un problema di rete.
  *
@@ -60,7 +60,7 @@ function unreachable(endpoint, detail) {
  * server locali non la richiedono (Ollama accetta qualunque stringa).
  * @param {object} p
  * @param {string} p.endpoint  URL chat/completions
- * @param {string} p.model     nome del modello caricato (es. "qwen3:8b")
+ * @param {string} p.model     nome del modello caricato (es. "hf.co/unsloth/Inkling-2-Mini-GGUF:UD-Q2_K_XL")
  * @param {string} [p.system]
  * @param {string} p.user
  * @param {number} [p.temperature]

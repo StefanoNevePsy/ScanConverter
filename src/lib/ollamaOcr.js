@@ -148,7 +148,7 @@ export async function ollamaRecognize({ endpoint, model, imageDataUrl, task = 't
       missing
         ? `Il modello «${name}» non è scaricato in Ollama: installalo da Impostazioni → Lettura.`
         : noVision
-          ? `Ollama non riesce a dare immagini al modello «${name}». Aggiorna Ollama all’ultima versione e riscarica il modello; se non basta, in Impostazioni → Lettura usa un modello di visione generico (es. qwen3.5:9b o gemma4:e4b) oppure PaddleOCR online.`
+          ? `Ollama non riesce a dare immagini al modello «${name}». Aggiorna Ollama all’ultima versione e riscarica il modello; se non basta, in Impostazioni → Lettura usa un modello di visione generico (es. gemma4:e4b) oppure PaddleOCR online.`
           : `Ollama ha avuto un problema con la pagina: ${detail.slice(0, 300)}`,
     );
     err.local = true;

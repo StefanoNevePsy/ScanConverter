@@ -231,10 +231,11 @@ function loadPhases() {
       // Modelli ritirati da NVIDIA: chi li aveva salvati passa al default.
       if (RETIRED_MODELS.has(value)) continue;
       if (value) {
-        // qwen3:8b era il precedente default della sola traduzione. Chi aveva
+        // qwen3:8b era il precedente default locale (per la traduzione, il
+        // modello poi sostituito da uno dedicato più rapido). Chi aveva
         // scelto un modello diverso conserva la scelta; il vecchio default
-        // viene aggiornato al modello dedicato più rapido.
-        models[engine] = phase === 'translate' && engine === 'local' && value === 'qwen3:8b'
+        // passa al default attuale della fase.
+        models[engine] = engine === 'local' && value === 'qwen3:8b'
           ? base.models.local
           : value;
       }

@@ -22,7 +22,7 @@ export const COMPONENTS = [
   {
     id: 'ollama',
     label: 'Modello linguistico (Ollama)',
-    note: 'Qwen per struttura/rilettura + TranslateGemma per traduzione. ~8,5 GB su disco.',
+    note: 'Inkling 2 Mini per struttura/rilettura + TranslateGemma per traduzione. ~12,5 GB su disco.',
     default: true,
   },
   {
