@@ -22,7 +22,8 @@
 import { loadImage, cropToDataUrl } from './figures.js';
 import { detectLayout } from './layoutModel.js';
 import { joinRegionLines, planRegion } from './layoutRegions.js';
-import { ollamaRecognize } from './ollamaOcr.js';
+import { ollamaRecognize, DEFAULT_OLLAMA_OCR_MODEL } from './ollamaOcr.js';
+import { ensureOllamaModel } from './ollamaModels.js';
 import { htmlTableToMarkdown } from './paddle.js';
 
 // «R. Castaldo, S. Bari, G. Tocchi» — elenco di autori, non un titolo, anche
@@ -46,6 +47,18 @@ async function mapLimited(items, limit, fn) {
   return out;
 }
 
+/**
+ * LightOnOCR scrive Markdown: in una zona il tipo lo decide il modello di
+ * impaginazione, quindi si tolgono «#» iniziali e grassetto/corsivo attorno.
+ */
+export function stripMarkdownDecor(text) {
+  return String(text || '')
+    .split('\n')
+    .map((l) => l.replace(/^\s*#{1,6}\s+/, '').trim())
+    .map((l) => l.replace(/^(\*{1,3}|_{1,3})(.+?)\1$/, '$2'))
+    .join('\n');
+}
+
 /** Testo letto → blocco della pipeline (o null se la zona va scartata). */
 export function regionToBlock(region, plan, text) {
   const base = { bbox: region.bbox, order: region.order };
@@ -57,6 +70,7 @@ export function regionToBlock(region, plan, text) {
       ? { ...base, type: 'Text', text: text.trim() }
       : { ...base, type: 'Picture', text: '' };
   }
+  if (['Title', 'Section-header', 'Text'].includes(plan.type)) text = stripMarkdownDecor(text);
   let body = plan.type === 'Table' ? htmlTableToMarkdown(text) : joinRegionLines(text, plan.type);
   if (!body) return null;
   let { type } = plan;
@@ -75,6 +89,12 @@ export function regionToBlock(region, plan, text) {
  * @returns {Promise<Array<{type:string,bbox:object,text:string,order:number}>>}
  */
 export async function layoutOcrBlocks({ imageDataUrl, endpoint, model, onDetail, signal }) {
+  await ensureOllamaModel({
+    endpoint,
+    model: String(model || DEFAULT_OLLAMA_OCR_MODEL).trim(),
+    onProgress: (_t, pct) => onDetail?.(`scarico il modello di lettura (una volta sola): ${pct ?? 0}%`),
+    signal,
+  });
   const img = await loadImage(imageDataUrl);
   onDetail?.('analisi dell’impaginazione…');
   const regions = await detectLayout(img, {

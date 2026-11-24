@@ -14,10 +14,19 @@
 */
 
 import { DEFAULT_LOCAL_ENDPOINT } from './local.js';
+import { ensureOllamaModel } from './ollamaModels.js';
 
 export const DEFAULT_OLLAMA_OCR_MODEL = 'hf.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF';
 
 const isPaddle = (model) => /paddleocr/i.test(String(model || ''));
+// LightOnOCR-3: addestrato a produrre Markdown dall'immagine con prompt VUOTO.
+export const isLightOn = (model) => /lightonocr/i.test(String(model || ''));
+
+/** Testo della richiesta per modello e compito ('' = solo immagine). */
+export function promptFor(model, task = 'text') {
+  if (isLightOn(model)) return '';
+  return (isPaddle(model) ? PADDLE_TASKS : GENERIC_TASKS)[task] || PADDLE_TASKS.text;
+}
 
 const MARKDOWN_PROMPT =
   'Trascrivi ESATTAMENTE il testo di questa pagina di libro in Markdown. ' +
@@ -107,7 +116,7 @@ const GENERIC_TASKS = {
 export async function ollamaRecognize({ endpoint, model, imageDataUrl, task = 'text', signal }) {
   const target = String(endpoint || DEFAULT_LOCAL_ENDPOINT).trim();
   const name = String(model || DEFAULT_OLLAMA_OCR_MODEL).trim();
-  const prompt = (isPaddle(name) ? PADDLE_TASKS : GENERIC_TASKS)[task] || PADDLE_TASKS.text;
+  const prompt = promptFor(name, task);
   let res;
   try {
     res = await fetch(target, {
@@ -121,7 +130,7 @@ export async function ollamaRecognize({ endpoint, model, imageDataUrl, task = 't
             role: 'user',
             content: [
               { type: 'image_url', image_url: { url: imageDataUrl } },
-              { type: 'text', text: prompt },
+              ...(prompt ? [{ type: 'text', text: prompt }] : []),
             ],
           },
         ],
@@ -167,8 +176,14 @@ export async function ollamaRecognize({ endpoint, model, imageDataUrl, task = 't
  * OCR di una pagina intera via Ollama (senza analisi dell'impaginazione).
  * @returns {Promise<Array<{type:string,bbox:null,text:string}>>}
  */
-export async function ollamaOcrBlocks({ endpoint, model, imageDataUrl, signal }) {
+export async function ollamaOcrBlocks({ endpoint, model, imageDataUrl, onDetail, signal }) {
   const name = String(model || DEFAULT_OLLAMA_OCR_MODEL).trim();
+  await ensureOllamaModel({
+    endpoint,
+    model: name,
+    onProgress: (_t, pct) => onDetail?.(`scarico il modello di lettura (una volta sola): ${pct ?? 0}%`),
+    signal,
+  });
   const text = await ollamaRecognize({ endpoint, model: name, imageDataUrl, task: 'page', signal });
   if (!text) {
     const err = new Error(`Il modello «${name}» non ha restituito testo per questa pagina.`);

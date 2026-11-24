@@ -12,6 +12,27 @@ import { pullOllamaModel } from '../lib/ollamaModels.js';
   il comando esatto da incollare, come per gli altri accessori locali.
 */
 
+const READER_MODELS = [
+  {
+    id: 'hf.co/PaddlePaddle/PaddleOCR-VL-1.6-GGUF',
+    title: 'PaddleOCR-VL 1.6',
+    sub: 'Preciso sul testo, 0,9B · ~1 GB',
+    short: 'PaddleOCR-VL',
+  },
+  {
+    id: 'richardyoung/lightonocr-3-1b',
+    title: 'LightOnOCR-3 1B · veloce',
+    sub: 'Piccolo e rapido, ~1,5 GB',
+    short: 'LightOnOCR-3 1B',
+  },
+  {
+    id: 'richardyoung/lightonocr-3-4b:Q6_K',
+    title: 'LightOnOCR-3 4B · più preciso',
+    sub: 'Più accurato, ~3,8 GB (Mac 16 GB / GPU 10 GB)',
+    short: 'LightOnOCR-3 4B',
+  },
+];
+
 const inputClass =
   'w-full rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 font-mono text-[13px] text-ink placeholder:text-faint transition-colors focus:border-primary focus:outline-none';
 
@@ -55,6 +76,13 @@ export default function PaddleSetupPanel({ form, setForm, defaults }) {
 
 function OllamaFields({ form, set, defaults }) {
   const model = (form.paddleOllamaModel || defaults.paddleOllamaModel || '').trim();
+  const preset = READER_MODELS.find((m) => m.id === model);
+  const [other, setOther] = useState(!preset);
+  const custom = other || !preset;
+  const pick = (id) => {
+    setOther(false);
+    set('paddleOllamaModel')({ target: { value: id } });
+  };
   const [state, setState] = useState(null);
   const install = async () => {
     setState({ text: 'Avvio download…' });
@@ -91,20 +119,40 @@ function OllamaFields({ form, set, defaults }) {
           </span>
         </span>
       </label>
-      <label className="block">
-        <span className="mb-1.5 block text-sm font-medium text-ink">Modello</span>
-        <span className="mb-2 block text-xs text-faint">
-          PaddleOCR-VL legge il testo con più precisione. In alternativa un modello di visione
-          generico (es. gemma4:e4b) marca da sé i titoli, ma è più lento.
+      <div>
+        <span className="mb-1.5 block text-sm font-medium text-ink">Modello di lettura</span>
+        <span className="mb-2 block text-xs leading-relaxed text-faint">
+          LightOnOCR-3 include già la parte visiva, quindi evita l’errore «image input is not
+          supported» che PaddleOCR-VL dà su alcune versioni di Ollama. Il modello scelto viene
+          scaricato in automatico alla prima lettura, se manca.
         </span>
-        <input
-          value={form.paddleOllamaModel || ''}
-          onChange={set('paddleOllamaModel')}
-          placeholder={defaults.paddleOllamaModel}
-          spellCheck={false}
-          className={inputClass}
-        />
-      </label>
+        <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Modello di lettura">
+          {READER_MODELS.map((m) => (
+            <ModeButton
+              key={m.id}
+              active={!custom && model === m.id}
+              onClick={() => pick(m.id)}
+              title={m.title}
+              sub={m.sub}
+            />
+          ))}
+          <ModeButton
+            active={custom}
+            onClick={() => setOther(true)}
+            title="Altro modello"
+            sub="un modello di visione a scelta (es. gemma4:e4b)"
+          />
+        </div>
+        {custom && (
+          <input
+            value={form.paddleOllamaModel || ''}
+            onChange={set('paddleOllamaModel')}
+            placeholder={defaults.paddleOllamaModel}
+            spellCheck={false}
+            className={`${inputClass} mt-2`}
+          />
+        )}
+      </div>
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
@@ -112,7 +160,7 @@ function OllamaFields({ form, set, defaults }) {
           disabled={Boolean(state && !state.error && state.pct !== 100)}
           onClick={install}
         >
-          Installa il modello in Ollama
+          {preset ? `Installa ${preset.short} in Ollama` : 'Installa il modello in Ollama'}
         </button>
         {state && (
           <span className={`text-xs ${state.error ? 'text-warning' : 'text-faint'}`}>{state.text}</span>

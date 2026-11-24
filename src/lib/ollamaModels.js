@@ -33,8 +33,15 @@ export const RECOMMENDED_MODELS = [
   {
     name: 'richardyoung/lightonocr-3-1b',
     label: 'LightOnOCR-3 1B',
-    size: '~2 GB',
-    note: 'Sperimentale (build della comunità): piccolo modello di visione per la lettura OCR.',
+    size: '~1,5 GB',
+    note: 'Build della comunità (Q8_0 con parte visiva inclusa): piccolo e veloce per la lettura OCR.',
+    phases: ['ocr'],
+  },
+  {
+    name: 'richardyoung/lightonocr-3-4b:Q6_K',
+    label: 'LightOnOCR-3 4B',
+    size: '~3,8 GB',
+    note: 'Build della comunità (Q6_K + parte visiva): più preciso del 1B, sta in un Mac da 16 GB e in una GPU da 10 GB.',
     phases: ['ocr'],
   },
   {
@@ -92,4 +99,45 @@ export async function pullOllamaModel({ endpoint, model, onProgress, signal }) {
       onProgress?.(`${msg.status || 'download'}${gb}`, pct);
     }
   }
+}
+
+// Controlli già superati (endpoint + modello): niente richiesta a ogni pagina.
+const verifiedModels = new Set();
+
+/** «nome» e «nome:latest» sono lo stesso modello. */
+function sameModel(a, b) {
+  const norm = (n) => (String(n).includes(':') ? String(n) : `${n}:latest`).toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/**
+ * Si assicura che il modello sia in Ollama: se manca lo scarica, con avanzamento.
+ * @param {{endpoint:string, model:string, onProgress?:(text:string, pct?:number)=>void, signal?:AbortSignal}} p
+ */
+export async function ensureOllamaModel({ endpoint, model, onProgress, signal }) {
+  const key = `${ollamaBase(endpoint)}|${model}`;
+  if (verifiedModels.has(key)) return;
+  let installed;
+  try {
+    const res = await fetch(`${ollamaBase(endpoint)}/api/tags`, { signal });
+    if (!res.ok) throw new Error(`Ollama ha risposto ${res.status}.`);
+    const data = await res.json();
+    installed = (data?.models || []).map((m) => m.name || m.model).filter(Boolean);
+  } catch (e) {
+    if (e?.name === 'AbortError') throw e;
+    const err = new Error(`Ollama non è raggiungibile: avvialo e riprova. Dettaglio: ${e.message}`);
+    err.local = true;
+    throw err;
+  }
+  if (!installed.some((n) => sameModel(n, model))) {
+    try {
+      await pullOllamaModel({ endpoint, model, onProgress, signal });
+    } catch (e) {
+      if (e?.name === 'AbortError') throw e;
+      const err = new Error(`Non sono riuscito a scaricare il modello «${model}» in Ollama: ${e.message}`);
+      err.local = true;
+      throw err;
+    }
+  }
+  verifiedModels.add(key);
 }

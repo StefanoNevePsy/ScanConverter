@@ -1409,6 +1409,7 @@ export function usePipeline(settings) {
                           endpoint: settings.localEndpoint,
                           model: settings.paddleOllamaModel,
                           imageDataUrl: dataUrl,
+                          onDetail: (msg) => setDetail(`${label} · ${msg}`),
                           signal,
                         })
                       : paddleOcrBlocks({
